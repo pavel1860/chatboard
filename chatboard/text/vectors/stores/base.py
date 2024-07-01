@@ -1,5 +1,6 @@
 from abc import abstractmethod
-from typing import Any, List
+import copy
+from typing import Any, Dict, List
 
 
 
@@ -17,7 +18,12 @@ class VectorStoreBase:
         raise NotImplementedError
     
     @abstractmethod
-    async def similarity(self, query, top_k=3, filters=None, alpha=None):
+    async def update_documents(self, metadata: Dict, ids: List[str | int] | None=None, filters=None,  namespace=None):
+        """Updates documents in the vector store"""
+        raise NotImplementedError
+    
+    @abstractmethod
+    async def similarity(self, query, top_k=3, filters=None, alpha=None, with_vectors=False):
         """Searches for similar documents in the vector store"""
         raise NotImplementedError
 
@@ -45,3 +51,22 @@ class VectorStoreBase:
     async def get_documents(self, filters: Any,  ids: List[str | int] | None=None, top_k: int=10, with_payload=False, with_vectors=False):
         """Retrieves documents from the vector store"""
         raise NotImplementedError
+    
+
+    def _init_client(self):
+        """Initializes the vector store client"""
+        raise NotImplementedError
+
+
+    # def __deepcopy__(self, memo):
+    #     new_instance = self.__class__.__new__(self.__class__)
+    #     memo[id(self)] = new_instance
+
+    #     # Deep copy the data attribute
+    #     # new_instance.data = copy.deepcopy(self.data, memo)        
+
+    #     # Reinitialize the Qdrant client
+    #     # new_instance.client = QdrantClient()
+    #     new_instance._init_client()
+
+    #     return new_instance

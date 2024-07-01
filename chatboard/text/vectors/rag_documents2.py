@@ -68,6 +68,7 @@ class RagDocuments:
         self.metadata_class = metadata_class
         # app_manager.register_rag_space(namespace, metadata_class)
 
+
     async def _embed_documents(self, documents: List[Any]):
         embeds = await asyncio.gather(
             *[vectorizer.embed_documents(documents) for vectorizer in self.vectorizers]
@@ -80,6 +81,14 @@ class RagDocuments:
                 vec[vectorizer.name] = embeds_lookup[vectorizer.name][i]
             vectors.append(vec)
         return vectors
+    
+
+    def __deepcopy__(self, memo):
+        new_instance = self.__class__.__new__(self.__class__)
+        memo[id(self)] = new_instance
+        setattr(new_instance, "vectorizers", self.vectorizers)
+        setattr(new_instance, "vector_store", self.vector_store)
+        return new_instance
     
     
     def _pack_results(self, results):
@@ -103,16 +112,17 @@ class RagDocuments:
 
 
     async def add_documents(self, keys: List[Any], metadata: List[Any], ids: List[str] | List[int] | None=None):
-        if type(keys) != list:
+        if keys is not None and type(keys) != list:
             raise ValueError("keys must be a list")
         if type(metadata) != list:
             raise ValueError("values must be a list")
         if ids is not None and type(ids) != list:
             raise ValueError("ids must be a list")
         
-        for i, key in enumerate(keys):
-            if type(key) != self.key_class:
-                raise ValueError(f"key at index {i} is not of type {self.key_class}")
+        if self.key_class is not None:
+            for i, key in enumerate(keys):
+                if type(key) != self.key_class:
+                    raise ValueError(f"key at index {i} is not of type {self.key_class}")
         for i, value in enumerate(metadata):
             # handling list models
             if is_list_model(self.metadata_class):
@@ -131,13 +141,31 @@ class RagDocuments:
         return outputs
     
 
-    async def get_documents(self, filters: Any=None,  ids: List[int | str] | None = None, top_k=10, with_metadata: bool=True, with_vectors: bool=False):
+    async def update_documents(self, metadata: Dict, ids: List[int | str] | None=None, filters: Any=None):        
+        res = await self.vector_store.update_documents(metadata, ids=ids, filters=filters)
+        return res
+        
+
+    
+
+    async def get_documents(
+            self, 
+            filters: Any=None, 
+            ids: List[int | str] | None = None, 
+            top_k=10, 
+            with_metadata: bool=True, 
+            with_vectors: bool=False, 
+            order_by: Dict | None=None, 
+            group_by: Dict | None=None,
+            group_size=1,
+            ):
         res = await self.vector_store.get_documents(
             filters=filters, 
             ids=ids, 
             top_k=top_k,
             with_payload=with_metadata, 
-            with_vectors=with_vectors
+            with_vectors=with_vectors,
+            order_by=order_by,
         )
         return self._pack_results(res)
     
@@ -170,7 +198,17 @@ class RagDocuments:
 
     async def create_namespace(self, namespace: str | None = None):
         namespace = namespace or self.namespace
-        return await self.vector_store.create_collection(self.vectorizers, namespace)
+        indexs_to_create=[]
+        for field, info in self.metadata_class.__fields__.items():
+            if hasattr(info, 'field_info'): # check if pydantic v1
+                extra = info.field_info.extra
+                if "index" in extra:
+                    print(field, extra["index"])
+                    indexs_to_create.append({
+                        "field": field,
+                        "schema": extra["index"]
+                    })
+        return await self.vector_store.create_collection(self.vectorizers, namespace, indexs=indexs_to_create)
     
     async def verify_namespace(self):
         try:

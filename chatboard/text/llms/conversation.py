@@ -35,12 +35,25 @@ class HumanMessage(BaseMessage):
     role: Literal["user"] = "user"
 
 
+
 class AIMessage(BaseMessage):
     # role: str = Field("assistant", const=True)
     did_finish: Optional[bool] = True
     role: Literal["assistant"] = "assistant"
     tool_calls: Optional[List[BaseModel]] = None
     output: Optional[BaseModel] = None
+
+
+    def to_openai(self):
+        if self.tool_calls:            
+            return {
+                "role": self.role,
+                "content": self.content + "\n".join([f"{t.function.name}\n{t.function.arguments}" for t in self.tool_calls])
+            }
+        return {
+            "role": self.role,
+            "content": self.content,
+        }
     
     # tools: Optional[List[BaseModel]] = None
 

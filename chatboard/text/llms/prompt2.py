@@ -50,6 +50,7 @@ class ChatPrompt(BaseModel):
     model: str= "gpt-3.5-turbo-0125"
     llm: Union[OpenAiLLM, AzureOpenAiLLM] = Field(default_factory=OpenAiLLM)
     is_traceable: bool=True
+    add_to_history: bool=True
     tools: Optional[List[Type[Action]]] = None
 
 
@@ -120,6 +121,7 @@ class ChatPrompt(BaseModel):
         async def call( **kwargs: Any): 
             kwargs.update(partial_kwargs)
             return await self.call(*partial_args, **kwargs)
+        call._prompt_name = self.__class__.__name__
         return call
 
     async def call(self, prompt=None, context=None, tracer_run=None, output_conversation=False, **kwargs: Any) -> Any:
@@ -142,7 +144,7 @@ class ChatPrompt(BaseModel):
                     # "messages": conversation.messages
                 },
                 # extra=extra,
-            ) as prompt_run:                     
+            ) as prompt_run:
                 msgs = await self._build_conversation(context=context, **kwargs)
                 msgs = [m for m in msgs if m is not None]
 
@@ -155,10 +157,10 @@ class ChatPrompt(BaseModel):
                         tools=tools,
                         tracer_run=prompt_run, 
                         **kwargs
-                    )                                
+                    )
                 
                 prompt_run.end(outputs={'output': completion_msg})
-                if context:
+                if context and self.add_to_history:
                     context.history.add(
                             view_name=self.name, 
                             view_cls=self.__class__, 
@@ -168,15 +170,18 @@ class ChatPrompt(BaseModel):
                         )
                 if completion_msg.tool_calls is not None:
                     completion_msg = await self._handle_tool_call(context, completion_msg)
-                else:                
-                    completion_msg = await self.on_complete(context, completion_msg)
+                else:  
+                    completion_msg = await call_function(self.on_complete, context, completion_msg)              
+                    # completion_msg = await self.on_complete(context, completion_msg)
                     # for tool_call in completion_msg.tool_calls:
-                    #     tool_args = json.loads(tool_call.function.arguments)                        
+                    #     tool_args = json.loads(tool_call.function.arguments)
                     #     toll_cls = self.tools['UserDetails']['info'].default.__class__
                     #     tool = toll_cls(**tool_args)
                     #     _attr = getattr(self, self.tools[tool_call.function.name]["name"])
                     #     output = await _attr.handle(tool)
                     #     completion_msg = output
+                if completion_msg is None:
+                    raise ValueError("Prompt did not return a completion output.")
 
                 return completion_msg
             

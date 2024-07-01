@@ -1,4 +1,6 @@
 from typing import Any, List, Optional
+from fastapi import FastAPI
+from fastapi.concurrency import asynccontextmanager
 from chatboard.text.app_manager import app_manager
 from chatboard.text.llms.completion_parsing import is_list_model, unpack_list_model
 from chatboard.text.llms.prompt_tracer import PromptTracer
@@ -10,6 +12,10 @@ import asyncio
 
 class GetRagParams(BaseModel):
     namespace: str
+
+
+class GetAssetDocumentsParams(BaseModel):
+    asset: str
 
 
 class UpsertRagParams(BaseModel):
@@ -25,24 +31,31 @@ class DeleteRagParams(BaseModel):
 
 
 
-def add_chatboard(app, rag_namespaces=None):
+def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
 
     if rag_namespaces:
-        loop = asyncio.get_event_loop()
-        for space in rag_namespaces:
-            # rag_space = RagDocuments(space["namespace"], metadata_class=space["output_class"])
-            # loop.run_until_complete(rag_space.verify_namespace())
+        for space in rag_namespaces:            
             app_manager.register_rag_space(space["namespace"], space["output_class"], space["prompt"])
 
-    # @app.on_event("startup")
-    # async def init_rag():
-    #     tasks = []
-    #     if rag_namespaces:
-    #         for space in rag_namespaces:
-    #             rag_space = RagDocuments(space["namespace"], metadata_class=space["output_class"])
-    #             tasks.append(rag_space.verify_namespace())
-    #             app_manager.register_rag_space(space["namespace"], space["output_class"], space["prompt"])
-    #     await asyncio.gather(*tasks)
+    if assets:
+        for asset in assets:
+            app_manager.register_asset(asset)
+
+
+    if profiles:
+        for profile in profiles:
+            app_manager.register_profile(profile)
+
+
+    @asynccontextmanager
+    async def init_chatboard(app: FastAPI):
+        print("Initializing chatboard...")
+        await app_manager.verify_rag_spaces()
+        yield
+
+
+    app.router.lifespan_context = init_chatboard
+
     
     @app.get('/chatboard/metadata')
     def get_chatboard_metadata():
@@ -50,6 +63,14 @@ def add_chatboard(app, rag_namespaces=None):
         return {"metadata": app_metadata}
     
     print("Chatboard added to app.")
+
+
+    @app.get("/chatboard/get_asset_documents")
+    async def get_asset_documents(asset: str):
+        asset_cls = app_manager.assets[asset]
+        asset_instance = asset_cls()
+        res = await asset_instance.get_assets()
+        return [r.to_dict() for r in res]
 
     @app.post("/chatboard/get_rag_document")
     async def get_rag_document(body: GetRagParams):
@@ -82,6 +103,13 @@ def add_chatboard(app, rag_namespaces=None):
         else:
             value = rag_cls(**body.output)
         res = await rag_space.add_documents([key], [value], doc_id)
+        return res
+    
+    @app.get('/chatboard/get_asset_partition')
+    async def get_asset_partition(asset: str, partition: str):
+        asset_cls = app_manager.assets[asset]
+        asset_instance = asset_cls()
+        res = await asset_instance.get_partition(partition)
         return res
     
 

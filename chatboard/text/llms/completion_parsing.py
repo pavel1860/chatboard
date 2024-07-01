@@ -1,3 +1,5 @@
+from enum import Enum
+import inspect
 import re
 from typing import Optional, Union, get_type_hints, get_origin, get_args
 from langchain_openai import ChatOpenAI
@@ -13,6 +15,15 @@ def sanitize_text(text: str):
 class PromptParsingException(Exception):
     pass
 
+
+def parse_bool(text):
+    text = sanitize_text(text)
+    if text.lower() in ["true", "yes", "1"]:
+        return True
+    elif text.lower() in ["false", "no", "0"]:
+        return False
+    else:
+        raise PromptParsingException(f"Value {text} is not a valid boolean")
 
 
 
@@ -65,7 +76,28 @@ def parse_model_list(completion, pydantic_model, delimiter=","):
             elif field_info.annotation == float:
                 row_split[i] = float(row_split[i])
             elif field_info.annotation == int:
-                row_split[i] = int(row_split[i])        
+                row_split[i] = int(row_split[i])
+            elif field_info.annotation == bool:
+                row_split[i] = parse_bool(row_split[i])
+            elif inspect.isclass(field_info.annotation) and issubclass(field_info.annotation, Enum):                
+                sanitize_content = sanitize_text(row_split[i])
+                row_split[i] = field_info.annotation[sanitize_content]                
+            elif get_origin(field_info.annotation) == Union:
+                if int in get_args(field_info.annotation):
+                    try:
+                        row_split[i] = int(sanitize_text(row_split[i]))
+                        continue
+                    except:
+                        pass
+                if str in get_args(field_info.annotation):
+                    row_split[i] = sanitize_text(row_split[i])
+                    continue
+                
+                raise PromptParsingException(f"Field {field_name} is not a valid type")
+            else:
+                raise PromptParsingException(f"Field {field_name} is not a valid type")
+
+            
         segments.append(pydantic_model(**{k: v for k, v in zip(pydantic_model.__fields__.keys(), row_split)}))
     return segments
 
@@ -216,7 +248,7 @@ def auto_split_row_completion(curr_content, chunk, output, curr_field, pydantic_
                 curr_field = None
                 curr_content = ""
             elif field_info.annotation == bool:
-                output[field_name] = bool(sanitize_content(curr_content))
+                output[field_name] = parse_bool(sanitize_content(curr_content))
                 curr_field = None
                 curr_content = ""
     return output, curr_field, curr_content

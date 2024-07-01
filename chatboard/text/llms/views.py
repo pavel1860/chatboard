@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Any, List, Type
-from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain_core.pydantic_v1 import BaseModel, Field, PrivateAttr
 from langchain_core.utils.function_calling import convert_to_openai_tool
 import textwrap
 from chatboard.text.llms.conversation import HumanMessage, SystemMessage
@@ -63,15 +63,15 @@ def model_to_prompt(tool_dict, add_type=True, add_constraints=True):
 
 
 class ViewModel(BaseModel):
-    system: bool = False
+    _is_system: bool = False
 
     def render(self):
-        if self.system:
+        if self._is_system:
             return self.render_system()
         return self.dict()
     
     async def render(self):
-        if self.system:
+        if self._is_system:
             return self.render_system()
         return self.dict()
     
@@ -86,6 +86,7 @@ class ViewModel(BaseModel):
     def to_tool(self):
         return convert_to_openai_tool(self)
     
+    
 
     async def __call__(self,*args, **kwargs: Any) -> Any:
         # if is_async_function(self.render):
@@ -94,10 +95,12 @@ class ViewModel(BaseModel):
         #     content_out = self.render(**kwargs)
         content_out = await call_function(self.render, *args, **kwargs)
         content = textwrap.dedent(content_out).strip()
-        if self.system:                
+        if self._is_system:                
             return SystemMessage(content=content)
         else:
             return HumanMessage(content=content)
+        
+
             
 
 
@@ -114,3 +117,6 @@ class Action(BaseModel):
     @classmethod 
     def to_tool(self):
         return convert_to_openai_tool(self)
+
+
+

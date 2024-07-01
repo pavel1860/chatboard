@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import Any, Dict, List, TypeVar, Union, Optional, Generic
 from uuid import uuid4
 from pydantic import BaseModel
@@ -26,6 +27,16 @@ class VectorStoreException(Exception):
     pass
 
 
+class VectorDbIndexType(str, Enum):
+    keyword = "keyword"
+    integer = "integer"
+    float = "float"
+    bool = "bool"
+    geo = "geo"
+    datetime = "datetime"
+    text = "text"
+
+
 def metrics_to_qdrant(metric: VectorMetrics):
     if metric == VectorMetrics.COSINE:
         return Distance.COSINE
@@ -48,14 +59,15 @@ class QdrantVectorStore(VectorStoreBase):
         url: str | None=None,
         api_key: str | None = None,
         ) -> None:
-        url = url or os.environ.get("QDRANT_URL")
-        api_key = api_key or os.environ.get("QDRANT_API_KEY", None)
+        self.url = url or os.environ.get("QDRANT_URL")
+        self.api_key = api_key or os.environ.get("QDRANT_API_KEY", None)
         self.client = AsyncQdrantClient(
             url=url,
             api_key=api_key,
             # host=os.environ['QDRANT_HOST'], 
             # port=os.environ['QDRANT_PORT']
         )
+        # self._init_client()
         self.collection_name = collection_name
 
 
@@ -70,7 +82,28 @@ class QdrantVectorStore(VectorStoreBase):
             )
             recs.append(rec)
         return recs
+    
+    # def _init_client(self):
+    #     self.client = AsyncQdrantClient(
+    #         url=self.url,
+    #         api_key=self.api_key,
+    #     )
 
+    # def __deepcopy__(self, memo):
+    #     new_instance = self.__class__.__new__(self.__class__)
+    #     memo[id(self)] = new_instance
+
+    #     # Deep copy the data attribute
+    #     # new_instance.data = copy.deepcopy(self.data, memo)        
+
+    #     # Reinitialize the Qdrant client
+    #     # new_instance.client = QdrantClient()
+    #     setattr(new_instance, "url", self.url)
+    #     setattr(new_instance, "api_key", self.api_key)
+    #     # new_instance._init_client()
+        
+
+        # return new_instance
     
 
     # async def similarity(self, query, top_k=3, filters=None, alpha=None):        
@@ -95,7 +128,7 @@ class QdrantVectorStore(VectorStoreBase):
     #     )
     #     return self._pack_points(recs)    
 
-    async def similarity(self, query, top_k=3, filters=None, alpha=None, with_vectors=False):        
+    async def similarity(self, query, top_k=3, filters=None, alpha=None, with_vectors=False):
         query_filter = None
         if filters is not None:
             must_not, must = self.parse_filter(filters)
@@ -143,7 +176,28 @@ class QdrantVectorStore(VectorStoreBase):
             )
 
 
-    async def create_collection(self, vectorizers, collection_name: str | None = None):
+    async def update_documents(self, metadata: Dict, ids: List[str | int] | None=None, filters=None,  namespace=None):
+        namespace = namespace or self.collection_name        
+        if filters is not None:
+            must_not, must = self.parse_filter(filters)
+            points = models.Filter(
+                must_not=must_not,
+                must=must
+            )
+        elif ids is not None:
+            points = ids
+        else:
+            raise ValueError("ids or filters must be provided.")
+        
+        return await self.client.set_payload(
+            collection_name=namespace,
+            payload=metadata,
+            points=points
+        )
+
+
+
+    async def create_collection(self, vectorizers, collection_name: str | None = None, indexs=None):
         collection_name=collection_name or self.collection_name
         vector_config = {}
         for vectorizer in vectorizers:
@@ -152,6 +206,13 @@ class QdrantVectorStore(VectorStoreBase):
             collection_name=collection_name,
             vectors_config=vector_config            
         )
+        if indexs:
+            for index in indexs:
+                await self.client.create_payload_index(
+                    collection_name=collection_name,
+                    field_name=index['field'],
+                    field_schema=index['schema']
+                )
 
 
     async def delete_collection(self, collection_name: str | None =None):
@@ -189,7 +250,15 @@ class QdrantVectorStore(VectorStoreBase):
         return res
 
 
-    async def get_documents(self, filters: Any,  ids: List[str | int] | None=None, top_k: int=10, with_payload=False, with_vectors=False):
+    async def get_documents(
+            self, 
+            filters: Any,  
+            ids: List[str | int] | None=None, 
+            top_k: int=10, 
+            with_payload=False, 
+            with_vectors=False, 
+            order_by=None,
+        ):
         filter_ = None
         if ids is not None:
             # top_k: int | None = None
@@ -204,14 +273,43 @@ class QdrantVectorStore(VectorStoreBase):
                 must_not=must_not,
                 must=must
             )
+        if order_by:
+            if type(order_by) == str:
+                pass
+                # order_by = models.OrderBy(
+                #     key=order_by,
+                #     direction="desc",  # default is "asc"
+                # )
+            elif type(order_by) == dict:
+                order_by = models.OrderBy(
+                    key=order_by.get("key"),
+                    direction=order_by.get("direction", "desc"),  # default is "asc"
+                    start_from=order_by.get("start_from", None),  # start from this value
+                )
+            else:
+                raise ValueError("order_by must be a string or a dict.")
+        
+            
         recs, _ = await self.client.scroll(
             collection_name=self.collection_name,
             scroll_filter=filter_,
             limit=top_k,
             with_payload=with_payload,
             with_vectors=with_vectors,
+            order_by=order_by
         )
         return self._pack_points(recs)
+    
+
+    async def group_documents(
+            self,             
+            group_by: Dict=None,
+            group_size=None,
+        ):
+        self.client.search_groups(
+            collection_name=self.collection_name,
+
+        )
 
 
     async def get_many(self, ids: List[str | int] | None=None, top_k=10, with_payload=False, with_vectors=False):
