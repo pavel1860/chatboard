@@ -62,8 +62,8 @@ class QdrantVectorStore(VectorStoreBase):
         self.url = url or os.environ.get("QDRANT_URL")
         self.api_key = api_key or os.environ.get("QDRANT_API_KEY", None)
         self.client = AsyncQdrantClient(
-            url=url,
-            api_key=api_key,
+            url=self.url,
+            api_key=self.api_key,
             # host=os.environ['QDRANT_HOST'], 
             # port=os.environ['QDRANT_PORT']
         )
@@ -331,7 +331,8 @@ class QdrantVectorStore(VectorStoreBase):
         return self._pack_points(recs)
 
 
-    async def info(self):        
+    async def info(self):       
+        print("* Getting collection info", self.collection_name) 
         return await self.client.get_collection(self.collection_name)
         
             
