@@ -59,18 +59,3 @@ def iterate_class_fields(cls_, sub_cls_filter=None, exclude=False):
 
 
 
-def serialize_class_field(profile_cls, sub_cls_filter=None, exclude=False):
-    
-    PYTHON_TO_JSON_TYPES = {
-        "str": "string",
-        "int": "integer",
-        "float": "number",
-        "bool": "boolean",
-    }
-
-    response = [{
-        "field": field,
-        "annotation": PYTHON_TO_JSON_TYPES.get(info.annotation.__name__, info.annotation.__name__),
-    } for field, info in iterate_class_fields(profile_cls, sub_cls_filter, exclude=exclude)]
-
-    return response

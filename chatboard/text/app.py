@@ -71,6 +71,8 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
         asset_instance = asset_cls()
         res = await asset_instance.get_assets()
         return [r.to_dict() for r in res]
+    
+    
 
     @app.post("/chatboard/get_rag_document")
     async def get_rag_document(body: GetRagParams):
@@ -111,6 +113,13 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
         asset_instance = asset_cls()
         res = await asset_instance.get_partition(partition)
         return res
+
+
+    @app.get('/chatboard/get_profile_partition')
+    async def get_profile_partition(profile: str, partition: str):
+        profile_cls = app_manager.profiles[profile]
+        profile_list = await profile_cls.get_many()        
+        return [p.to_dict() for p in profile_list]
     
 
     @app.post("/chatboard/edit_document")

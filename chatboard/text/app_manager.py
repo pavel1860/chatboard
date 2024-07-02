@@ -32,10 +32,13 @@ def serialize_profile(profile_cls, sub_cls_filter=None, exclude=False):
         "bool": "boolean",
     }
 
-    response = [{
-        "field": field,
-        "type": PYTHON_TO_JSON_TYPES.get(info.annotation.__name__, info.annotation.__name__),
-    } for field, info in iterate_class_fields(profile_cls, sub_cls_filter, exclude=exclude)]
+    # response = [{
+    #     "field": field,
+    #     "type": PYTHON_TO_JSON_TYPES.get(info.annotation.__name__, info.annotation.__name__),
+    # } for field, info in iterate_class_fields(profile_cls, sub_cls_filter, exclude=exclude)]
+    response = {
+        field : PYTHON_TO_JSON_TYPES.get(info.annotation.__name__, info.annotation.__name__)
+     for field, info in iterate_class_fields(profile_cls, sub_cls_filter, exclude=exclude)}
 
     return response
     
@@ -63,22 +66,23 @@ class AppManager:
         self.assets[asset_cls.__name__] = asset_cls
 
 
-    async def verify_rag_spaces(self):        
+    async def verify_rag_spaces(self):
         rag_spaces_futures = [
             RagDocuments(
                 namespace, 
                 metadata_class=rag_space["metadata_class"]
             ).verify_namespace() for namespace, rag_space in self.rag_spaces.items()]
         rag_spaces_futures += [asset_cls().verify_namespace() for asset_cls in self.assets.values()]
-        await asyncio.gather(*rag_spaces_futures)
-        
+        await asyncio.gather(*rag_spaces_futures)        
             
     
     def register_prompt(self, prompt):
         self.prompts[prompt.name] = prompt
 
+
     def register_profile(self, profile):
-        self.profiles[profile.__class__.__name__] = profile
+        self.profiles[profile.__name__] = profile
+
 
     def get_metadata(self):
         rag_space_json = [{
@@ -98,7 +102,7 @@ class AppManager:
         
 
         return {
-            "rag_spaces": rag_space_json,            
+            "rag_spaces": rag_space_json,
             "assets": asset_json,
             "profiles": profile_json
         }
