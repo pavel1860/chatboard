@@ -76,6 +76,17 @@ class ChatPrompt(BaseModel):
             "info": tool_fields[1],            
         } for tool_fields in tool_fields}
 
+    async def _call_tool_choice(self, context, **kwargs):
+        tool_choice = await self.tool_choice(context=context, **kwargs)
+        if tool_choice is not None:
+            if not issubclass(tool_choice, ChatPrompt):
+                raise ValueError("tool_choice must be an instance of Action")
+            return tool_choice.to_tool()
+        return None
+
+    async def tool_choice(self, context=None, **kwargs: Any):
+        return None
+
 
     async def complete(self):
         return []    
@@ -100,7 +111,7 @@ class ChatPrompt(BaseModel):
             #     conversation.append(SystemMessage(content=content))
             # else:
             #     conversation.append(HumanMessage(content=content))
-        conversation = await asyncio.gather(*completion_views)        
+        conversation = await asyncio.gather(*completion_views)
         flat_conversation = flatten_list(conversation)
         return flat_conversation
         # return conversation
@@ -152,9 +163,12 @@ class ChatPrompt(BaseModel):
                 if not tools:
                     tools = None
 
+                tool_choice = await self._call_tool_choice(context=context, **kwargs)
+
                 completion_msg = await self.llm.complete(
                         msgs=msgs,
                         tools=tools,
+                        tool_choice=tool_choice,
                         tracer_run=prompt_run, 
                         **kwargs
                     )

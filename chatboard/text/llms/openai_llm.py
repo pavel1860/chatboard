@@ -4,6 +4,8 @@ from typing import Any, Coroutine, Dict, List, Optional, Tuple, TypeVar, Generic
 
 from langchain.chat_models import ChatOpenAI
 
+from chatboard.clients.openai_client import build_async_openai_client
+
 
 # from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
 from .system_conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
@@ -87,7 +89,7 @@ class OpenAiLLM:
         if model is not None and model not in chat_models:
             raise ValueError(f"model ({model}) must be one of {chat_models}")
         self.name = name
-        self.client = openai.AsyncClient()
+        self.client = build_async_openai_client()
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens

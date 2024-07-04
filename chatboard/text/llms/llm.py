@@ -1,9 +1,10 @@
 
 import json
 from time import time
-from typing import Any, Coroutine, Dict, List, Optional, Tuple, TypeVar, Generic, Union
+from typing import Any, Coroutine, Dict, Iterable, List, Optional, Tuple, TypeVar, Generic, Union
 
 import aiohttp
+from chatboard.clients.openai_client import build_async_openai_client
 from langchain.chat_models import ChatOpenAI
 
 
@@ -145,24 +146,26 @@ class OpenAiLlmClient:
 
 
     def __init__(self, api_key=None, api_version=None, azure_endpoint=None, azure_deployment=None):
-        if azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", None):
-            self.client = openai.AsyncAzureOpenAI(
-                api_key=api_key or os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=api_version or os.getenv("OPENAI_API_VERSION", "2023-12-01-preview"),
-                azure_endpoint=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
-                azure_deployment=azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-            ) 
-        elif os.environ.get("OPENAI_API_KEY", None):
-            self.client = openai.AsyncClient(
-                api_key=api_key or os.getenv("OPENAI_API_KEY")
-            )
-        else:
-            raise ValueError("OpenAI API Key not found in environment variables")
+        self.client = build_async_openai_client()
+        # if azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", None):
+        #     self.client = openai.AsyncAzureOpenAI(
+        #         api_key=api_key or os.getenv("AZURE_OPENAI_API_KEY"),
+        #         api_version=api_version or os.getenv("OPENAI_API_VERSION", "2023-12-01-preview"),
+        #         azure_endpoint=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
+        #         azure_deployment=azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+        #     ) 
+        # elif os.environ.get("OPENAI_API_KEY", None):
+        #     self.client = openai.AsyncClient(
+        #         api_key=api_key or os.getenv("OPENAI_API_KEY")
+        #     )
+        # else:
+        #     raise ValueError("OpenAI API Key not found in environment variables")
 
     def preprocess(self, msgs):
         return [msg.to_openai() for msg in msgs]
 
     async def complete(self, msgs, tools=None, **kwargs):
+        tools = tools or []
         msgs = self.preprocess(msgs)
         openai_completion = await self.client.chat.completions.create(
             messages=msgs,
@@ -290,7 +293,7 @@ class LLM(BaseModel):
         return model_kwargs
 
 
-    async def complete(self, msgs, tools=None, tracer_run=None, metadata={}, completion=None, **kwargs):
+    async def complete(self, msgs, tools=None, tool_choice=None, tracer_run=None, metadata={}, completion=None, **kwargs):
 
         llm_kwargs = self.get_llm(**kwargs)
 
@@ -315,7 +318,7 @@ class LLM(BaseModel):
             #     messages=openai_messages,
             #     **llm_kwargs
             # )
-            completion = await self.client.complete(msgs, tools=tools, **llm_kwargs)
+            completion = await self.client.complete(msgs, tools=tools, tool_choice=tool_choice, **llm_kwargs)
             llm_run.end(outputs=completion)
             # return completion
             output = completion.choices[0].message

@@ -108,11 +108,11 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
         return res
     
     @app.get('/chatboard/get_asset_partition')
-    async def get_asset_partition(asset: str, partition: str):
+    async def get_asset_partition(asset: str, field: str, partition: str):
         asset_cls = app_manager.assets[asset]
         asset_instance = asset_cls()
-        res = await asset_instance.get_partition(partition)
-        return res
+        assets = await asset_instance.get_assets(filters={ field: partition })        
+        return [a.to_json() for a in assets]
 
 
     @app.get('/chatboard/get_profile_partition')
