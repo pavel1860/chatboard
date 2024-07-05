@@ -1,12 +1,14 @@
 import os
 from typing import Any, List
-from chatboard.clients.openai_client import build_async_openai_client
-from langchain.pydantic_v1 import BaseModel
+
 # from langchain.schema.embeddings import Embeddings
 import langchain.schema.embeddings as lang_embeddings
+from chatboard.clients.openai_client import (
+    build_async_openai_client, build_async_openai_embeddings_client)
+from langchain.pydantic_v1 import BaseModel
 from openai import AsyncOpenAI
-from pinecone_text.sparse import BM25Encoder
 from pinecone_text.dense import OpenAIEncoder
+from pinecone_text.sparse import BM25Encoder
 
 openai_model = os.getenv("OPENAI_MODEL", 'text-embedding-ada-002')
 
@@ -114,7 +116,7 @@ class DenseEmbeddings:
 
     def __init__(self):
         super().__init__()
-        self.client = build_async_openai_client()
+        self.client = build_async_openai_embeddings_client()
 
     async def embed_documents(self, texts: List[str], model="text-embedding-3-small"):
         res = await self.client.embeddings.create(input=texts, model=model)
