@@ -1,4 +1,5 @@
 
+from collections.abc import Iterable
 import json
 from typing import Any, List, Optional, Union
 from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
@@ -90,9 +91,9 @@ class ChatPrompt(BaseModel):
 
     async def complete(self):
         return []    
+    
 
-
-    async def _build_conversation(self, context=None, **kwargs: Any):
+    async def _build_conversation2(self, context=None, **kwargs: Any):
         conversation = []
         kwargs['context'] = context
         filtered_args = filter_func_args(self.complete, kwargs)
@@ -100,20 +101,44 @@ class ChatPrompt(BaseModel):
             completion_views = await self.complete(**filtered_args)
         else:
             completion_views = self.complete(**filtered_args)
-        # if 'context' in get_func_args(self.complete):
-        #     completion_views = await self.complete(context=context, **kwargs)
-        # else:
-        #     completion_views = await self.complete(**kwargs)
-        # for view in completion_views:
-            # content_out = await view.render()
-            # content = textwrap.dedent(content_out).strip()
-            # if view.system:                
-            #     conversation.append(SystemMessage(content=content))
-            # else:
-            #     conversation.append(HumanMessage(content=content))
+        
         conversation = await asyncio.gather(*completion_views)
         flat_conversation = flatten_list(conversation)
         return flat_conversation
+    
+    async def _build_conversation(self, context=None, **kwargs: Any):
+        conversation = []
+        kwargs['context'] = context
+
+
+        def render_view(parent_view, **kwargs):
+            filtered_args = filter_func_args(parent_view.render, kwargs)    
+            render_output = parent_view.render(**filtered_args)
+            if isinstance(render_output, str):
+                return render_output
+            elif isinstance(render_output, Iterable):
+                prompt = ""
+                for child_view in render_output:
+                    if isinstance(child_view, str):
+                        prompt += "\n" + child_view 
+                    else:
+                        prompt += "\n" + render_view(child_view, **kwargs) + "\n"
+                return prompt
+            else:
+                raise ValueError(f"Invalid view type: {parent_view}")
+
+                
+        conversation = []
+        kwargs['context'] = context
+        filtered_args = filter_func_args(self.complete, kwargs)
+        message_views = await call_function(self.complete, **filtered_args)
+        for mv in message_views:
+            rendered_prompt = render_view(mv, **kwargs)
+            if mv._is_system:
+                conversation.append(SystemMessage(content=rendered_prompt))
+            else:
+                conversation.append(HumanMessage(content=rendered_prompt))
+        return conversation
         # return conversation
 
 
@@ -123,6 +148,13 @@ class ChatPrompt(BaseModel):
 
     def convert_to_openai_tool(self):
         return [tool_cls["info"].annotation.to_tool() for tool_cls in self.tools.values()]
+    
+
+    async def __aiter__(self):
+        return self
+    
+    async def __anext__(self, *args: Any, **kwds: Any):
+        return await self.call(*args, **kwds) 
     
 
     async def __call__(self, *args: Any, **kwds: Any) -> Any:
@@ -174,14 +206,15 @@ class ChatPrompt(BaseModel):
                     )
                 
                 prompt_run.end(outputs={'output': completion_msg})
-                if context and self.add_to_history:
-                    context.history.add(
-                            view_name=self.name, 
-                            view_cls=self.__class__, 
-                            inputs=log_kwargs, 
-                            output=completion_msg, 
-                            msgs=msgs
-                        )
+                #TODO need to add history from outside
+                # if context and self.add_to_history:
+                #     context.history.add(
+                #             view_name=self.name, 
+                #             view_cls=self.__class__, 
+                #             inputs=log_kwargs, 
+                #             output=completion_msg, 
+                #             msgs=msgs
+                #         )
                 if completion_msg.tool_calls is not None:
                     completion_msg = await self._handle_tool_call(context, completion_msg)
                 else:  
@@ -199,6 +232,7 @@ class ChatPrompt(BaseModel):
 
                 return completion_msg
             
+
 
     async def _handle_tool_call(self, context, completion_msg):
         for tool_call in completion_msg.tool_calls:
