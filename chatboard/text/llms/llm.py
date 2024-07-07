@@ -165,7 +165,7 @@ class OpenAiLlmClient:
         return [msg.to_openai() for msg in msgs]
 
     async def complete(self, msgs, tools=None, **kwargs):
-        tools = tools or []
+        # tools = tools or []
         msgs = self.preprocess(msgs)
         openai_completion = await self.client.chat.completions.create(
             messages=msgs,
