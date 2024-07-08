@@ -86,6 +86,9 @@ class ViewModel(BaseModel):
     def to_tool(self):
         return convert_to_openai_tool(self)
     
+
+    def to_dict(self):
+        return self.dict()
     
 
     async def __call__(self,*args, **kwargs: Any) -> Any:

@@ -72,6 +72,13 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
         res = await asset_instance.get_assets()
         return [r.to_dict() for r in res]
     
+    @app.get("/chatboard/rag_documents")
+    async def get_rag_documents(namespace: str):
+        rag_cls = app_manager.rag_spaces[namespace]["metadata_class"]
+        ns = app_manager.rag_spaces[namespace]["namespace"]
+        rag_space = RagDocuments(ns, metadata_class=rag_cls)
+        res = await rag_space.get_many(top_k=10)
+        return res
     
 
     @app.post("/chatboard/get_rag_document")
