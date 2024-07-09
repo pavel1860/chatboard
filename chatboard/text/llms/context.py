@@ -7,7 +7,7 @@ import uuid
 
 from chatboard.text.llms.views import BaseModel, Field
 
-from chatboard.text.llms.prompt2 import ChatPrompt
+from chatboard.text.llms.prompt3 import ChatPrompt
 from chatboard.text.llms.conversation import HumanMessage, SystemMessage, AIMessage
 
 

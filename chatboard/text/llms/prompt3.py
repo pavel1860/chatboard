@@ -50,9 +50,17 @@ class ChatPrompt(BaseModel):
     name: Optional[str] = None
     model: str= "gpt-3.5-turbo-0125"
     llm: Union[OpenAiLLM, AzureOpenAiLLM] = Field(default_factory=OpenAiLLM)
+
+    input_model: Optional[Type[BaseModel]] = None
+    response_model: Optional[Type[BaseModel]] = None
+
+    
     is_traceable: bool=True
     add_to_history: bool=True
     tools: Optional[List[Type[Action]]] = None
+
+
+    
 
 
     def __init__(self, **data):
