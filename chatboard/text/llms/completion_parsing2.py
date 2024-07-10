@@ -1,7 +1,7 @@
 from chatboard.text.llms.completion_parsing import parse_bool, sanitize_content, split_rows, to_dict
 from enum import Enum
 from chatboard.text.llms.completion_parsing import search_field, split_field
-from typing import Optional, Union, get_type_hints, get_origin, get_args
+from typing import Optional, Union, get_type_hints, get_origin, get_args, Type
 from chatboard.text.llms.views import BaseModel
 # from pydantic import BaseModel
 
@@ -15,7 +15,8 @@ class SplitAction(str, Enum):
 def get_field_graph(output_model, parents):        
     field_graph = []
     for field_name, field_type in output_model.__annotations__.items():     
-        if get_origin(field_type) == Union:
+        # if get_origin(field_type) == Union:
+        if get_args(field_type) is not None:
             union_args = get_args(field_type)
             action = SplitAction.union
             options = {union_arg.__name__ : get_field_graph(union_arg, parents + [field_name]) for union_arg in union_args}

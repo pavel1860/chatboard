@@ -2,11 +2,12 @@
 from collections.abc import Iterable
 import json
 from typing import Any, List, Optional, Union
-from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
+# from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
 
 from chatboard.text.llms.conversation import SystemMessage, HumanMessage
 from chatboard.text.llms.function_utils import call_function, filter_func_args, flatten_list, is_async_function
-from chatboard.text.llms.views import Action, ViewModel, Type
+from chatboard.text.llms.view_renderer import RenderOutput, ViewRenderer
+from chatboard.text.llms.mvc import Action, View, Type, BaseModel, Field
 from .llm import AzureOpenAiLLM, OpenAiLLM
 from .tracer import Tracer
 import textwrap
@@ -51,23 +52,28 @@ class ChatPrompt(BaseModel):
     model: str= "gpt-3.5-turbo-0125"
     llm: Union[OpenAiLLM, AzureOpenAiLLM] = Field(default_factory=OpenAiLLM)
 
+
+    background: Optional[str] = None
+    task: Optional[str] = None
+    rules: Optional[str] = None    
+
+    view: Optional[View | BaseModel] = None
+
     input_model: Optional[Type[BaseModel]] = None
     response_model: Optional[Type[BaseModel]] = None
 
-    
+
     is_traceable: bool=True
     add_to_history: bool=True
     tools: Optional[List[Type[Action]]] = None
 
-
-    
+    _view_renderer: ViewRenderer = ViewRenderer()
 
 
     def __init__(self, **data):
         super().__init__(**data)
         if self.name is None:
             self.name = self.__class__.__name__
-
         # tool_fields = [field for field in self.__class__.__fields__.items() if isinstance(field[1].annotation, type) and issubclass(field[1].annotation, Action)]
         # self.tools = {tool_fields[1].annotation.__name__ : {
         #     "name": tool_fields[0],
@@ -101,53 +107,56 @@ class ChatPrompt(BaseModel):
         return []    
     
 
-    async def _build_conversation2(self, context=None, **kwargs: Any):
-        conversation = []
-        kwargs['context'] = context
-        filtered_args = filter_func_args(self.complete, kwargs)
-        if is_async_function(self.complete):
-            completion_views = await self.complete(**filtered_args)
-        else:
-            completion_views = self.complete(**filtered_args)
-        
-        conversation = await asyncio.gather(*completion_views)
-        flat_conversation = flatten_list(conversation)
-        return flat_conversation
     
-    async def _build_conversation(self, context=None, **kwargs: Any):
+    async def _build_conversation(
+            self,             
+            render_output: RenderOutput, 
+            context=None, 
+            response_model: BaseModel | None=None,
+            **kwargs: Any
+        ):
+               
         conversation = []
         kwargs['context'] = context
 
+        system_prompt = ""
+        if self.background:
+            system_prompt += f"{self.background}\n"
+        if self.task:
+            system_prompt += f"{self.task}\n"
+        
+        system_prompt += render_output.system_prompt        
+        
+        if render_output.is_actions:
+            system_prompt += "\nyou should use one of the following actions:\n"
+            system_prompt += render_output.action_prompt
 
-        def render_view(parent_view, **kwargs):
-            filtered_args = filter_func_args(parent_view.render, kwargs)    
-            render_output = parent_view.render(**filtered_args)
-            if isinstance(render_output, str):
-                return render_output
-            elif isinstance(render_output, Iterable):
-                prompt = ""
-                for child_view in render_output:
-                    if isinstance(child_view, str):
-                        prompt += "\n" + child_view 
-                    else:
-                        prompt += "\n" + render_view(child_view, **kwargs) + "\n"
-                return prompt
-            else:
-                raise ValueError(f"Invalid view type: {parent_view}")
 
-                
-        conversation = []
-        kwargs['context'] = context
-        filtered_args = filter_func_args(self.complete, kwargs)
-        message_views = await call_function(self.complete, **filtered_args)
-        for mv in message_views:
-            rendered_prompt = render_view(mv, **kwargs)
-            if mv._is_system:
-                conversation.append(SystemMessage(content=rendered_prompt))
+        response_model = response_model or self.response_model
+        if render_output.is_output:
+            if response_model:
+                raise ValueError("You can have either a response model or an output model, not both.")
+
+            system_prompt += "\nyou should use the following format for the output:\n"
+            system_prompt += render_output.output_prompt
+
+        response_model = response_model or self.response_model
+        if response_model:
+            if response_model.__doc__:
+                system_prompt += f"\n{response_model.__doc__}\n"
             else:
-                conversation.append(HumanMessage(content=rendered_prompt))
+                system_prompt += "\nyou should use the following format for the response:\n"
+            system_prompt += self._view_renderer.render_tool_aux(response_model)
+
+        if self.rules:
+            system_prompt += self.rules + "\n"
+        
+        conversation.append(SystemMessage(content=system_prompt))
+
+        conversation.append(HumanMessage(content=render_output.view_prompt))
+
         return conversation
-        # return conversation
+
 
 
     async def preprocess(self, **kwargs: Any):
@@ -175,16 +184,24 @@ class ChatPrompt(BaseModel):
         call._prompt_name = self.__class__.__name__
         return call
 
-    async def call(self, prompt=None, context=None, tracer_run=None, output_conversation=False, **kwargs: Any) -> Any:
-            if prompt is not None:
-                kwargs['prompt'] = prompt
+    async def call(
+            self, 
+            view_prompt: View | BaseModel=None, 
+            context=None, 
+            response_model: BaseModel | None=None,
+            tracer_run=None, 
+            output_conversation=False, 
+            **kwargs: Any) -> Any:
+            
+            if view_prompt is not None:
+                kwargs['view_prompt'] = view_prompt
             if 'model' not in kwargs:
                 kwargs["model"] = self.model
             log_kwargs = {}
             log_kwargs.update(kwargs)            
             
-            if prompt is not None:
-                log_kwargs['prompt'] = prompt
+            if view_prompt is not None:
+                log_kwargs['view_prompt'] = view_prompt
             with Tracer(
                 is_traceable=self.is_traceable,
                 tracer_run=tracer_run,
@@ -196,19 +213,27 @@ class ChatPrompt(BaseModel):
                 },
                 # extra=extra,
             ) as prompt_run:
-                msgs = await self._build_conversation(context=context, **kwargs)
-                msgs = [m for m in msgs if m is not None]
+                
 
-                tools = self.convert_to_openai_tool()
-                if not tools:
-                    tools = None
+                view_prompt = view_prompt or self.view
+                
+                render_output = await self._view_renderer.render_view(view_prompt)
+
+                msgs = await self._build_conversation(render_output=render_output, context=context, **kwargs)
+
+                # tools = self.convert_to_openai_tool()
+                # if not tools:
+                #     tools = None
+
+                response_model = response_model or self.response_model
 
                 tool_choice = await self._call_tool_choice(context=context, **kwargs)
 
                 completion_msg = await self.llm.complete(
                         msgs=msgs,
-                        tools=tools,
-                        tool_choice=tool_choice,
+                        tools=list(render_output.actions.values()) if not response_model else None,
+                        tool_choice=tool_choice if not response_model else None,
+                        response_model=response_model,
                         tracer_run=prompt_run, 
                         **kwargs
                     )
@@ -223,10 +248,10 @@ class ChatPrompt(BaseModel):
                 #             output=completion_msg, 
                 #             msgs=msgs
                 #         )
-                if completion_msg.tool_calls is not None:
-                    completion_msg = await self._handle_tool_call(context, completion_msg)
-                else:  
-                    completion_msg = await call_function(self.on_complete, context, completion_msg)              
+                # if completion_msg.tool_calls is not None:
+                #     completion_msg = await self._handle_tool_call(context, completion_msg)
+                # else:  
+                completion_msg = await call_function(self.on_complete, context, completion_msg)
                     # completion_msg = await self.on_complete(context, completion_msg)
                     # for tool_call in completion_msg.tool_calls:
                     #     tool_args = json.loads(tool_call.function.arguments)

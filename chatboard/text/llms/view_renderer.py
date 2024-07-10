@@ -40,7 +40,13 @@ class RenderOutput(BaseModel):
         print("##### View Message #####")
         print(self.view_prompt)
         
+    @property
+    def is_output(self):
+        return self.output_model is not None
 
+    @property
+    def is_actions(self):
+        return len(self.actions) > 0
 
 
 
@@ -155,7 +161,7 @@ class ViewRenderer():
                     system_visited.add(field_info.annotation.__name__)
         return system_visited
 
-    async def render_view(self, view: View | BaseModel, render_system: bool = False, render_tool: bool = False, **kwargs):
+    async def render_view(self, view: View | BaseModel, **kwargs):
         visited = set()
         visited_system = set()
         stack = []
