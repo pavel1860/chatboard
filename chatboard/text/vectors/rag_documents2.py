@@ -35,7 +35,7 @@ V = TypeVar('V', bound=BaseModel)
 #     metadata: RagDocMetadata[K, V]
 
 class RagSearchResult(BaseModel):
-    id: str
+    id: str | int
     score: float
     metadata: Any
     vector: Optional[Dict[str, Any]] = None

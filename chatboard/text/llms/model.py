@@ -1,5 +1,7 @@
+import json
 from typing import Optional
 from pydantic import BaseModel, create_model
+from langchain_core.utils.function_calling import convert_to_openai_tool
 import inspect
 
 
@@ -56,6 +58,7 @@ def iterate_class_fields(cls_, sub_cls_filter=None, exclude=False):
                 yield field, info                
             continue
         yield field, info
+
 
 
 

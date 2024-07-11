@@ -8,7 +8,7 @@ from chatboard.text.llms.conversation import SystemMessage, HumanMessage
 from chatboard.text.llms.function_utils import call_function, filter_func_args, flatten_list, is_async_function
 from chatboard.text.llms.view_renderer import RenderOutput, ViewRenderer
 from chatboard.text.llms.mvc import Action, View, Type, BaseModel, Field
-from .llm import AzureOpenAiLLM, OpenAiLLM
+from .llm2 import AzureOpenAiLLM, OpenAiLLM
 from .tracer import Tracer
 import textwrap
 import inspect
@@ -67,8 +67,7 @@ class ChatPrompt(BaseModel):
     add_to_history: bool=True
     tools: Optional[List[Type[Action]]] = None
 
-    _view_renderer: ViewRenderer = ViewRenderer()
-
+    _view_renderer: ViewRenderer = ViewRenderer(system_indent=4, view_to_prompt=True)
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -138,7 +137,7 @@ class ChatPrompt(BaseModel):
                 raise ValueError("You can have either a response model or an output model, not both.")
 
             system_prompt += "\nyou should use the following format for the output:\n"
-            system_prompt += render_output.output_prompt
+            system_prompt += render_output.output_model_prompt
 
         response_model = response_model or self.response_model
         if response_model:
@@ -217,7 +216,7 @@ class ChatPrompt(BaseModel):
 
                 view_prompt = view_prompt or self.view
                 
-                render_output = await self._view_renderer.render_view(view_prompt)
+                render_output = await self._view_renderer.render_view(view_prompt, **kwargs)
 
                 msgs = await self._build_conversation(render_output=render_output, context=context, **kwargs)
 
@@ -225,7 +224,7 @@ class ChatPrompt(BaseModel):
                 # if not tools:
                 #     tools = None
 
-                response_model = response_model or self.response_model
+                response_model = response_model or self.response_model or render_output.output_model
 
                 tool_choice = await self._call_tool_choice(context=context, **kwargs)
 

@@ -16,7 +16,9 @@ def get_field_graph(output_model, parents):
     field_graph = []
     for field_name, field_type in output_model.__annotations__.items():     
         # if get_origin(field_type) == Union:
-        if get_args(field_type) is not None:
+        if issubclass(field_type, Enum):
+            raise ValueError(f"Enum type {field_type} is not supported in the output model")
+        elif any(get_args(field_type)):
             union_args = get_args(field_type)
             action = SplitAction.union
             options = {union_arg.__name__ : get_field_graph(union_arg, parents + [field_name]) for union_arg in union_args}

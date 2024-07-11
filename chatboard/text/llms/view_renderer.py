@@ -1,5 +1,6 @@
-from typing import Iterable, Type
+from typing import Any, Iterable, Type
 from chatboard.text.llms.function_utils import call_function, filter_func_args
+from chatboard.text.llms.model_schema_prompt_parser import ModelSchemaPromptParser
 from chatboard.text.llms.mvc import View, BaseModel, Action
 from langchain_core.utils.function_calling import convert_to_openai_tool
 import json
@@ -25,20 +26,23 @@ class RenderOutput(BaseModel):
     system_prompt: str
     action_prompt: str | None
     output_model_prompt: str | None
-    output_model: BaseModel | None
+    output_model: Any
     actions: dict[str, Type[BaseModel]] = {}
 
-    def log(self):
-        print("##### System Message #####")
-        print(self.system_prompt)
-        if self.action_prompt:
-            print("----- Action Message -----")
-            print(self.action_prompt)
-        if self.output_model_prompt:
-            print("----- Output Model Message -----")
-            print(self.output_model_prompt)
-        print("##### View Message #####")
-        print(self.view_prompt)
+    def log(self, system=True, actions=True, view=True):
+        if system:
+            print("##### System Message #####")
+            print(self.system_prompt)
+        if actions:
+            if self.action_prompt:
+                print("----- Action Message -----")
+                print(self.action_prompt)
+            if self.output_model_prompt:
+                print("----- Output Model Message -----")
+                print(self.output_model_prompt)
+        if view:
+            print("##### View Message #####")
+            print(self.view_prompt)
         
     @property
     def is_output(self):
@@ -73,6 +77,7 @@ class ViewRenderer():
         self._view_to_prompt = view_to_prompt
         self._system_indent = system_indent
         self._system_to_prompt = system_to_prompt
+        self._prompt_parser = ModelSchemaPromptParser()
 
     def use_default_view_render(self, view: View | BaseModel) -> str:
         if self._view_to_prompt:            
@@ -92,20 +97,22 @@ class ViewRenderer():
             render_output = f"{prefix}\n{render_output}"
         return render_output
 
-    def use_default_render_system(self, view: View | BaseModel) -> str:
-        openai_tool = self.convert_to_openai_tool(view.__class__)
+    def use_default_render_system(self, view: View | BaseModel) -> str:        
         if self._system_to_prompt:
-            return self.model_to_prompt(openai_tool, hide_output=True)
+            return self._prompt_parser.to_prompt(view.__class__)
+            # return self.model_to_prompt(openai_tool, hide_output=True)
         else:
+            openai_tool = self.convert_to_openai_tool(view.__class__)
             return json.dumps(openai_tool, indent=self._system_indent)
         
     def use_default_render_tool(self, tool: Action | BaseModel) -> str:
         if self._system_to_prompt:
             if hasattr(tool, 'default'):
-                return self.model_to_prompt(self.convert_to_openai_tool(tool.default), hide_output=True)
-            return self.model_to_prompt(self.convert_to_openai_tool(tool), hide_output=True)
-            # return self.render_output_as_prompt(view)        
-        # openai_tool = self.convert_to_openai_tool(view.__class__)        
+                return self._prompt_parser.to_prompt(tool.default)
+            return self._prompt_parser.to_prompt(tool)
+                # return self.model_to_prompt(self.convert_to_openai_tool(tool.default), hide_output=True)
+            # return self.model_to_prompt(self.convert_to_openai_tool(tool), hide_output=True)
+            
         if hasattr(tool, 'default'):
             openai_tool = self.convert_to_openai_tool(tool.default)
         openai_tool = self.convert_to_openai_tool(tool)
@@ -156,6 +163,7 @@ class ViewRenderer():
         while stack:
             curr_model = stack.pop()
             for field, field_info in curr_model.__fields__.items():
+                print(field)
                 if issubclass(field_info.annotation, BaseModel):            
                     stack.append(field_info.annotation)
                     system_visited.add(field_info.annotation.__name__)
@@ -184,12 +192,14 @@ class ViewRenderer():
                 if curr_view.__class__.__name__ in visited:
                     continue        
                 # handle rendering
-                view_render = await self.render_view_aux(curr_view)
+                view_render = await self.render_view_aux(curr_view, **kwargs)
                 # handle system rendering
-                if curr_view.__class__.__name__ not in visited_system:
-                    system_render = self.render_system_aux(curr_view)        
-                    system_prompt += system_render + "\n"
-                    visited_system = visited_system | self.get_subclasses(curr_view.__class__)
+                # if curr_view.__class__.__name__ not in visited_system:
+                #     system_render = self.render_system_aux(curr_view)
+                #     system_prompt += system_render + "\n"
+                #     visited_system = visited_system | self.get_subclasses(curr_view.__class__)
+                system_render = self.render_system_aux(curr_view)
+                system_prompt += system_render + "\n"
                 visited.add(curr_view.__class__.__name__)
                 # handle tool gathering
                 if curr_view._output_model:
@@ -209,6 +219,8 @@ class ViewRenderer():
             # appending to the prompt
             if isinstance(view_render, str):
                 view_prompt += view_render + "\n"
+            elif isinstance(view_render, BaseModel):
+                stack = [view_render] + stack
             elif isinstance(view_render, Iterable):
                 stack = [v for v in view_render] + stack
             else:
@@ -233,23 +245,23 @@ class ViewRenderer():
         
         
 
-    def render_view_system(self, view):
-        return self.model_to_prompt(self.convert_to_openai_tool(view), hide_output=True)
+    # def render_view_system(self, view):
+    #     return self.model_to_prompt(self.convert_to_openai_tool(view), hide_output=True)
 
     
-    def render_output_as_prompt(self, view):
-        if view._output_model is not None:
-            if hasattr(view._output_model, 'default'):
-                return self.model_to_prompt(self.convert_to_openai_tool(view._output_model.default), hide_output=True)
-            return self.model_to_prompt(self.convert_to_openai_tool(view._output_model), hide_output=True)
-        elif view._actions:
-            prompt = ""
-            for action in view._actions:                
-                prompt += self.model_to_prompt(self.convert_to_openai_tool(action), hide_output=True)
-                prompt += "\n"
-            return prompt
-        else:
-            raise ValueError(f"no output model or actions found in view: {view}")
+    # def render_output_as_prompt(self, view):
+    #     if view._output_model is not None:
+    #         if hasattr(view._output_model, 'default'):
+    #             return self.model_to_prompt(self.convert_to_openai_tool(view._output_model.default), hide_output=True)
+    #         return self.model_to_prompt(self.convert_to_openai_tool(view._output_model), hide_output=True)
+    #     elif view._actions:
+    #         prompt = ""
+    #         for action in view._actions:                
+    #             prompt += self.model_to_prompt(self.convert_to_openai_tool(action), hide_output=True)
+    #             prompt += "\n"
+    #         return prompt
+    #     else:
+    #         raise ValueError(f"no output model or actions found in view: {view}")
         
 
     def render_output_as_tools(self, view):
@@ -265,6 +277,7 @@ class ViewRenderer():
             return actions
         else:
             raise ValueError(f"no output model or actions found in view: {view}")
+    
 
 
     def parse_properites(self, properties, add_type=True, add_constraints=True, tabs="\t", hide_output=False):
@@ -273,7 +286,7 @@ class ViewRenderer():
             if hide_output and 'is_output' in value:
                 continue
             param_promp = f"\n{tabs}{prop}"
-            if 'allOf' in value: 
+            if 'allOf' in value:                 
                 obj = value['allOf'][0]
                 prompt += f"\n{tabs}{obj['title']}:"
                 prompt += self.parse_properites(obj['properties'], tabs=tabs+"\t")
