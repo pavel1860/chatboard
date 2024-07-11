@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Any, Iterable, List, Optional, Type
-from langchain_core.pydantic_v1 import BaseModel, Field, PrivateAttr
+from langchain_core.pydantic_v1 import BaseModel, Field, PrivateAttr, create_model
 from langchain_core.utils.function_calling import convert_to_openai_tool
 # from pydantic import BaseModel, Field, PrivateAttr, ConfigDict
 import textwrap

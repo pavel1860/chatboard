@@ -4,7 +4,7 @@ import json
 from typing import Any, List, Optional, Union
 # from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
 
-from chatboard.text.llms.conversation import SystemMessage, HumanMessage
+from chatboard.text.llms.conversation import AIMessage, SystemMessage, HumanMessage
 from chatboard.text.llms.function_utils import call_function, filter_func_args, flatten_list, is_async_function
 from chatboard.text.llms.view_renderer import RenderOutput, ViewRenderer
 from chatboard.text.llms.mvc import Action, View, Type, BaseModel, Field
@@ -44,6 +44,20 @@ import itertools
 
 
 
+class PromptResponse(BaseModel):
+    view: View | BaseModel
+    run_id: str
+    output: AIMessage | BaseModel
+    conversation: List[Union[AIMessage, HumanMessage, SystemMessage]]
+    render_output: RenderOutput
+
+    class Config:
+        arbitrary_types_allowed = True
+
+
+
+
+
 
 
 
@@ -62,6 +76,8 @@ class ChatPrompt(BaseModel):
     input_model: Optional[Type[BaseModel]] = None
     response_model: Optional[Type[BaseModel]] = None
 
+    _rag: Optional[Type[BaseModel]] = None
+    rag_top_k: int = 5
 
     is_traceable: bool=True
     add_to_history: bool=True
@@ -106,10 +122,17 @@ class ChatPrompt(BaseModel):
         return []    
     
 
+    async def use_rag(self):
+        return None
+    
+    async def add_rag(self):
+        return None
+
     
     async def _build_conversation(
             self,             
             render_output: RenderOutput, 
+            view: View | BaseModel=None,
             context=None, 
             response_model: BaseModel | None=None,
             **kwargs: Any
@@ -152,10 +175,17 @@ class ChatPrompt(BaseModel):
         
         conversation.append(SystemMessage(content=system_prompt))
 
+        if self._rag:
+            docs = await self.use_rag(render_output.view_prompt)
+            for doc in docs:
+                user_msg = HumanMessage(content=doc.input)
+                ai_msg = AIMessage(content=doc.output)
+                conversation.append(user_msg)
+                conversation.append(ai_msg)
+
         conversation.append(HumanMessage(content=render_output.view_prompt))
 
         return conversation
-
 
 
     async def preprocess(self, **kwargs: Any):
@@ -189,7 +219,7 @@ class ChatPrompt(BaseModel):
             context=None, 
             response_model: BaseModel | None=None,
             tracer_run=None, 
-            output_conversation=False, 
+            output_context=False, 
             **kwargs: Any) -> Any:
             
             if view_prompt is not None:
@@ -261,6 +291,15 @@ class ChatPrompt(BaseModel):
                     #     completion_msg = output
                 if completion_msg is None:
                     raise ValueError("Prompt did not return a completion output.")
+                
+                if output_context:
+                    return PromptResponse(
+                        run_id=str(prompt_run.id),
+                        view=view_prompt,
+                        render_output=render_output,
+                        output=completion_msg,
+                        conversation=msgs
+                    )
 
                 return completion_msg
             
