@@ -14,6 +14,7 @@ from chatboard.text.llms.completion_parsing2 import OutputParser
 # from .system_conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
 from .conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
 from pydantic import BaseModel, Field, validator
+from pydantic.v1.error_wrappers import ValidationError
 from .tracer import Tracer
 import tiktoken
 import yaml
@@ -180,6 +181,9 @@ class OpenAiLlmClient:
         # return output
 
 
+class LLMToolNotFound(Exception):
+    pass
+
 
 class LLM(BaseModel):
 
@@ -257,7 +261,8 @@ class LLM(BaseModel):
             response_model: BaseModel | None=None,
             tracer_run=None, 
             metadata={}, 
-            completion=None, 
+            completion=None,
+            retries=3, 
             **kwargs):
 
         llm_kwargs = self.get_llm(**kwargs)
@@ -286,42 +291,85 @@ class LLM(BaseModel):
 
             tool_schema = [convert_to_openai_tool(t) for t in tools] if tools else None
             tool_choice_schema = convert_to_openai_tool(tool_choice) if tool_choice else None
-
-            completion = await self.client.complete(
-                msgs, 
-                tools=tool_schema, 
-                tool_choice=tool_choice_schema, 
-                **llm_kwargs)
+            for try_num in range(retries):
+                try:
+                    completion = await self.client.complete(
+                        msgs, 
+                        tools=tool_schema, 
+                        tool_choice=tool_choice_schema, 
+                        **llm_kwargs)
+                
+                    output = self.parse_output(completion, tools, tool_choice, response_model)
+                    break
+                except LLMToolNotFound as e:
+                    if try_num == retries - 1:
+                        raise e
+                    print(f"try {try_num} tool not found error")
+                except ValidationError as e:
+                    if try_num == retries - 1:
+                        raise e
+                    print(f"try {try_num} validation error")
 
             llm_run.end(outputs=completion)
+
+            return output
             # return completion
-            output = completion.choices[0].message
-            finish_reason = completion.choices[0].finish_reason
+            # output = completion.choices[0].message
+            # finish_reason = completion.choices[0].finish_reason
 
-            if response_model:
-                parser = OutputParser(response_model)
-                try:
-                    return parser.parse(output.content)
-                except Exception as e:
-                    print("########## ERROR PARSING OUTPUT ##########") 
-            if finish_reason == "tool_calls":
-                tool_lookup = {t.__name__: t for t in tools}
-                output_tools = []
-                for tool_call in output.tool_calls:
-                    tool_args = json.loads(tool_call.function.arguments)
-                    tool_cls = tool_lookup.get(tool_call.function.name, None)
-                    if tool_cls:
-                        output_tools.append(tool_cls(**tool_args))
-                    else:
-                        raise ValueError(f"Tool {tool_call.function.name} not found in tools")                    
-                    print(tool_call.function.name, tool_args)
-                    tool_call.function.name
-                    # tool_cls = tools[tool_call.function.name]['info'].default.__class__
+            # if response_model:
+            #     parser = OutputParser(response_model)
+            #     try:
+            #         return parser.parse(output.content)
+            #     except Exception as e:
+            #         print("########## ERROR PARSING OUTPUT ##########") 
+            # if finish_reason == "tool_calls":
+            #     tool_lookup = {t.__name__: t for t in tools}
+            #     output_tools = []
+            #     for tool_call in output.tool_calls:
+            #         tool_args = json.loads(tool_call.function.arguments)
+            #         tool_cls = tool_lookup.get(tool_call.function.name, None)
+            #         if tool_cls:
+            #             output_tools.append(tool_cls(**tool_args))
+            #         else:
+            #             raise ValueError(f"Tool {tool_call.function.name} not found in tools")                    
+            #         print(tool_call.function.name, tool_args)
+            #         tool_call.function.name
+            #         # tool_cls = tools[tool_call.function.name]['info'].default.__class__
                     
-                return output_tools
+            #     return output_tools
 
 
-            return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
+            # return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
+        
+    def parse_output(self, completion, tools, tool_choice, response_model):
+        output = completion.choices[0].message
+        finish_reason = completion.choices[0].finish_reason
+
+        if response_model:
+            parser = OutputParser(response_model)
+            try:
+                return parser.parse(output.content)
+            except Exception as e:
+                print("########## ERROR PARSING OUTPUT ##########") 
+        if finish_reason == "tool_calls":
+            tool_lookup = {t.__name__: t for t in tools}
+            output_tools = []
+            for tool_call in output.tool_calls:
+                tool_args = json.loads(tool_call.function.arguments)
+                tool_cls = tool_lookup.get(tool_call.function.name, None)
+                if tool_cls:
+                    output_tools.append(tool_cls(**tool_args))
+                else:
+                    raise LLMToolNotFound(f"Tool {tool_call.function.name} not found in tools")                    
+                print(tool_call.function.name, tool_args)
+                tool_call.function.name
+                # tool_cls = tools[tool_call.function.name]['info'].default.__class__
+                
+            return output_tools
+
+
+        return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
         
 
     async def send_stream(self, openai_messages, tracer_run, metadata={}, completion=None, **kwargs):

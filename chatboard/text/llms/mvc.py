@@ -74,7 +74,8 @@ class View(BaseModel):
         self._validate_output_format()
         super().__init__(**data)
         
-
+    # class Config:
+    #     arbitrary_types_allowed = True
 
     def render(self):
         return None

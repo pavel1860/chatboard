@@ -41,9 +41,23 @@ def serialize_profile(profile_cls, sub_cls_filter=None, exclude=False):
      for field, info in iterate_class_fields(profile_cls, sub_cls_filter, exclude=exclude)}
 
     return response
-    
 
-class AppManager:
+
+class SingletonMeta(type):
+    """
+    This is a thread-safe implementation of Singleton.
+    """
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            instance = super().__call__(*args, **kwargs)
+            cls._instances[cls] = instance
+        return cls._instances[cls]
+
+
+
+class AppManager(metaclass=SingletonMeta):
 
     def __init__(self):
         self.rag_spaces = {}
@@ -77,7 +91,7 @@ class AppManager:
             
     
     def register_prompt(self, prompt):
-        self.prompts[prompt.name] = prompt
+        self.prompts[prompt.__name__] = prompt
 
 
     def register_profile(self, profile):

@@ -4,6 +4,7 @@ import json
 from typing import Any, List, Optional, Union
 # from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
 
+from chatboard.text.llms.context import Context
 from chatboard.text.llms.conversation import AIMessage, SystemMessage, HumanMessage
 from chatboard.text.llms.function_utils import call_function, filter_func_args, flatten_list, is_async_function
 from chatboard.text.llms.view_renderer import RenderOutput, ViewRenderer
@@ -69,7 +70,7 @@ class ChatPrompt(BaseModel):
 
     background: Optional[str] = None
     task: Optional[str] = None
-    rules: Optional[str] = None    
+    rules: Optional[str | List[str]] = None    
 
     view: Optional[View | BaseModel] = None
 
@@ -77,10 +78,12 @@ class ChatPrompt(BaseModel):
     response_model: Optional[Type[BaseModel]] = None
 
     _rag: Optional[Type[BaseModel]] = None
-    rag_top_k: int = 5
+    rag_top_k: int = 6
 
     is_traceable: bool=True
     add_to_history: bool=True
+    history_length: int=6
+    use_self_history: bool=False
     tools: Optional[List[Type[Action]]] = None
 
     _view_renderer: ViewRenderer = ViewRenderer(system_indent=4, view_to_prompt=True)
@@ -127,6 +130,15 @@ class ChatPrompt(BaseModel):
     
     async def add_rag(self):
         return None
+    
+
+    async def use_history(self, context):            
+        history = context.history.get_messages(
+                top_k=self.history_length, 
+                prompt=self.__class__.__name__ if self.use_self_history else None, 
+                add_actions=True
+            )
+        return history
 
     
     async def _build_conversation(
@@ -136,8 +148,8 @@ class ChatPrompt(BaseModel):
             context=None, 
             response_model: BaseModel | None=None,
             **kwargs: Any
-        ):
-               
+        ) -> List[Union[AIMessage, HumanMessage, SystemMessage]]:        
+
         conversation = []
         kwargs['context'] = context
 
@@ -176,12 +188,22 @@ class ChatPrompt(BaseModel):
         conversation.append(SystemMessage(content=system_prompt))
 
         if self._rag:
-            docs = await self.use_rag(render_output.view_prompt)
-            for doc in docs:
-                user_msg = HumanMessage(content=doc.input)
-                ai_msg = AIMessage(content=doc.output)
-                conversation.append(user_msg)
-                conversation.append(ai_msg)
+            docs = await call_function(
+                self.use_rag, 
+                **kwargs
+                )
+            # docs = await self.use_rag(render_output.view_prompt)
+            if docs:
+                for doc in docs:
+                    user_msg = HumanMessage(content=doc.input)
+                    ai_msg = AIMessage(content=doc.output)
+                    conversation.append(user_msg)
+                    conversation.append(ai_msg)
+
+        if context and self.history_length > 0:
+            history = await call_function(self.use_history, **kwargs)
+            for msg in history:
+                conversation.append(msg)
 
         conversation.append(HumanMessage(content=render_output.view_prompt))
 
@@ -216,7 +238,7 @@ class ChatPrompt(BaseModel):
     async def call(
             self, 
             view_prompt: View | BaseModel=None, 
-            context=None, 
+            context: Context | None=None, 
             response_model: BaseModel | None=None,
             tracer_run=None, 
             output_context=False, 
@@ -234,7 +256,7 @@ class ChatPrompt(BaseModel):
             with Tracer(
                 is_traceable=self.is_traceable,
                 tracer_run=tracer_run,
-                name=self.name,
+                name=self.__class__.__name__,
                 run_type="prompt",
                 inputs={
                     "input": log_kwargs,
@@ -244,21 +266,32 @@ class ChatPrompt(BaseModel):
             ) as prompt_run:
                 
 
+
                 view_prompt = view_prompt or self.view
+                if not view_prompt:
+                    view_prompt = await call_function(self.render, context=context, **kwargs)
+                if not view_prompt:
+                    raise ValueError("View prompt is required.")
+                
                 
                 render_output = await self._view_renderer.render_view(view_prompt, **kwargs)
 
                 msgs = await self._build_conversation(render_output=render_output, context=context, **kwargs)
 
-                # tools = self.convert_to_openai_tool()
-                # if not tools:
-                #     tools = None
+                if context and self.add_to_history:
+                    context.history.add_many(
+                        messages=msgs,
+                        prompt_name=self.__class__.__name__,
+                        run_id=str(prompt_run.id),
+                        inputs=kwargs
+                    )
+                
 
                 response_model = response_model or self.response_model or render_output.output_model
 
                 tool_choice = await self._call_tool_choice(context=context, **kwargs)
 
-                completion_msg = await self.llm.complete(
+                response_message = await self.llm.complete(
                         msgs=msgs,
                         tools=list(render_output.actions.values()) if not response_model else None,
                         tool_choice=tool_choice if not response_model else None,
@@ -267,20 +300,31 @@ class ChatPrompt(BaseModel):
                         **kwargs
                     )
                 
-                prompt_run.end(outputs={'output': completion_msg})
+
+                if context and self.add_to_history:
+                    
+                    context.history.add(
+                        message=response_message[0] if type(response_message) == list else response_message,
+                        prompt_name=self.name ,
+                        run_id=str(prompt_run.id),
+                        inputs=kwargs
+                    )
+                
+                prompt_run.end(outputs={'output': response_message})
                 #TODO need to add history from outside
-                # if context and self.add_to_history:
-                #     context.history.add(
-                #             view_name=self.name, 
-                #             view_cls=self.__class__, 
-                #             inputs=log_kwargs, 
-                #             output=completion_msg, 
-                #             msgs=msgs
-                #         )
+                
+                    # context.history.add(
+                    #         view_name=self.name, 
+                    #         view_cls=self.__class__,                             
+                    #         inputs=log_kwargs, 
+                    #         output=response_message, 
+                    #         msgs=msgs,
+                    #         render_output=render_output
+                    #     )
                 # if completion_msg.tool_calls is not None:
                 #     completion_msg = await self._handle_tool_call(context, completion_msg)
                 # else:  
-                completion_msg = await call_function(self.on_complete, context, completion_msg)
+                response_message = await call_function(self.on_complete, context, response_message)
                     # completion_msg = await self.on_complete(context, completion_msg)
                     # for tool_call in completion_msg.tool_calls:
                     #     tool_args = json.loads(tool_call.function.arguments)
@@ -289,19 +333,23 @@ class ChatPrompt(BaseModel):
                     #     _attr = getattr(self, self.tools[tool_call.function.name]["name"])
                     #     output = await _attr.handle(tool)
                     #     completion_msg = output
-                if completion_msg is None:
+                if response_message is None:
                     raise ValueError("Prompt did not return a completion output.")
+                
+                if self._rag:
+                    await call_function(self.add_rag, view=view_prompt, context=context, response_message=response_message, tracer_run=prompt_run, **kwargs)
+                
                 
                 if output_context:
                     return PromptResponse(
                         run_id=str(prompt_run.id),
                         view=view_prompt,
                         render_output=render_output,
-                        output=completion_msg,
+                        output=response_message,
                         conversation=msgs
                     )
 
-                return completion_msg
+                return response_message
             
 
 
