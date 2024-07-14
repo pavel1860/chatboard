@@ -1,8 +1,10 @@
+import inspect
 from typing import Any, Dict, List, TypeVar, Union, Optional, Generic, Type
 from uuid import uuid4
 from chatboard.text.llms.completion_parsing import is_list_model
-from pydantic import BaseModel
+# from pydantic import BaseModel
 # from chatboard.text.app_manager import app_manager
+from chatboard.text.llms.mvc import BaseModel
 from chatboard.text.vectors.stores.base import VectorStoreBase
 from chatboard.text.vectors.stores.qdrant_vector_store import QdrantVectorStore
 from chatboard.text.vectors.vectorizers.base import VectorMetrics, VectorizerBase
@@ -25,7 +27,20 @@ V = TypeVar('V', bound=BaseModel)
 # class RagDocMetadata:
     
     
-    
+def get_model_indexs(cls_, prefix=""):
+    indexs_to_create = []
+    for field, info in cls_.__fields__.items():
+        if inspect.isclass(info.annotation) and issubclass(info.annotation, BaseModel):
+            indexs_to_create += get_model_indexs(info.annotation, prefix=prefix+field+".")
+        if hasattr(info, 'field_info'): # check if pydantic v1
+            extra = info.field_info.extra
+            if "index" in extra:
+                # print("found index:", field, extra["index"])
+                indexs_to_create.append({
+                    "field": prefix+field,
+                    "schema": extra["index"]
+                })
+    return indexs_to_create
 
 
 
@@ -35,7 +50,7 @@ V = TypeVar('V', bound=BaseModel)
 #     metadata: RagDocMetadata[K, V]
 
 class RagSearchResult(BaseModel):
-    id: str
+    id: str | int
     score: float
     metadata: Any
     vector: Optional[Dict[str, Any]] = None
@@ -108,6 +123,16 @@ class RagDocuments:
         return rag_results
         # return [RagDocMetadata(id=res.id, key=res.key, value=res.value) for res in results]
 
+    def _pack_upsert_results(self, metadata, ids):
+        rag_results = []
+        for md, id_ in zip(metadata, ids):            
+            rag_results.append(RagSearchResult(
+                id=id_, 
+                score=-1, 
+                metadata=md,
+            ))
+        return rag_results
+        # return [RagDocMetadata(id=res.id, key=res.key, value=res.value) for res in results]
     
 
 
@@ -138,7 +163,7 @@ class RagDocuments:
         # documents = [RagDocMetadata[self.key_class, self.value_class](id=i, key=key if include_key else None, value=value) for i, key, value in zip(ids, keys, values)]
         # documents = [self.metadata_class(id=i, **value.dict()) for i, value in zip(ids, metadata)]
         outputs = await self.vector_store.add_documents(vectors, metadata, ids=ids, namespace=self.namespace)
-        return outputs
+        return self._pack_upsert_results(metadata, ids)
     
 
     async def update_documents(self, metadata: Dict, ids: List[int | str] | None=None, filters: Any=None):        
@@ -198,16 +223,16 @@ class RagDocuments:
 
     async def create_namespace(self, namespace: str | None = None):
         namespace = namespace or self.namespace
-        indexs_to_create=[]
-        for field, info in self.metadata_class.__fields__.items():
-            if hasattr(info, 'field_info'): # check if pydantic v1
-                extra = info.field_info.extra
-                if "index" in extra:
-                    print(field, extra["index"])
-                    indexs_to_create.append({
-                        "field": field,
-                        "schema": extra["index"]
-                    })
+        indexs_to_create=get_model_indexs(self.metadata_class)
+        # for field, info in self.metadata_class.__fields__.items():
+        #     if hasattr(info, 'field_info'): # check if pydantic v1
+        #         extra = info.field_info.extra
+        #         if "index" in extra:
+        #             print(field, extra["index"])
+        #             indexs_to_create.append({
+        #                 "field": field,
+        #                 "schema": extra["index"]
+        #             })
         return await self.vector_store.create_collection(self.vectorizers, namespace, indexs=indexs_to_create)
     
     async def verify_namespace(self):

@@ -6,8 +6,8 @@ from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
 from chatboard.text.llms.conversation import SystemMessage, HumanMessage
 from chatboard.text.llms.function_utils import call_function, filter_func_args, flatten_list, is_async_function
 from chatboard.text.llms.views import Action, ViewModel, Type
-from .llm import AzureOpenAiLLM, OpenAiLLM
-from .tracer import Tracer
+from chatboard.text.llms.llm import AzureOpenAiLLM, OpenAiLLM
+from chatboard.text.llms.tracer import Tracer
 import textwrap
 import inspect
 import asyncio

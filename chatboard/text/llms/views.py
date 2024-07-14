@@ -8,6 +8,7 @@ import inspect
 from abc import ABC, abstractmethod
 
 from chatboard.text.llms.function_utils import call_function, is_async_function
+from chatboard.text.llms.model import iterate_class_fields
 
 
 
@@ -35,6 +36,15 @@ def parse_properites(properties, add_type=True, add_constraints=True, tabs="\t")
             obj = value['allOf'][0]
             prompt += f"\n{tabs}{obj['title']}:"
             prompt += parse_properites(obj['properties'], tabs=tabs+"\t")
+        elif 'anyOf' in value:            
+            prompt += f"\n{tabs}{prop}: "
+            if 'description' in value:
+                prompt += value['description']
+            action_names = ",".join([obj['title'] for obj in value['anyOf']])
+            prompt += f"has to be One of {action_names}"
+            for obj in value['anyOf']:                            
+                prompt += f"\n{tabs}\t{obj['title']}:"
+                prompt += parse_properites(obj['properties'], add_type=add_type, add_constraints=add_constraints, tabs=tabs+"\t\t")
         else:
             if add_type:
                 param_promp += f":({value['type']})"
@@ -52,13 +62,18 @@ def parse_properites(properties, add_type=True, add_constraints=True, tabs="\t")
 
 
 
-def model_to_prompt(tool_dict, add_type=True, add_constraints=True):    
+def model_to_prompt(tool_dict, add_type=True, add_constraints=True, hide_name=False):    
     tool_function = tool_dict['function']
-    prompt = f"""{tool_function["name"]}:"""
+    
+    if not hide_name:
+        prompt = f"""{tool_function["name"]}:"""
+    else:
+        prompt = ""
+    if 'description' in tool_function:
+        prompt += f" {tool_function['description']}"
     properties = tool_dict['function']["parameters"]['properties']
     prompt += parse_properites(properties, add_type, add_constraints)
-    return prompt 
-
+    return prompt
 
 
 
@@ -91,31 +106,33 @@ class ViewModel(BaseModel):
         return self.dict()
     
 
-    async def __call__(self,*args, **kwargs: Any) -> Any:
-        # if is_async_function(self.render):
-        #     content_out = await self.render(**kwargs)
-        # else:
-        #     content_out = self.render(**kwargs)
+    async def __call__(self,*args, **kwargs: Any) -> Any:        
         content_out = await call_function(self.render, *args, **kwargs)
         content = textwrap.dedent(content_out).strip()
         if self._is_system:                
             return SystemMessage(content=content)
         else:
             return HumanMessage(content=content)
-        
+    
 
             
 
 
 class Action(BaseModel):
 
+    _hide_name: bool = False
+
+    # def _build_action(self):
+    #     for field, info in iterate_class_fields(self):
+    #         print(field, info)
+
     # @abstractmethod    
     async def handle(self, *args, **kwargs):
-        return self
+        return self    
 
     @classmethod
     def render(self):
-        return model_to_prompt(convert_to_openai_tool(Action))
+        return model_to_prompt(convert_to_openai_tool(self), hide_name=self._hide_name)
     
     @classmethod 
     def to_tool(self):

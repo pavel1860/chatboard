@@ -31,7 +31,7 @@ class DeleteRagParams(BaseModel):
 
 
 
-def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
+def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=None):
 
     if rag_namespaces:
         for space in rag_namespaces:            
@@ -45,6 +45,10 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None):
     if profiles:
         for profile in profiles:
             app_manager.register_profile(profile)
+
+    if prompts:
+        for prompt in prompts:
+            app_manager.register_prompt(prompt)
 
 
     @asynccontextmanager

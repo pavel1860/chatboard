@@ -15,7 +15,8 @@ from ..vectors.embeddings.text_embeddings import DenseEmbeddings
 
 class BaseMessage(BaseModel):
     content: str
-    example: Optional[bool] = False
+    is_example: Optional[bool] = False
+    is_history: Optional[bool] = False
     is_output: Optional[bool] = False
 
     def to_openai(self):

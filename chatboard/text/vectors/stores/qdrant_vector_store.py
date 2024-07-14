@@ -15,7 +15,7 @@ import os
 
 
 class VectorSearchResult(BaseModel):
-    id: str
+    id: str | int
     score: float
     metadata: Any
     vector: Optional[Dict[str, Any]] = None
