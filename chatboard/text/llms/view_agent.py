@@ -43,9 +43,6 @@ class AgentChunk(BaseModel):
         arbitrary_types_allowed = True
 
 
-    
-
-
     def to_dict(self):
         return {
             "msg_type": self.msg_type.value,

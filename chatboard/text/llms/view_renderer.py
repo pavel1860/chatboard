@@ -81,7 +81,7 @@ class ViewRenderer():
 
     def use_default_view_render(self, view: View | BaseModel) -> str:
         if self._view_to_prompt:            
-            render_output = format_dict_to_multiline(view.dict(), indent=self._view_indent or 4)            
+            render_output = format_dict_to_multiline(view.dict(), indent=self._view_indent or 4)
         else:
             render_output = json.dumps(view.dict(), indent=self._view_indent)
         view_tool = self.convert_to_openai_tool(view.__class__)
@@ -174,8 +174,10 @@ class ViewRenderer():
         visited_system = set()
         stack = []
         render_tree = {}
-
-        stack.append(view)
+        if isinstance(view, list) or isinstance(view, tuple):
+            stack = [v for v in view]
+        else:
+            stack.append(view)
 
         view_prompt = ""
         system_prompt = ""
@@ -213,7 +215,7 @@ class ViewRenderer():
             elif isinstance(curr_view, str):
                 view_render = curr_view
             else:
-                raise ValueError("Invalid view type")
+                raise ValueError(f"Invalid view type {curr_view}")
                 
             
             # appending to the prompt

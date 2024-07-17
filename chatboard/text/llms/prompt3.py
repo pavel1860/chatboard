@@ -1,7 +1,7 @@
 
 from collections.abc import Iterable
 import json
-from typing import Any, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 # from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
 
 from chatboard.text.llms.context import Context
@@ -86,7 +86,11 @@ class ChatPrompt(BaseModel):
     use_self_history: bool=False
     tools: Optional[List[Type[Action]]] = None
 
-    _view_renderer: ViewRenderer = ViewRenderer(system_indent=4, view_to_prompt=True)
+    _view_renderer: ViewRenderer = ViewRenderer(
+        system_indent=4, 
+        # system_to_prompt=True,
+        view_to_prompt=True        
+    )
 
     def __init__(self, **data):
         super().__init__(**data)
@@ -116,6 +120,9 @@ class ChatPrompt(BaseModel):
                 raise ValueError("tool_choice must be an instance of Action")
             return tool_choice.to_tool()
         return None
+    
+    def get_rules(self, context=None, **kwargs: Any):
+        return self.rules
 
     async def tool_choice(self, context=None, **kwargs: Any):
         return None
@@ -157,6 +164,7 @@ class ChatPrompt(BaseModel):
         if self.background:
             system_prompt += f"{self.background}\n"
         if self.task:
+            system_prompt+= "Your main task is to:\n"
             system_prompt += f"{self.task}\n"
         
         system_prompt += render_output.system_prompt        
@@ -182,8 +190,13 @@ class ChatPrompt(BaseModel):
                 system_prompt += "\nyou should use the following format for the response:\n"
             system_prompt += self._view_renderer.render_tool_aux(response_model)
 
-        if self.rules:
-            system_prompt += self.rules + "\n"
+        
+        rules = await call_function(self.get_rules, **kwargs)
+        if rules:                                        
+            if isinstance(self.rules, list):
+                system_prompt += "\n".join(self.rules) + "\n"
+            elif isinstance(self.rules, str):
+                system_prompt += self.rules + "\n"
         
         conversation.append(SystemMessage(content=system_prompt))
 

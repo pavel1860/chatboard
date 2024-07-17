@@ -263,6 +263,7 @@ class LLM(BaseModel):
             metadata={}, 
             completion=None,
             retries=3, 
+            smart_retry=True,
             **kwargs):
 
         llm_kwargs = self.get_llm(**kwargs)
@@ -302,13 +303,17 @@ class LLM(BaseModel):
                     output = self.parse_output(completion, tools, tool_choice, response_model)
                     break
                 except LLMToolNotFound as e:
-                    if try_num == retries - 1:
-                        raise e
                     print(f"try {try_num} tool not found error")
-                except ValidationError as e:
                     if try_num == retries - 1:
                         raise e
+                    if smart_retry:
+                        msgs.append(HumanMessage(content=f"there is no such tool:\n{str(e)}"))
+                except ValidationError as e:
                     print(f"try {try_num} validation error")
+                    if try_num == retries - 1:
+                        raise e
+                    msgs.append(HumanMessage(content=f"something is wrong with the parameters:\n{str(e)}"))
+                    
 
             llm_run.end(outputs=completion)
 
