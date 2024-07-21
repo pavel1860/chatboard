@@ -1,14 +1,17 @@
+import asyncio
+import os
 from typing import Any, List, Optional
-from fastapi import FastAPI
-from fastapi.concurrency import asynccontextmanager
+
 from chatboard.text.app_manager import app_manager
-from chatboard.text.llms.completion_parsing import is_list_model, unpack_list_model
+from chatboard.text.llms.completion_parsing import (is_list_model,
+                                                    unpack_list_model)
 from chatboard.text.llms.prompt_tracer import PromptTracer
 from chatboard.text.vectors.rag_documents2 import RagDocuments
+from fastapi import FastAPI
+from fastapi.concurrency import asynccontextmanager
 from pydantic import BaseModel
-import asyncio
 
-
+LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "default")
 
 class GetRagParams(BaseModel):
     namespace: str
@@ -35,7 +38,7 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
 
     if rag_namespaces:
         for space in rag_namespaces:            
-            app_manager.register_rag_space(space["namespace"], space["output_class"], space["prompt"])
+            app_manager.register_rag_space(space["namespace"], space["metadata_class"], space["prompt"])
 
     if assets:
         for asset in assets:
@@ -64,7 +67,8 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
     @app.get('/chatboard/metadata')
     def get_chatboard_metadata():
         app_metadata = app_manager.get_metadata()
-        return {"metadata": app_metadata}
+        # return {"metadata": app_metadata}
+        return app_metadata
     
     print("Chatboard added to app.")
 
@@ -76,12 +80,13 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
         res = await asset_instance.get_assets()
         return [r.to_dict() for r in res]
     
-    @app.get("/chatboard/rag_documents")
-    async def get_rag_documents(namespace: str):
+    @app.get("/chatboard/rag_documents/{namespace}")
+    # async def get_rag_documents(namespace: str, offset: int = 0, limit: int = 10):
+    async def get_rag_documents(namespace: str, page: int = 0, pageSize: int = 10):
         rag_cls = app_manager.rag_spaces[namespace]["metadata_class"]
         ns = app_manager.rag_spaces[namespace]["namespace"]
         rag_space = RagDocuments(ns, metadata_class=rag_cls)
-        res = await rag_space.get_many(top_k=10)
+        res = await rag_space.get_documents(top_k=pageSize, offset=page*pageSize)
         return res
     
 
@@ -141,7 +146,7 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
     @app.get("/chatboard/get_runs")
     async def get_runs(limit: int = 10, offset: int = 0, runNames: Optional[List[str]] = None):
         tracer = PromptTracer()
-        runs = await tracer.aget_runs(name=runNames, limit=limit)
+        runs = await tracer.aget_runs(name=runNames, limit=limit, project_name=LANGCHAIN_PROJECT)
         return [r.run for r in runs]
     
 

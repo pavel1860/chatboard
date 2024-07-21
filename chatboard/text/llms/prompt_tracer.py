@@ -1,14 +1,14 @@
 import asyncio
-from typing import Any, Dict, Union, List
-from langsmith import Client
-from langsmith.schemas import Run, Feedback
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 # from components.etl.rag_manager import RagVector
 # from config import LANGCHAIN_PROJECT, OPENAI_API_KEY, PINECONE_ENV, PINECONE_KEY
 # from chatboard.text.llms.prompt_manager import RagVector
 import json
 import os
+from typing import Any, Dict, List, Union
 
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langsmith import Client
+from langsmith.schemas import Feedback, Run
 
 LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "default")
 
@@ -42,7 +42,7 @@ class PromptRun:
         return self.get_html()
     
     def show_html(self, system=False):
-        from IPython.display import display, HTML
+        from IPython.display import HTML, display
         display(HTML(self.get_html(system=system)))
 
 

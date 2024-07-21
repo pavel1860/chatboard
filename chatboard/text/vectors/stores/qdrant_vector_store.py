@@ -1,17 +1,23 @@
-from enum import Enum
-from typing import Any, Dict, List, TypeVar, Union, Optional, Generic
-from uuid import uuid4
-from pydantic import BaseModel
-from chatboard.text.vectors.stores.base import VectorStoreBase
-from chatboard.text.vectors.vectorizers.base import VectorMetrics, VectorizerBase
-from qdrant_client import AsyncQdrantClient, QdrantClient
-from qdrant_client.models import Distance, VectorParams, SparseVectorParams, SparseIndexParams
-from qdrant_client.models import PointStruct, SparseVector, FieldCondition, Range, Filter
-from qdrant_client.models import NamedSparseVector, DatetimeRange, SearchRequest, NamedVector, SparseVector
-from qdrant_client import models
-from ..utils import chunks
 import os
+from enum import Enum
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
+from uuid import uuid4
 
+from chatboard.text.vectors.fussion.rsf_fussion import rsf_fussion
+from chatboard.text.vectors.stores.base import VectorStoreBase
+from chatboard.text.vectors.vectorizers.base import (VectorizerBase,
+                                                     VectorizerDenseBase,
+                                                     VectorizerSparseBase,
+                                                     VectorMetrics)
+from pydantic import BaseModel
+from qdrant_client import AsyncQdrantClient, QdrantClient, models
+from qdrant_client.models import (DatetimeRange, Distance, FieldCondition,
+                                  Filter, NamedSparseVector, NamedVector,
+                                  PointStruct, Range, SearchRequest,
+                                  SparseIndexParams, SparseVector,
+                                  SparseVectorParams, VectorParams)
+
+from ..utils import chunks
 
 
 class VectorSearchResult(BaseModel):
@@ -128,30 +134,160 @@ class QdrantVectorStore(VectorStoreBase):
     #     )
     #     return self._pack_points(recs)    
 
-    async def similarity(self, query, top_k=3, filters=None, alpha=None, with_vectors=False):
+    async def similarity(
+            self, 
+            query, 
+            top_k=3, 
+            filters=None, 
+            alpha=None, 
+            with_vectors=False, 
+            fussion: Literal["RRF", "RSF"] | None = None
+        ):
         query_filter = None
         if filters is not None:
             must_not, must = self.parse_filter(filters)
-            # must_not = filters.get('must_not', None)
-            # must = filters.get('must', None)
             query_filter = models.Filter(
                 must_not=must_not,
                 must=must
             )
-        if len(query.items()) == 1:
-            vector_name, vector_value = list(query.items())[0]
-            recs = await self.client.search(
-                collection_name=self.collection_name,
-                query_vector=NamedVector(
-                    name=vector_name,
-                    vector=vector_value
-                ),
-                query_filter=query_filter,
-                limit=top_k,            
-                with_payload=True,
-                with_vectors=with_vectors,
-            )
-            return self._pack_points(recs)
+
+        if len(query.items()) == 1 and fussion == None:
+            res = await self._dense_similarity(query, top_k, query_filter, with_vectors)
+        else:
+            if fussion is None:
+                raise ValueError("Fussion method must be provided.")
+            if fussion == "RRF":
+                res = await self._rff_similarity(query, top_k, query_filter, with_vectors)
+            elif fussion == "RSF":
+                res = await self._rsf_similarity(query, top_k, query_filter, with_vectors)
+        
+        return self._pack_points(res)
+
+        # if len(query.items()) == 1 and fussion == None:
+        #     vector_name, vector_value = list(query.items())[0]
+        #     recs = await self.client.search(
+        #         collection_name=self.collection_name,
+        #         query_vector=NamedVector(
+        #             name=vector_name,
+        #             vector=vector_value
+        #         ),
+        #         query_filter=query_filter,
+        #         limit=top_k,            
+        #         with_payload=True,
+        #         with_vectors=with_vectors,
+        #     )
+        #     return self._pack_points(recs)
+        # else:
+        #     if fussion is None:
+        #         raise ValueError("Fussion method must be provided.")
+        #     if fussion == "RRF":
+        #         for name, vector in query.items():
+        #             if type(vector) == list:
+        #                 prefetch.append(
+        #                     models.Prefetch(
+        #                         query=vector,
+        #                         using=name,
+        #                         # limit=top_k,
+        #                         filter=query_filter
+        #                     )
+        #                 )
+        #             elif type(vector) == dict:
+        #                 prefetch.append(
+        #                     models.Prefetch(
+        #                         query=models.SparseVector(indices=vector['indices'], values=vector['values']),
+        #                         using=name,
+        #                         # limit=top_k,
+        #                         filter=query_filter
+        #                     )
+        #                 )
+                
+        #         recs = await self.client.query_points(
+        #             collection_name=self.collection_name,
+        #             prefetch=prefetch,
+        #             query=models.FusionQuery(fusion=models.Fusion.RRF),
+        #             limit=top_k
+        #         )
+        #         return self._pack_points(recs.points)
+        
+
+    async def _dense_similarity(self, query, top_k=3, query_filter=None, with_vectors=False):
+        vector_name, vector_value = list(query.items())[0]
+        recs = await self.client.search(
+            collection_name=self.collection_name,
+            query_vector=NamedVector(
+                name=vector_name,
+                vector=vector_value
+            ),
+            query_filter=query_filter,
+            limit=top_k,            
+            with_payload=True,
+            with_vectors=with_vectors,
+        )
+        return recs
+    
+    async def _rff_similarity(self, query, top_k=3, query_filter=None, with_vectors=False):
+        prefetch = []
+        for name, vector in query.items():
+            if type(vector) == list:
+                prefetch.append(
+                    models.Prefetch(
+                        query=vector,
+                        using=name,
+                        # limit=top_k,
+                        filter=query_filter
+                    )
+                )
+            elif type(vector) == dict:
+                prefetch.append(
+                    models.Prefetch(
+                        query=models.SparseVector(indices=vector['indices'], values=vector['values']),
+                        using=name,
+                        # limit=top_k,
+                        filter=query_filter
+                    )
+                )
+        
+        recs = await self.client.query_points(
+            collection_name=self.collection_name,
+            prefetch=prefetch,
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=top_k,
+            with_vectors=with_vectors
+        )
+        return recs.points
+
+    async def _rsf_similarity(self, query, top_k=3, query_filter=None, with_vectors=False, alpha: List[float] | float=0.5):
+    
+        search_requests = []
+        for name, vector in query.items():
+            if type(vector) == list:
+                search_requests.append(
+                    SearchRequest(
+                        vector=models.NamedVector(
+                            name=name,
+                            vector=vector                    
+                        ),
+                        limit=top_k,
+                        filter=query_filter,
+                        with_payload=True,
+                        with_vector=with_vectors,
+
+                    )
+                )
+            elif type(vector) == dict:
+                search_requests.append(
+                    models.SearchRequest(
+                        vector=models.NamedSparseVector(
+                            vector=models.SparseVector(indices=vector['indices'], values=vector['values']),
+                            name=name,
+                        ),        
+                        limit=top_k,                        
+                        filter=query_filter,
+                        with_vector=with_vectors,
+                    )
+                )
+        output = await self.client.search_batch(collection_name=self.collection_name, requests=search_requests)
+        return rsf_fussion(output, top_k, alpha)
 
 
 
@@ -200,11 +336,18 @@ class QdrantVectorStore(VectorStoreBase):
     async def create_collection(self, vectorizers, collection_name: str | None = None, indexs=None):
         collection_name=collection_name or self.collection_name
         vector_config = {}
+        sparse_vector_config = {}
         for vectorizer in vectorizers:
-            vector_config[vectorizer.name] = VectorParams(size=vectorizer.size, distance=metrics_to_qdrant(vectorizer.metric))
+            if isinstance(vectorizer, VectorizerDenseBase):
+                vector_config[vectorizer.name] = VectorParams(size=vectorizer.size, distance=metrics_to_qdrant(vectorizer.metric))
+            elif isinstance(vectorizer, VectorizerSparseBase):
+                sparse_vector_config[vectorizer.name] = SparseVectorParams(
+                    index=models.models.SparseIndexParams()
+                )
         await self.client.recreate_collection(
             collection_name=collection_name,
-            vectors_config=vector_config            
+            vectors_config=vector_config,
+            sparse_vectors_config=sparse_vector_config           
         )
         if indexs:
             for index in indexs:
@@ -255,6 +398,7 @@ class QdrantVectorStore(VectorStoreBase):
             filters: Any,  
             ids: List[str | int] | None=None, 
             top_k: int=10, 
+            offset: int=0,
             with_payload=False, 
             with_vectors=False, 
             order_by=None,
@@ -294,6 +438,7 @@ class QdrantVectorStore(VectorStoreBase):
             collection_name=self.collection_name,
             scroll_filter=filter_,
             limit=top_k,
+            offset=offset,
             with_payload=with_payload,
             with_vectors=with_vectors,
             order_by=order_by
@@ -368,7 +513,11 @@ class QdrantVectorStore(VectorStoreBase):
                         elif k == "$eq":
                             must.append(models.FieldCondition(key=field, match=models.MatchValue(value=v)))
             else:
-                must.append(models.FieldCondition(key=field, match=models.MatchValue(value=value)))
+                if type(value) == list:
+                    must.append(models.FieldCondition(key=field, match=models.MatchAny(any=value)))
+                else:
+                    must.append(models.FieldCondition(key=field, match=models.MatchValue(value=value)))
+                    
 
         return must_not, must
 

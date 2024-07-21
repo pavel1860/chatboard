@@ -1,46 +1,49 @@
 
 
 import asyncio
-from enum import Enum
 import inspect
 import json
 import os
 import pathlib
 import random
-from typing import Any, Coroutine, Dict, List, Optional, Tuple, TypeVar, Generic, Union
+import textwrap
+from enum import Enum
+from typing import (Any, Coroutine, Dict, Generic, List, Optional, Tuple,
+                    TypeVar, Union)
 
-
-from langsmith.run_trees import RunTree
-
-
-# from pydantic import BaseModel, ConfigDict, Field
-from pydantic.generics import GenericModel
-from langchain_core.utils.function_calling import convert_to_openai_tool
+import tiktoken
+from chatboard.text.llms.views import ViewModel
+# from chatboard.text.vectors.rag_documents import RagDocuments
+from chatboard.text.vectors.rag_documents2 import RagDocuments
 # from langchain_core import pydantic_v1
 from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
-import tiktoken
-import textwrap
-
-from chatboard.text.llms.views import ViewModel
-from chatboard.text.vectors.rag_documents import RagDocuments
-
-# from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
-# from components.etl.completion_parsing import auto_split_completion, auto_split_list_completion, is_list_model, parse_completion, parse_model_list, unpack_list_model
-# from components.etl.conversation import SystemConversation, AIMessage, Conversation, ConversationRag, HumanMessage, SystemMessage, from_langchain_message
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from langsmith.run_trees import RunTree
+# from pydantic import BaseModel, ConfigDict, Field
+from pydantic.generics import GenericModel
 
 # from components.etl.llm import OpenAiLLM
 # from components.etl.prompt_manager import PromptManager
 # from components.etl.rag_manager import RagVectorSpace
 # from components.etl.tracer import Tracer
 # from config import PROMPT_REPO_HOME
-from .completion_parsing import CompletionParser, auto_split_completion, auto_split_list_completion, is_list_model, parse_completion, parse_model_list, unpack_list_model
-from .conversation import SystemConversation, AIMessage, Conversation, ConversationRag, HumanMessage, SystemMessage, from_langchain_message
+from .completion_parsing import (CompletionParser, auto_split_completion,
+                                 auto_split_list_completion, is_list_model,
+                                 parse_completion, parse_model_list,
+                                 unpack_list_model)
+from .conversation import (AIMessage, Conversation, ConversationRag,
+                           HumanMessage, SystemConversation, SystemMessage,
+                           from_langchain_message)
 # from .openai_llm import OpenAiLLM
 from .llm import AzureOpenAiLLM, OpenAiLLM
 from .prompt_manager import PromptManager
 from .rag_manager import RagVectorSpace
 from .tracer import Tracer
-import os
+
+# from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
+# from components.etl.completion_parsing import auto_split_completion, auto_split_list_completion, is_list_model, parse_completion, parse_model_list, unpack_list_model
+# from components.etl.conversation import SystemConversation, AIMessage, Conversation, ConversationRag, HumanMessage, SystemMessage, from_langchain_message
+
 
 PROMPT_REPO_HOME = os.getenv("PROMPT_REPO_HOME", "/app/prompts")
 
@@ -178,6 +181,11 @@ def filter_kwargs(kwargs, func_):
 
 
 
+class FewShotRag(BaseModel):
+    key: str
+    value: str
+
+
 class Prompt(BaseModel):
     # promptpath: str=None
     system_prompt: str=None
@@ -223,7 +231,7 @@ class Prompt(BaseModel):
         if self.name is None:
             self.name = self.__class__.__name__
         if self.rag_namespace:
-            self.rag_space = RagDocuments(self.rag_namespace)
+            self.rag_space = RagDocuments(self.rag_namespace, metadata_class=FewShotRag)
         
 
 
@@ -441,7 +449,7 @@ class Prompt(BaseModel):
     async def conversation(self, **kwargs: Any):
         prompt_msg, system_msg = await self.render_prompts(**kwargs)
         msgs = [system_msg]
-        if self.rag_namespace:
+        if self.rag_namespace and self.rag_space:
             rag_results = await self.rag_space.similarity(prompt_msg.content)
             for rag_res in rag_results:
                 msgs.append(HumanMessage(content=rag_res.metadata.key))
@@ -483,6 +491,7 @@ class Prompt(BaseModel):
                 )
             # output = openai_completion.choices[0].message
             completion_msg.output = await self.parser(completion_msg.content)
+            completion_msg.run_id = str(prompt_run.id)
             prompt_run.end(outputs={'output': completion_msg})
             if output_conversation:
                 return msgs + [completion_msg]

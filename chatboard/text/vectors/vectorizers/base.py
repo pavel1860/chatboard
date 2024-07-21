@@ -5,7 +5,6 @@ from typing import Any, List
 from pydantic import BaseModel
 
 
-
 class VectorMetrics:
     """Supported metrics for vector similarity"""
     COSINE = "cosine"
@@ -14,12 +13,14 @@ class VectorMetrics:
 
 
 
+
+
 class VectorizerBase(BaseModel):
     """Base class for vectorizers"""
     name: str
-    size: int
+    # size: int
     metric: VectorMetrics
-    is_sparse: bool = False
+    # is_sparse: bool = False
 
     class Config:
         arbitrary_types_allowed = True
@@ -37,3 +38,11 @@ class VectorizerBase(BaseModel):
 
 
 
+class VectorizerDenseBase(VectorizerBase):
+    """Base class for vectorizers"""    
+    size: int
+
+
+
+class VectorizerSparseBase(VectorizerBase):
+    pass

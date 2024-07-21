@@ -6,11 +6,13 @@
 import asyncio
 import json
 from typing import Any, Dict, List, Literal, Optional, Union
-from pydantic import BaseModel, Field, validator
-from .rag_manager import RagValue, RagVector, RagVectorSpace
+
 from langsmith import Client
+from pydantic import BaseModel, Field, validator
+
 # from ...common.vectors.embeddings.text_embeddings import DenseEmbeddings
 from ..vectors.embeddings.text_embeddings import DenseEmbeddings
+from .rag_manager import RagValue, RagVector, RagVectorSpace
 
 
 class BaseMessage(BaseModel):
@@ -43,6 +45,7 @@ class AIMessage(BaseMessage):
     role: Literal["assistant"] = "assistant"
     tool_calls: Optional[List[BaseModel]] = None
     output: Optional[BaseModel] = None
+    run_id: Optional[str] = None
 
 
     def to_openai(self):

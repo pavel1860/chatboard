@@ -1,26 +1,25 @@
 
 import json
+import os
+import re
 from time import time
-from typing import Any, Coroutine, Dict, Iterable, List, Optional, Tuple, TypeVar, Generic, Union
+from typing import (Any, Coroutine, Dict, Generic, Iterable, List, Optional,
+                    Tuple, TypeVar, Union)
 
 import aiohttp
+import openai
+import tiktoken
+import yaml
 from chatboard.clients.openai_client import build_async_openai_client
 from langchain.chat_models import ChatOpenAI
-
+from openai.types.chat.chat_completion import ChatCompletion
+from pydantic import BaseModel, Field, validator
 
 # from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
 # from .system_conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
-from .conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
-from pydantic import BaseModel, Field, validator
+from .conversation import (AIMessage, Conversation, HumanMessage,
+                           SystemMessage, from_langchain_message)
 from .tracer import Tracer
-import tiktoken
-import yaml
-import re
-import os
-
-import openai
-from openai.types.chat.chat_completion import ChatCompletion
-
 
 DEFAULT_MODEL = "gpt-3.5-turbo-0125"
 
@@ -446,6 +445,7 @@ class AzureOpenAiLLM(LLM):
         )
 
 class CustomMessage(BaseModel):
+    run_id: Optional[str] = None
     content: str
     role: Optional[str] = "assistant"
     function_call: Optional[Dict[str, Any]] = None

@@ -1,12 +1,13 @@
 from typing import Any, List
+
 from chatboard.text.vectors.embeddings.text_embeddings import DenseEmbeddings
-from chatboard.text.vectors.vectorizers.base import VectorMetrics, VectorizerBase
+from chatboard.text.vectors.vectorizers.base import (VectorizerBase,
+                                                     VectorizerDenseBase,
+                                                     VectorMetrics)
 from pydantic import BaseModel, Field
 
 
-
-
-class TextVectorizer(VectorizerBase):
+class TextVectorizer(VectorizerDenseBase):
     name: str = "dense"
     size: int = 1536
     dense_embeddings: DenseEmbeddings = Field(default_factory=DenseEmbeddings)

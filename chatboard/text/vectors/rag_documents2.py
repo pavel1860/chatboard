@@ -1,19 +1,21 @@
+import asyncio
 import inspect
-from typing import Any, Dict, List, TypeVar, Union, Optional, Generic, Type
+from typing import (Any, Dict, Generic, List, Literal, Optional, Type, TypeVar,
+                    Union)
 from uuid import uuid4
+
 from chatboard.text.llms.completion_parsing import is_list_model
 # from pydantic import BaseModel
 # from chatboard.text.app_manager import app_manager
 from chatboard.text.llms.mvc import BaseModel
 from chatboard.text.vectors.stores.base import VectorStoreBase
 from chatboard.text.vectors.stores.qdrant_vector_store import QdrantVectorStore
-from chatboard.text.vectors.vectorizers.base import VectorMetrics, VectorizerBase
-from qdrant_client.http.exceptions import UnexpectedResponse
-import asyncio
-
+from chatboard.text.vectors.vectorizers.base import (VectorizerBase,
+                                                     VectorizerDenseBase,
+                                                     VectorizerSparseBase,
+                                                     VectorMetrics)
 from chatboard.text.vectors.vectorizers.text_vectorizer import TextVectorizer
-
-
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 K = TypeVar('K', bound=BaseModel)
 V = TypeVar('V', bound=BaseModel)
@@ -49,10 +51,13 @@ def get_model_indexs(cls_, prefix=""):
 #     vector: Dict[str, Any]
 #     metadata: RagDocMetadata[K, V]
 
-class RagSearchResult(BaseModel):
+T = TypeVar('T')
+
+
+class RagSearchResult(BaseModel, Generic[T]):
     id: str | int
     score: float
-    metadata: Any
+    metadata: T
     vector: Optional[Dict[str, Any]] = None
 
     class Config:
@@ -114,7 +119,7 @@ class RagDocuments:
             # else:
             #     key = self.key_class(**res.metadata["key"])
             metadata = self.metadata_class(**res.metadata)
-            rag_results.append(RagSearchResult(
+            rag_results.append(RagSearchResult[self.metadata_class](
                 id=res.id, 
                 score=res.score, 
                 metadata=metadata,
@@ -126,7 +131,7 @@ class RagDocuments:
     def _pack_upsert_results(self, metadata, ids):
         rag_results = []
         for md, id_ in zip(metadata, ids):            
-            rag_results.append(RagSearchResult(
+            rag_results.append(RagSearchResult[self.metadata_class](
                 id=id_, 
                 score=-1, 
                 metadata=md,
@@ -177,7 +182,8 @@ class RagDocuments:
             self, 
             filters: Any=None, 
             ids: List[int | str] | None = None, 
-            top_k=10, 
+            top_k: int=10,
+            offset: int =0,
             with_metadata: bool=True, 
             with_vectors: bool=False, 
             order_by: Dict | None=None, 
@@ -188,6 +194,7 @@ class RagDocuments:
             filters=filters, 
             ids=ids, 
             top_k=top_k,
+            offset=offset,
             with_payload=with_metadata, 
             with_vectors=with_vectors,
             order_by=order_by,
@@ -203,10 +210,25 @@ class RagDocuments:
     
 
 
-    async def similarity(self, query: Any, top_k=3, filters=None, alpha=None, with_vectors=False):
+    async def similarity(
+            self, 
+            query: Any, 
+            top_k=3, 
+            filters=None, 
+            alpha=None, 
+            with_vectors=False, 
+            fussion: Literal["RRF", "RSF"] | None= None
+        ):
         query_vector = await self._embed_documents([query])
         query_vector = query_vector[0]
-        res = await self.vector_store.similarity(query_vector, top_k, filters, alpha, with_vectors=with_vectors)
+        res = await self.vector_store.similarity(
+            query_vector, 
+            top_k, 
+            filters, 
+            alpha, 
+            with_vectors=with_vectors,
+            fussion=fussion
+            )
         return self._pack_results(res)
     
 
@@ -223,7 +245,10 @@ class RagDocuments:
 
     async def create_namespace(self, namespace: str | None = None):
         namespace = namespace or self.namespace
-        indexs_to_create=get_model_indexs(self.metadata_class)
+        if isinstance(self.metadata_class, BaseModel):
+            indexs_to_create=get_model_indexs(self.metadata_class)
+        else:
+            indexs_to_create = []
         # for field, info in self.metadata_class.__fields__.items():
         #     if hasattr(info, 'field_info'): # check if pydantic v1
         #         extra = info.field_info.extra

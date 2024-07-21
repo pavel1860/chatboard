@@ -4,10 +4,12 @@
 
 
 
+import os
 import traceback
 from typing import Dict, Optional
+
 from langsmith import RunTree
-import os
+
 
 # class RunTree(ls_schemas.RunBase):
 # outputs: Optional[Dict] = None
@@ -58,6 +60,13 @@ class Tracer:
         if not self.is_traceable:
             return
         self.tracer_run.end(outputs=outputs, error=errors)
+
+
+    def end_documents(self, documents, errors: Optional[str]=None):
+        if not self.is_traceable:
+            return
+        self.tracer_run.end(outputs={"documents": documents}, error=errors)
+
 
     def __exit__(self, exc_type, exc_value, exc_traceback):
         if not self.is_traceable:

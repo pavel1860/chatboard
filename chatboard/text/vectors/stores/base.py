@@ -1,11 +1,6 @@
-from abc import abstractmethod
 import copy
+from abc import abstractmethod
 from typing import Any, Dict, List
-
-
-
-
-
 
 
 class VectorStoreBase:
@@ -48,7 +43,7 @@ class VectorStoreBase:
         raise NotImplementedError
     
 
-    async def get_documents(self, filters: Any,  ids: List[str | int] | None=None, top_k: int=10, with_payload=False, with_vectors=False):
+    async def get_documents(self, filters: Any,  ids: List[str | int] | None=None, top_k: int=10,  offset: int=0, with_payload=False, with_vectors=False, order_by: Dict | None=None):
         """Retrieves documents from the vector store"""
         raise NotImplementedError
     
