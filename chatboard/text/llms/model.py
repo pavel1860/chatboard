@@ -18,6 +18,8 @@ def make_optional(model: BaseModel) -> BaseModel:
     )
 
 
+
+
 def get_model_fields(model_instance, model_class):
     fields = {field: getattr(model_instance, field) for field in model_class.__fields__.keys()}
     return model_class(**fields)
