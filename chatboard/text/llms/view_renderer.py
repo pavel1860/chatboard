@@ -185,9 +185,10 @@ class ViewRenderer():
         output_model_prompt = None
         actions = {}
         output_model = None
-        for _ in range(10):
-            if not stack:
-                break
+        # for _ in range(10):
+        #     if not stack:
+        #         break
+        while stack:
             curr_view = stack.pop(0)
             
             if isinstance(curr_view, BaseModel):

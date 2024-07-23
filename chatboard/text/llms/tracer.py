@@ -15,6 +15,17 @@ import os
 # end_time: Optional[datetime] = None,
 # events: Optional[Sequence[ls_schemas.RunEvent]] = None,
 class Tracer:
+    """
+    Tracer class to trace the execution of the code.
+
+    Args:
+        name (str): Name of the tracer.
+        inputs (Dict): Inputs to the tracer.
+        run_type (str): Type of the run. "tool", "chain", "llm", "retriever", "embedding", "prompt", "parser"
+        extra (Dict): Extra information to be logged.
+        tracer_run (RunTree): Parent tracer run.
+        is_traceable (bool): If the tracer is traceable or not
+    """
 
     def __init__(self, name, inputs, run_type="chain", extra={}, tracer_run=None, is_traceable=True):
         self.is_traceable = is_traceable

@@ -298,7 +298,7 @@ class LLM(BaseModel):
                         msgs, 
                         tools=tool_schema, 
                         tool_choice=tool_choice_schema, 
-                        **llm_kwargs)
+                        **llm_kwargs)                    
                 
                     output = self.parse_output(completion, tools, tool_choice, response_model)
                     break
@@ -358,6 +358,8 @@ class LLM(BaseModel):
             except Exception as e:
                 print("########## ERROR PARSING OUTPUT ##########") 
         if finish_reason == "tool_calls":
+            if completion.choices[0].message.content is not None:
+                print("### tool call with message: ", completion.choices[0].message.content)
             tool_lookup = {t.__name__: t for t in tools}
             output_tools = []
             for tool_call in output.tool_calls:
