@@ -119,9 +119,17 @@ class DenseEmbeddings:
         self.client = build_async_openai_embeddings_client()
 
     async def embed_documents(self, texts: List[str], model="text-embedding-3-small"):
-        res = await self.client.embeddings.create(input=texts, model=model)
-        return [embs.embedding for embs in res.data]
+        try:
+            res = await self.client.embeddings.create(input=texts, model=model)
+            return [embs.embedding for embs in res.data]
+        except Exception as e:
+            print(texts)
+            raise e
 
     async def embed_query(self, text: str, model="text-embedding-3-small"):
-        res = await self.client.embeddings.create(input=[text], model=model)
-        return res.data[0].embedding
+        try:
+            res = await self.client.embeddings.create(input=[text], model=model)
+            return res.data[0].embedding
+        except Exception as e:
+            print(text)
+            raise e

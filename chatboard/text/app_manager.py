@@ -3,7 +3,7 @@ from typing import Type, get_args
 
 from chatboard.text.llms.completion_parsing import (is_list_model,
                                                     unpack_list_model)
-from chatboard.text.llms.model import iterate_class_fields
+from chatboard.text.llms.model import iterate_class_fields, serialize_class
 from chatboard.text.llms.prompt import Prompt
 from chatboard.text.vectors.rag_documents2 import RagDocuments
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -14,25 +14,12 @@ def get_prompt_output_class(prompt_cls):
     return get_args(prompt_cls.__fields__['output_class'].annotation)[0]
 
 
-
-
 def extract_json_schema(cls_):
     if hasattr(cls_, 'model_json_schema'):
         return cls_.model_json_schema()
     return convert_to_openai_tool(cls_)
 
 
-def serialize_prompt_class(promp_cls):
-    output_class = get_prompt_output_class(promp_cls)
-    output_type = "object"
-    if is_list_model(output_class):
-        output_type = "array"
-        output_class = unpack_list_model(output_class)
-
-    return {
-        "type": output_type,
-        "properties": extract_json_schema(output_class)
-    }
 
 
 def serialize_asset(asset_cls):
@@ -129,7 +116,10 @@ class AppManager(metaclass=SingletonMeta):
     def get_metadata(self):
         rag_space_json = [{
             "namespace": namespace,
-            "metadata_class": extract_json_schema(rag_space["metadata_class"])
+            # "metadata_class": extract_json_schema(rag_space["metadata_class"]),
+            "metadata_class": serialize_class(rag_space["metadata_class"]),
+            "prompt_name": rag_space["prompt"].__fields__.get('name').default,
+            "prompt_rag": rag_space['prompt'].__fields__.get('rag_namespace').default
         } for namespace, rag_space in self.rag_spaces.items()]
 
         asset_json = [{
@@ -145,8 +135,8 @@ class AppManager(metaclass=SingletonMeta):
 
         prompt_json = [{
             "name": prompt_name,
-            "output_class": serialize_prompt_class(prompt_cls),
-            "namespace": prompt_cls.__fields__.get("rag_space", None).default
+            "output_class": serialize_class(get_prompt_output_class(prompt_cls)),
+            "namespace": prompt_cls.__fields__.get("rag_namespace", None).default
         } for prompt_name, prompt_cls in self.prompts.items()]
         
 

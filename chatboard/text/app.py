@@ -1,12 +1,13 @@
 import asyncio
 import os
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 from chatboard.text.app_manager import app_manager
 from chatboard.text.llms.completion_parsing import (is_list_model,
                                                     unpack_list_model)
 from chatboard.text.llms.prompt_tracer import PromptTracer
 from chatboard.text.vectors.rag_documents2 import RagDocuments
+from chatboard.text.vectors.stores.base import OrderBy
 from fastapi import FastAPI
 from fastapi.concurrency import asynccontextmanager
 from pydantic import BaseModel
@@ -61,7 +62,7 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
         yield
 
 
-    app.router.lifespan_context = init_chatboard
+    # app.router.lifespan_context = init_chatboard
 
     
     @app.get('/chatboard/metadata')
@@ -82,12 +83,19 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
     
     @app.get("/chatboard/rag_documents/{namespace}")
     # async def get_rag_documents(namespace: str, offset: int = 0, limit: int = 10):
-    async def get_rag_documents(namespace: str, page: int = 0, pageSize: int = 10):
+    async def get_rag_documents(namespace: str, page: int = 0, pageSize: int = 10, sortField: str | None=None, sortOrder: Literal["asc", "desc"] | None=None):
         rag_cls = app_manager.rag_spaces[namespace]["metadata_class"]
         ns = app_manager.rag_spaces[namespace]["namespace"]
         rag_space = RagDocuments(ns, metadata_class=rag_cls)
-        res = await rag_space.get_documents(top_k=pageSize, offset=page*pageSize)
-        return res
+
+        order_by = OrderBy(
+            key= sortField,
+            direction= sortOrder,
+            start_from= page*pageSize
+        ) if sortOrder and sortField else None
+        
+        res = await rag_space.get_documents(top_k=pageSize, offset=page*pageSize, order_by=order_by)
+        return [r.to_dict() for r in res]
     
 
     @app.post("/chatboard/get_rag_document")
@@ -100,7 +108,7 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
         return res
 
 
-    @app.post("/chatboard/upsert_rag_document")
+    @app.post("/chatboard/rag_documents/upsert_rag_document")
     async def upsert_rag_document(body: UpsertRagParams):
         rag_cls = app_manager.rag_spaces[body.namespace]["metadata_class"]
         ns = app_manager.rag_spaces[body.namespace]["namespace"]
@@ -110,6 +118,7 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
             user_msg_content = await prompt.render_prompt(**body.input)
             
         rag_space = RagDocuments(ns, metadata_class=rag_cls)
+        # doc_id = [body.id] if body.id is not None else None
         doc_id = [body.id] if body.id is not None else None
         key = user_msg_content
         if is_list_model(rag_cls):
@@ -119,9 +128,10 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
             else:
                 raise ValueError("Output must be a list.")
         else:
-            value = rag_cls(**body.output)
-        res = await rag_space.add_documents([key], [value], doc_id)
-        return res
+            value = rag_cls(key=key, value=body.output)
+        #     value = rag_cls(**body.output)
+        res = await rag_space.add_documents([key], [value], doc_id) #type: ignore
+        return [r.to_dict() for r in res]
     
     @app.get('/chatboard/get_asset_partition')
     async def get_asset_partition(asset: str, field: str, partition: str):

@@ -292,7 +292,17 @@ class LLM(BaseModel):
         return model_kwargs
 
 
-    async def complete(self, msgs, tools=None, tool_choice=None, tracer_run=None, metadata={}, completion=None, **kwargs):
+    async def complete(
+        self, 
+        msgs, 
+        tools=None, 
+        tool_choice=None, 
+        tracer_run=None, 
+        metadata={}, 
+        completion=None, 
+        tags=None,
+        **kwargs
+        ):
 
         llm_kwargs = self.get_llm(**kwargs)
 
@@ -310,6 +320,7 @@ class LLM(BaseModel):
             name=self.name,
             inputs={"messages": [msg.to_openai() for msg in msgs]},
             extra=extra,
+            tags=tags,
         ) as llm_run:
         
             # output = await self.llm.ainvoke(messages)

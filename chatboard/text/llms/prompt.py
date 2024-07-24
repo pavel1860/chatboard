@@ -7,38 +7,37 @@ import os
 import pathlib
 import random
 import textwrap
+import traceback
 from enum import Enum
 from typing import (Any, Coroutine, Dict, Generic, List, Optional, Tuple,
                     TypeVar, Union)
 
 import tiktoken
 from chatboard.text.llms.views import ViewModel
-# from chatboard.text.vectors.rag_documents import RagDocuments
 from chatboard.text.vectors.rag_documents2 import RagDocuments
-# from langchain_core import pydantic_v1
 from langchain_core.pydantic_v1 import BaseModel, ConfigDict, Field
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langsmith.run_trees import RunTree
+from pydantic import ValidationError
 # from pydantic import BaseModel, ConfigDict, Field
 from pydantic.generics import GenericModel
 
-# from components.etl.llm import OpenAiLLM
-# from components.etl.prompt_manager import PromptManager
-# from components.etl.rag_manager import RagVectorSpace
-# from components.etl.tracer import Tracer
-# from config import PROMPT_REPO_HOME
-from .completion_parsing import (CompletionParser, auto_split_completion,
+from .completion_parsing import (CompletionParser, PromptParsingException,
+                                 auto_split_completion,
                                  auto_split_list_completion, is_list_model,
                                  parse_completion, parse_model_list,
                                  unpack_list_model)
-from .conversation import (AIMessage, Conversation, ConversationRag,
-                           HumanMessage, SystemConversation, SystemMessage,
-                           from_langchain_message)
+from .conversation import (AIMessage, ChatMessageType, Conversation,
+                           ConversationRag, HumanMessage, SystemConversation,
+                           SystemMessage, from_langchain_message)
 # from .openai_llm import OpenAiLLM
 from .llm import AzureOpenAiLLM, OpenAiLLM
 from .prompt_manager import PromptManager
 from .rag_manager import RagVectorSpace
 from .tracer import Tracer
+
+# from pydantic.errors import ValidationError
+
 
 # from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
 # from components.etl.completion_parsing import auto_split_completion, auto_split_list_completion, is_list_model, parse_completion, parse_model_list, unpack_list_model
@@ -187,38 +186,14 @@ class FewShotRag(BaseModel):
 
 
 class Prompt(BaseModel):
-    # promptpath: str=None
-    system_prompt: str=None
+    system_prompt: str | None=None
     model: str= "gpt-3.5-turbo-0125"
-    # _func=None
     name: Optional[str] = None
     llm: Union[OpenAiLLM, AzureOpenAiLLM] = Field(default_factory=OpenAiLLM)
     output_class: Optional[BaseModel] = None
     rag_space: Optional[RagDocuments] = None
     rag_namespace: Optional[str] = None
-    tools: Optional[List[ViewModel]] = None
-    # filename: str=None
-    # rag_length: int=None    
-    # rag: RagDocuments= Field(default_factory=RagDocuments)
-    # run_name=None
-    # rag_space=None
-    # rag_index=None
-    # rag_query_key=None
-    # rag_var="examples"
-    # rag_fields=None,   
-    # system_filename: str=None
-    # user_filename: str=None
-    # pydantic_model: BaseModel=None
-    # delimiter: str=None
-    
-    # temperature: float=None,
-    # max_tokens: int=None,
-    # stop_sequences: List[str]=None
-    # stream: bool=False         
-    # logit_bias: any=None
-    # top_p: float=None
-    # presence_penalty: float=None
-    # frequency_penalty: float=None    
+    tools: Optional[List[ViewModel]] = None    
     function_calling: bool = False
     is_traceable: bool=True,
     # seed: int = None                 
@@ -232,114 +207,7 @@ class Prompt(BaseModel):
             self.name = self.__class__.__name__
         if self.rag_namespace:
             self.rag_space = RagDocuments(self.rag_namespace, metadata_class=FewShotRag)
-        
 
-
-    # def __init__(
-    #     self        
-    # ):
-        
-
-    # def __init__(
-    #         self,            
-    #         promptpath=None,
-    #         _func=None, 
-    #         name=None,
-    #         params={}, 
-    #         filename=None,
-    #         rag_length=None, 
-    #         run_name=None,
-    #         rag_space=None,
-    #         rag_index=None,
-    #         rag_query_key=None,
-    #         rag_var="examples",
-    #         rag_fields=None,
-    #         system_prompt=None,
-    #         system_filename=None,
-    #         user_filename=None,
-    #         pydantic_model=None,
-    #         delimiter=None,
-    #         model=None,
-    #         temperature=None, 
-    #         max_tokens=None, 
-    #         stop_sequences=None,
-    #         stream=False,            
-    #         logit_bias=None,            
-    #         top_p=None,
-    #         presence_penalty=None,
-    #         frequency_penalty=None,
-    #         suffix=None,
-    #         is_traceable=True, 
-    #         seed=None,                       
-    #     ):
-    #         if not not promptpath and not not system_prompt:
-    #             raise ValueError("promptpath and system_prompt cannot both be provided")
-    #         caller_frame = inspect.stack()[1]
-    #         caller_filepath = pathlib.Path(caller_frame.filename)
-    #         self.caller_dir = caller_filepath.parent            
-    #         self._func = _func
-    #         self.params = params
-    #         if not name:
-    #             raise PromptException("name must be provided")
-    #         self.name = name
-    #         self.filename = filename
-            
-    #         self.rag_length = rag_length
-    #         self.run_name = run_name
-    #         self.rag_index = rag_index
-    #         self.rag_query_key = rag_query_key or 'prompt'
-    #         self.rag_var = rag_var
-    #         self.rag_fields = rag_fields
-    #         self.stop_sequences = stop_sequences
-    #         self.add_context = False
-    #         self.rag_manager = None
-    #         self.system_filename = system_filename
-    #         self.user_filename = user_filename
-    #         self.is_traceable = is_traceable
-
-    #         # if self.rag_index and self.rag_length:
-    #         #     self.rag_space = ConversationRag(self.rag_index)
-    #         self.rag_space = rag_space
-
-    #         self.system_prompt = system_prompt
-    #         self.prompt_manager = None
-    #         self.pydantic_model = pydantic_model
-    #         self.delimiter = delimiter
-    #         self.seed = seed
-                
-    #         #------------
-    #         self.llm = OpenAiLLM(
-    #             model=model,
-    #             temperature=temperature, 
-    #             max_tokens=max_tokens, 
-    #             stop_sequences=stop_sequences,
-    #             stream=stream,            
-    #             logit_bias=logit_bias,            
-    #             top_p=top_p,
-    #             presence_penalty=presence_penalty,
-    #             frequency_penalty=frequency_penalty,
-    #             suffix=suffix,
-    #             is_traceable=self.is_traceable,
-    #             seed=seed,
-    #         )
-
-    #         if promptpath or filename:
-    #             if filename:
-    #                 filename = pathlib.Path(filename)
-    #                 self.promptpath = filename if filename.is_absolute() else self.caller_dir / filename
-    #             else:
-    #                 self.promptpath = pathlib.Path(PROMPT_REPO_HOME) / promptpath
-                
-    #             if promptpath is not None:
-    #                 if type(promptpath) == str:
-    #                     promptpath = pathlib.Path(promptpath)
-    #                 promptpath = pathlib.Path(PROMPT_REPO_HOME) / promptpath
-    #             else:
-    #                 promptpath = self.promptpath
-                        
-    #             self.prompt_manager = PromptManager(promptpath)
-
-            
         
 
     def get_tracer(self, inputs, metadata):
@@ -422,11 +290,11 @@ class Prompt(BaseModel):
         postfix = kwargs.get('prompt_postfix', '')
         if kwargs.get('prompt'):
             prompt = kwargs['prompt']
-            return HumanMessage(content=prompt + postfix)
+            return HumanMessage(content=prompt + postfix, name="user")
         prompt_kwargs = filter_kwargs(kwargs, self.render_prompt)
         prompt = await self.render_prompt(**prompt_kwargs)
         prompt = textwrap.dedent(prompt).strip()
-        return HumanMessage(content=prompt + postfix) 
+        return HumanMessage(content=prompt + postfix, name="user") 
     
     async def _get_system_msg(self, **kwargs):
         if self.system_prompt is not None:
@@ -448,17 +316,27 @@ class Prompt(BaseModel):
 
     async def conversation(self, **kwargs: Any):
         prompt_msg, system_msg = await self.render_prompts(**kwargs)
-        msgs = [system_msg]
+        msgs: List[ChatMessageType] = [system_msg] if system_msg else []
         if self.rag_namespace and self.rag_space:
             rag_results = await self.rag_space.similarity(prompt_msg.content)
             for rag_res in rag_results:
-                msgs.append(HumanMessage(content=rag_res.metadata.key))
-                msgs.append(AIMessage(content=rag_res.metadata.value))
+                msgs.append(HumanMessage(content=rag_res.metadata.key, name="user_example"))
+                msgs.append(AIMessage(content=rag_res.metadata.value, name="assistant_example"))
         msgs.append(prompt_msg)
         return msgs
     
 
-    async def __call__(self, prompt=None, history=[], tracer_run=None, output_conversation=False, **kwargs: Any) -> Any:
+    async def __call__(
+            self, 
+            prompt=None, 
+            history=[], 
+            tracer_run=None, 
+            output_conversation=False, 
+            retries=3,
+            smart_retry=True,
+            **kwargs: Any,
+            
+        ) -> Any:
         if prompt is not None:
             kwargs['prompt'] = prompt
         log_kwargs = {}
@@ -481,21 +359,36 @@ class Prompt(BaseModel):
             msgs = await self.conversation(**kwargs)
             msgs = [m for m in msgs if m is not None]
             tools = [m.to_tool() for m in self.tools] if self.tools else None
-            # openai_msgs = [m.to_openai() for m in msgs]
-            completion_msg = await self.llm.complete(
-                    msgs=msgs,
-                    tools=tools,
-                    tracer_run=prompt_run, 
-                    # metadata=system_conversation.get_metadata(),            
-                    **kwargs
-                )
-            # output = openai_completion.choices[0].message
-            completion_msg.output = await self.parser(completion_msg.content)
-            completion_msg.run_id = str(prompt_run.id)
-            prompt_run.end(outputs={'output': completion_msg})
-            if output_conversation:
-                return msgs + [completion_msg]
-            return completion_msg
+            for try_num in range(retries):
+                try:
+                    completion_msg = await self.llm.complete(
+                            msgs=msgs,
+                            tools=tools,
+                            tracer_run=prompt_run,
+                            tags=[f"try_{try_num}"] if try_num > 0 else None,
+                            # metadata=system_conversation.get_metadata(),            
+                            **kwargs
+                        )
+                    # output = openai_completion.choices[0].message
+                    completion_msg.output = await self.parser(completion_msg.content)
+                    completion_msg.run_id = str(prompt_run.id)
+                    prompt_run.end(outputs={'output': completion_msg})
+                    if output_conversation:
+                        return msgs + [completion_msg]
+                    return completion_msg
+                except (KeyError, PromptParsingException) as e:
+                    print(f"try {try_num} KeyError: {str(e)}")
+                    if try_num == retries - 1:
+                        raise e
+                    if smart_retry:
+                        msgs.append(AIMessage(content=completion_msg.content))
+                        msgs.append(HumanMessage(content=f"something is wrong with the parameters:\n{str(e.__class__.__name__)}: {str(e)}.\n please try again, in the format specified without any apologies or commends."))
+                        prompt_run.add_tags([f"try_{try_num + 1}"])
+                except Exception as e:
+                    traceback.print_exc()
+                    raise e
+
+                    
     
 
     async def parser(self, completion):

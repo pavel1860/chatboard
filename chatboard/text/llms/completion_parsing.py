@@ -1,12 +1,11 @@
-from enum import Enum
 import inspect
 import re
-from typing import Optional, Union, get_type_hints, get_origin, get_args
-from langchain_openai import ChatOpenAI
-from langchain_core.output_parsers.openai_tools import PydanticToolsParser
+from enum import Enum
+from typing import Optional, Union, get_args, get_origin, get_type_hints
 
 import yaml
-
+from langchain_core.output_parsers.openai_tools import PydanticToolsParser
+from langchain_openai import ChatOpenAI
 
 
 def sanitize_text(text: str):
@@ -63,7 +62,8 @@ def parse_model_list(completion, pydantic_model, delimiter=","):
     for row in rows:
         row_split = row.split(delimiter)
         if len(row_split) != len(pydantic_model.__fields__.keys()):
-            raise PromptParsingException(f"Row {row} does not have the correct number of fields")
+            continue
+            # raise PromptParsingException(f"Row {row} does not have the correct number of fields")
         for i, (field_name, field_info) in enumerate(pydantic_model.__fields__.items()):
             # if field_info.type_ == str:
             #     row_split[i] = sanitize_text(row_split[i])

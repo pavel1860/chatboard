@@ -18,7 +18,7 @@ from langsmith import RunTree
 # events: Optional[Sequence[ls_schemas.RunEvent]] = None,
 class Tracer:
 
-    def __init__(self, name, inputs, run_type="chain", extra={}, tracer_run=None, is_traceable=True):
+    def __init__(self, name, inputs, run_type="chain", extra={}, tracer_run=None, is_traceable=True, tags=None):
         self.is_traceable = is_traceable
         self.tracer_run = None
         if not self.is_traceable:
@@ -46,6 +46,9 @@ class Tracer:
                 extra=extra
                 # extra=prompt_metadata,
             )
+        
+        if tags is not None:
+            self.tracer_run.add_tags(tags)
 
     @property
     def id(self):
@@ -90,3 +93,9 @@ class Tracer:
             extra=extra,
             tracer_run=self
         )
+        
+        
+    def add_tags(self, tags):
+        if not self.is_traceable or self.tracer_run is None:
+            return
+        self.tracer_run.add_tags(tags)

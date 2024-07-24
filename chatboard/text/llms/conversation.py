@@ -20,12 +20,16 @@ class BaseMessage(BaseModel):
     is_example: Optional[bool] = False
     is_history: Optional[bool] = False
     is_output: Optional[bool] = False
+    name: Optional[str] = None
 
     def to_openai(self):
-        return {
-            "role": self.role,
-            "content": self.content,
+        oai_msg = {
+            "role": self.role, # type: ignore
+            "content": self.content,            
         }
+        if self.name:
+            oai_msg["name"] = self.name
+        return oai_msg
 
 
 class SystemMessage(BaseMessage):
@@ -50,17 +54,21 @@ class AIMessage(BaseMessage):
 
     def to_openai(self):
         if self.tool_calls:            
-            return {
+            oai_msg = {
                 "role": self.role,
                 "content": self.content + "\n".join([f"{t.function.name}\n{t.function.arguments}" for t in self.tool_calls])
             }
-        return {
-            "role": self.role,
-            "content": self.content,
-        }
+        else:
+            oai_msg = {
+                "role": self.role,
+                "content": self.content,
+            }
+        if self.name:
+            oai_msg["name"] = self.name
+        return oai_msg
     
     # tools: Optional[List[BaseModel]] = None
-
+ChatMessageType = Union[SystemMessage, HumanMessage, AIMessage]
 
 def from_langchain_message(message):
     if message.type == "system":

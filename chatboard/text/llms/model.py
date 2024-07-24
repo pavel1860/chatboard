@@ -1,8 +1,11 @@
-import json
-from typing import Optional
-from pydantic import BaseModel, create_model
-from langchain_core.utils.function_calling import convert_to_openai_tool
 import inspect
+import json
+from typing import Any, Optional
+
+from chatboard.text.llms.completion_parsing import (is_list_model,
+                                                    unpack_list_model)
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import BaseModel, create_model
 
 
 class Config:
@@ -64,3 +67,21 @@ def iterate_class_fields(cls_, sub_cls_filter=None, exclude=False):
 
 
 
+def serialize_class(cls_: Any):
+    output_type = "object"
+    if is_list_model(cls_):
+        output_type = "array"
+        output_class = unpack_list_model(cls_)
+    else:
+        output_class = cls_
+    if hasattr(output_class, 'model_json_schema'):
+        schema = output_class.model_json_schema()
+        version = 'v2'
+    else:
+        schema = convert_to_openai_tool(output_class)
+        version = 'v1'
+    return {
+        "type": output_type,
+        "schema": schema,
+        "pydantic_version": version
+    }

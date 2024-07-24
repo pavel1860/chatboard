@@ -1,20 +1,19 @@
-from enum import Enum
-from typing import Any, Iterable, List, Optional, Type
-from langchain_core.pydantic_v1 import BaseModel, Field, PrivateAttr, create_model
-from langchain_core.utils.function_calling import convert_to_openai_tool
+import inspect
 # from pydantic import BaseModel, Field, PrivateAttr, ConfigDict
 import textwrap
-from chatboard.text.llms.conversation import HumanMessage, SystemMessage
-import inspect
 from abc import ABC, abstractmethod
+from enum import Enum
+from typing import Any, Iterable, List, Optional, Type
 
-from chatboard.text.llms.function_utils import call_function, filter_func_args, is_async_function
+from chatboard.text.llms.conversation import HumanMessage, SystemMessage
+from chatboard.text.llms.function_utils import (call_function,
+                                                filter_func_args,
+                                                is_async_function)
 from chatboard.text.llms.model import iterate_class_fields
-
-
-
-
-
+from chatboard.text.vectors.stores.qdrant_vector_store import VectorDbIndexType
+from langchain_core.pydantic_v1 import (BaseModel, Field, PrivateAttr,
+                                        create_model)
+from langchain_core.utils.function_calling import convert_to_openai_tool
 
 
 # def is_async_function(obj):

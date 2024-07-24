@@ -1,20 +1,21 @@
 import asyncio
 import inspect
-from typing import (Any, Dict, Generic, List, Literal, Optional, Type, TypeVar,
-                    Union)
+from typing import (Any, Dict, Generic, List, Literal, Optional, Type,
+                    TypedDict, TypeVar, Union)
 from uuid import uuid4
 
 from chatboard.text.llms.completion_parsing import is_list_model
 # from pydantic import BaseModel
 # from chatboard.text.app_manager import app_manager
-from chatboard.text.llms.mvc import BaseModel
-from chatboard.text.vectors.stores.base import VectorStoreBase
+# from chatboard.text.llms.mvc import BaseModel
+from chatboard.text.vectors.stores.base import OrderBy, VectorStoreBase
 from chatboard.text.vectors.stores.qdrant_vector_store import QdrantVectorStore
 from chatboard.text.vectors.vectorizers.base import (VectorizerBase,
                                                      VectorizerDenseBase,
                                                      VectorizerSparseBase,
                                                      VectorMetrics)
 from chatboard.text.vectors.vectorizers.text_vectorizer import TextVectorizer
+from pydantic import BaseModel
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 K = TypeVar('K', bound=BaseModel)
@@ -27,6 +28,9 @@ V = TypeVar('V', bound=BaseModel)
 #     key: Optional[Union[K, str]]
 #     value: Union[V, str]
 # class RagDocMetadata:
+
+
+
     
     
 def get_model_indexs(cls_, prefix=""):
@@ -34,8 +38,12 @@ def get_model_indexs(cls_, prefix=""):
     for field, info in cls_.__fields__.items():
         if inspect.isclass(info.annotation) and issubclass(info.annotation, BaseModel):
             indexs_to_create += get_model_indexs(info.annotation, prefix=prefix+field+".")
-        if hasattr(info, 'field_info'): # check if pydantic v1
+        extra = None
+        if hasattr(info, 'json_schema_extra'):
+            extra = info.json_schema_extra
+        elif hasattr(info, 'field_info'): # check if pydantic v1
             extra = info.field_info.extra
+        if extra:
             if "index" in extra:
                 # print("found index:", field, extra["index"])
                 indexs_to_create.append({
@@ -43,6 +51,7 @@ def get_model_indexs(cls_, prefix=""):
                     "schema": extra["index"]
                 })
     return indexs_to_create
+
 
 
 
@@ -58,11 +67,23 @@ class RagSearchResult(BaseModel, Generic[T]):
     id: str | int
     score: float
     metadata: T
-    vector: Optional[Dict[str, Any]] = None
+    vector: Optional[Dict[str, Any]] = None    
 
     class Config:
         arbitrary_types_allowed = True
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "score": self.score,
+            "metadata": self.metadata.dict(),
+            # "vector": self.vector
+        }
+    
 
+class IndexSchema(TypedDict):
+    field: str
+    schema: Literal['keyword', 'integer', 'float', 'bool', 'geo', 'datetime', 'text']
 
 
 class RagDocuments:
@@ -73,7 +94,8 @@ class RagDocuments:
             vectorizers: List[VectorizerBase] = [], 
             vector_store: VectorStoreBase | None = None, 
             key_class: Type[K] | Type[str] = str, 
-            metadata_class: Type[V] | Type[str] = str
+            metadata_class: Type[V] | Type[str] = str,
+            indexs: Optional[List[str]] = None
         ) -> None:
         self.namespace = namespace
         if vector_store is None:
@@ -86,6 +108,7 @@ class RagDocuments:
             self.vectorizers = vectorizers
         self.key_class = key_class
         self.metadata_class = metadata_class
+        self.indexs = indexs or get_model_indexs(self.metadata_class)
         # app_manager.register_rag_space(namespace, metadata_class)
 
 
@@ -119,7 +142,7 @@ class RagDocuments:
             # else:
             #     key = self.key_class(**res.metadata["key"])
             metadata = self.metadata_class(**res.metadata)
-            rag_results.append(RagSearchResult[self.metadata_class](
+            rag_results.append(RagSearchResult(
                 id=res.id, 
                 score=res.score, 
                 metadata=metadata,
@@ -131,7 +154,7 @@ class RagDocuments:
     def _pack_upsert_results(self, metadata, ids):
         rag_results = []
         for md, id_ in zip(metadata, ids):            
-            rag_results.append(RagSearchResult[self.metadata_class](
+            rag_results.append(RagSearchResult(
                 id=id_, 
                 score=-1, 
                 metadata=md,
@@ -186,7 +209,7 @@ class RagDocuments:
             offset: int =0,
             with_metadata: bool=True, 
             with_vectors: bool=False, 
-            order_by: Dict | None=None, 
+            order_by: OrderBy | str | None=None, 
             group_by: Dict | None=None,
             group_size=1,
             ):
@@ -245,19 +268,10 @@ class RagDocuments:
 
     async def create_namespace(self, namespace: str | None = None):
         namespace = namespace or self.namespace
-        if isinstance(self.metadata_class, BaseModel):
+        if isinstance(self.metadata_class, BaseModel) or issubclass(self.metadata_class, BaseModel):
             indexs_to_create=get_model_indexs(self.metadata_class)
         else:
-            indexs_to_create = []
-        # for field, info in self.metadata_class.__fields__.items():
-        #     if hasattr(info, 'field_info'): # check if pydantic v1
-        #         extra = info.field_info.extra
-        #         if "index" in extra:
-        #             print(field, extra["index"])
-        #             indexs_to_create.append({
-        #                 "field": field,
-        #                 "schema": extra["index"]
-        #             })
+            indexs_to_create = []        
         return await self.vector_store.create_collection(self.vectorizers, namespace, indexs=indexs_to_create)
     
     async def verify_namespace(self):

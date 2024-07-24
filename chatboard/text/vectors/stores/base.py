@@ -1,6 +1,12 @@
 import copy
 from abc import abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal, TypedDict
+
+
+class OrderBy(TypedDict):
+    key: str
+    direction: Literal["asc", "desc"]
+    start_from: int
 
 
 class VectorStoreBase:
@@ -18,7 +24,7 @@ class VectorStoreBase:
         raise NotImplementedError
     
     @abstractmethod
-    async def similarity(self, query, top_k=3, filters=None, alpha=None, with_vectors=False):
+    async def similarity(self, query, top_k=3, filters=None, alpha=None, with_vectors=False, fussion: Literal["RRF", "RSF"] | None=None):
         """Searches for similar documents in the vector store"""
         raise NotImplementedError
 
@@ -43,13 +49,18 @@ class VectorStoreBase:
         raise NotImplementedError
     
 
-    async def get_documents(self, filters: Any,  ids: List[str | int] | None=None, top_k: int=10,  offset: int=0, with_payload=False, with_vectors=False, order_by: Dict | None=None):
+    async def get_documents(self, filters: Any,  ids: List[str | int] | None=None, top_k: int=10,  offset: int=0, with_payload: bool=False, with_vectors: bool=False, order_by: OrderBy | str | None=None):
         """Retrieves documents from the vector store"""
         raise NotImplementedError
     
 
     def _init_client(self):
         """Initializes the vector store client"""
+        raise NotImplementedError
+    
+
+    def info(self):
+        """Returns information about the vector store"""
         raise NotImplementedError
 
 
