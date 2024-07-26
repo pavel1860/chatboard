@@ -167,7 +167,7 @@ class ChatPrompt(BaseModel):
             system_prompt+= "Task:\n"
             system_prompt += f"{self.task}\n"
         
-        system_prompt += render_output.system_prompt        
+        system_prompt += render_output.system_prompt
         
         if render_output.is_actions:
             system_prompt += "\nyou should use one of the following actions:\n"

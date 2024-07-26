@@ -5,6 +5,11 @@ from pydantic import BaseModel, Field
 
 
 
+def trim_and_stringify(doc):
+    if isinstance(doc, str):
+        return doc[:43000]
+    return str(doc)[:43000]
+
 
 class TextVectorizer(VectorizerBase):
     name: str = "dense"
@@ -16,7 +21,9 @@ class TextVectorizer(VectorizerBase):
         # for doc in documents:
             # if len(doc) > 43000:
                 # doc = doc[:43000]
-        documents = [doc[:43000] for doc in documents]
+        
+        # documents = [doc[:43000] for doc in documents]
+        documents = [trim_and_stringify(doc) for doc in documents]
         return await self.dense_embeddings.embed_documents(documents)
     
     async def embed_query(self, query: str):

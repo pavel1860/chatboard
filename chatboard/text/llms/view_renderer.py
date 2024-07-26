@@ -2,6 +2,7 @@ from typing import Any, Iterable, Type
 from chatboard.text.llms.function_utils import call_function, filter_func_args
 from chatboard.text.llms.model_schema_prompt_parser import ModelSchemaPromptParser
 from chatboard.text.llms.mvc import View, BaseModel, Action
+
 from langchain_core.utils.function_calling import convert_to_openai_tool
 import json
 
@@ -136,14 +137,18 @@ class ViewRenderer():
         #     if render_output is None:
         #         render_output = self.use_default_render_tool(view)
         # else: # render regular view
-        filtered_args = filter_func_args(view.render, kwargs)
-        render_output = await call_function(view.render, **filtered_args)
+        # filtered_args = filter_func_args(view.render, kwargs)
+        render_output = None
+        if hasattr(view, 'render'):
+            render_output = await call_function(view.render, **kwargs)
         if render_output is None:
             render_output = self.use_default_view_render(view)
         return render_output
     
     def render_system_aux(self, view):
-        render_output = view.render_system()
+        render_output = None
+        if hasattr(view, 'render_system'):
+            render_output = view.render_system()
         if render_output is None:
             render_output = self.use_default_render_system(view)
         return render_output
@@ -205,11 +210,11 @@ class ViewRenderer():
                 system_prompt += system_render + "\n"
                 visited.add(curr_view.__class__.__name__)
                 # handle tool gathering
-                if curr_view._output_model:
+                if hasattr(curr_view, "_output_model") and curr_view._output_model:
                     if output_model is not None or actions:
                         raise ValueError("Only one output model is allowed")            
                     output_model = view._output_model
-                if curr_view._actions:
+                if hasattr(curr_view, "_actions") and curr_view._actions:
                     if output_model:
                         raise ValueError("Only one output model is allowed")
                     actions.update({a.__name__: a for a in curr_view._actions})
