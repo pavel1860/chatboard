@@ -1,7 +1,8 @@
 
 from functools import wraps
+import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Type, Union
 from pydantic import BaseModel, Field
 
 from chatboard.text.llms.context import Context
@@ -25,14 +26,14 @@ class ChatPrompt(BaseModel):
     
     background: Optional[str] = None
     task: Optional[str] = None
-    rules: Optional[str | List[str]] = None 
-    actions: Optional[List[BaseModel]] = []
+    rules: Optional[str | List[str] | Callable] = None 
+    actions: Optional[List[Type[BaseModel]]] = []
     
     is_traceable: bool = True 
     
     _render_method: Optional[Callable] = None
   
-    async def render_system_message(self, base_models: Dict[str, BaseModel]) -> SystemMessage:
+    async def render_system_message(self, base_models: Dict[str, BaseModel], **kwargs) -> SystemMessage:
         system_prompt = ""
         
         if self.background:
@@ -48,8 +49,11 @@ class ChatPrompt(BaseModel):
             system_prompt += "\nyou should use one of the following actions:\n"
             system_prompt += "\n".join([render_base_model_schema(action) for action in self.actions]) + "\n"
         
-        if self.rules:  
-            rules = self.rules
+        if self.rules is not None:
+            if inspect.isfunction(self.rules):  
+                rules = await call_function(self.rules, **kwargs)
+            else:
+                rules = self.rules
             system_prompt += "\nRules:\n"                                      
             if isinstance(rules, list):
                 system_prompt += "\n".join(rules) + "\n"
@@ -79,7 +83,7 @@ class ChatPrompt(BaseModel):
             messages.append(AIMessage(content=prompt) if view.role == 'assistant' else HumanMessage(content=prompt))
             total_base_models.update(base_models)
             
-        system_message = await self.render_system_message(total_base_models)
+        system_message = await self.render_system_message(total_base_models, **kwargs)
         messages = [system_message] + messages
         return messages
 
@@ -113,7 +117,7 @@ class ChatPrompt(BaseModel):
             
             response_message = await self.llm.complete(
                 msgs=messages,
-                tools=list(self.actions.values()) if self.actions and not response_model else None,
+                tools=self.actions if self.actions and not response_model else None,
                 tracer_run=prompt_run, 
             )            
             
@@ -135,7 +139,7 @@ def prompt(
     background: Optional[str] = None,
     task: Optional[str] = None,
     rules: Optional[str | List[str]] = None,
-    actions: Optional[List[BaseModel]] = None,
+    actions: Optional[List[Type[BaseModel]]] = None,
     is_traceable: bool = True
 ):
     if llm is None:

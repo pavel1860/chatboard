@@ -14,7 +14,7 @@ from ..vectors.embeddings.text_embeddings import DenseEmbeddings
 
 
 class BaseMessage(BaseModel):
-    content: str
+    content: str | None
     is_example: Optional[bool] = False
     is_history: Optional[bool] = False
     is_output: Optional[bool] = False
@@ -41,9 +41,16 @@ class AIMessage(BaseMessage):
     # role: str = Field("assistant", const=True)
     did_finish: Optional[bool] = True
     role: Literal["assistant"] = "assistant"
-    tool_calls: Optional[List[BaseModel]] = None
-    output: Optional[BaseModel] = None
-
+    tool_calls: Optional[List[Any]] = None
+    # output: Optional[BaseModel] = None
+    actions: Optional[List[BaseModel]] = None
+    
+    @property
+    def output(self):
+        if not self.actions:
+            return None
+        return self.actions[0]
+        
 
     def to_openai(self):
         if self.tool_calls:            
