@@ -7,11 +7,12 @@ import uuid
 
 
 from chatboard.text.app_manager import app_manager
-from chatboard.text.llms.history import History
+# from chatboard.text.llms.history import History
+from chatboard.text.llms.history2 import History
 from chatboard.text.llms.view_renderer import RenderOutput
 from chatboard.text.llms.views import BaseModel, Field
 
-from chatboard.text.llms.conversation import HumanMessage, SystemMessage, AIMessage
+from chatboard.text.llms.conversation import BaseMessage, HumanMessage, SystemMessage, AIMessage
 
 
 # class HistoryMessage:
@@ -61,14 +62,18 @@ class Context(BaseModel):
         self.curr_description = None
         self.set_prompt(None)
 
-    
 
     def get_prompt(self):
         raise NotImplementedError
 
     def set_prompt(self, prompt_name: str):
         raise NotImplementedError
+        
+    def get_history(self):
+        raise NotImplementedError
     
+    def set_history(self, messages: List[BaseMessage]):
+        raise NotImplementedError
 
     async def set_current_prompt(self, prompt_cls):
         self.curr_prompt = prompt_cls.__name__

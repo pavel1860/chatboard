@@ -22,7 +22,9 @@ def filter_func_args(func, args):
 
 
 async def call_function(func, *args, **kwargs):
-    kwargs = filter_func_args(func, kwargs)
+    func_args = get_func_args(func)
+    if 'kwargs' not in func_args:
+        kwargs = filter_func_args(func, kwargs)
     if inspect.iscoroutinefunction(func):
         return await func(*args, **kwargs)
     return func(*args, **kwargs)

@@ -1,7 +1,7 @@
 
 import json
 from time import time
-from typing import Any, Coroutine, Dict, Iterable, List, Optional, Tuple, TypeVar, Generic, Union
+from typing import Any, Coroutine, Dict, Iterable, List, Literal, Optional, Tuple, TypeVar, Generic, Union
 
 import aiohttp
 from chatboard.clients.openai_client import build_async_openai_client
@@ -11,8 +11,9 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from chatboard.text.llms.completion_parsing2 import OutputParser
 
 from .conversation import AIMessage, HumanMessage, SystemMessage, from_langchain_message
-from pydantic import BaseModel, Field, validator
-from pydantic.v1.error_wrappers import ValidationError
+from pydantic import BaseModel, Field, ValidationError, validator
+# from pydantic.v1.error_wrappers import ValidationError
+
 from .tracer import Tracer
 import tiktoken
 import yaml
@@ -21,6 +22,40 @@ import os
 
 import openai
 from openai.types.chat.chat_completion import ChatCompletion
+
+
+
+
+
+from docstring_parser import parse
+
+def remove_a_key(d, remove_key):
+    if isinstance(d, dict):
+        for key in list(d.keys()):
+            if key == remove_key:
+                del d[key]
+            else:
+                remove_a_key(d[key], remove_key)
+
+def schema_to_function(schema: Any):
+    assert schema.__doc__, f"{schema.__name__} is missing a docstring."
+    assert (
+        "title" not in schema.__fields__.keys()
+    ), "`title` is a reserved keyword and cannot be used as a field name."
+    schema_dict = schema.model_json_schema()
+    remove_a_key(schema_dict, "title")
+
+    return {
+        "type": "function",
+        "function": {
+            "name": schema.__name__,
+            "description": schema.__doc__,
+            "parameters": schema_dict,
+        }
+    }
+
+
+
 
 
 DEFAULT_MODEL = "gpt-3.5-turbo-0125"
@@ -132,7 +167,7 @@ class OpenAiLlmClient:
         self.client = build_async_openai_client()
 
     def preprocess(self, msgs):
-        return [msg.to_openai() for msg in msgs]
+        return [msg.to_openai() for msg in msgs if msg.is_valid()]
 
     async def complete(self, msgs, tools=None, **kwargs):
         # tools = tools or []
@@ -166,6 +201,7 @@ class LLM(BaseModel):
     is_traceable: Optional[bool] = True
     seed: Optional[int] = None
     client: Union[OpenAiLlmClient, PhiLlmClient]    
+    parallel_tool_calls: Optional[bool] = True
 
     class Config:
         arbitrary_types_allowed = True
@@ -214,6 +250,11 @@ class LLM(BaseModel):
         seed = kwargs.get("seed", self.seed)
         if seed is not None:
             model_kwargs['seed'] = seed
+            
+        parallel_tool_calls = kwargs.get("parallel_tool_calls", self.parallel_tool_calls)
+        if parallel_tool_calls is not None:
+            model_kwargs['parallel_tool_calls'] = parallel_tool_calls            
+        
         return model_kwargs
 
 
@@ -221,13 +262,14 @@ class LLM(BaseModel):
             self, 
             msgs: List[SystemMessage | HumanMessage | AIMessage], 
             tools: List[BaseModel] | None=None, 
-            tool_choice: BaseModel | None=None,
+            tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
             response_model: BaseModel | None=None,
             tracer_run=None, 
             metadata={}, 
             completion=None,
             retries=3, 
             smart_retry=True,
+            logprobs: bool=False,
             **kwargs):
 
         llm_kwargs = self.get_llm(**kwargs)
@@ -249,14 +291,23 @@ class LLM(BaseModel):
         ) as llm_run:
         
 
-            tool_schema = [convert_to_openai_tool(t) for t in tools] if tools else None
-            tool_choice_schema = convert_to_openai_tool(tool_choice) if tool_choice else None
+            # tool_schema = [convert_to_openai_tool(t) for t in tools] if tools else None
+            tool_schema = [schema_to_function(t) for t in tools] if tools else None
+            
+            if isinstance(tool_choice, BaseModel):
+                tool_choice_schema =  {"type": "function", "function": {"name": tool_choice.__class__.__name__}}
+            else:
+                if tool_choice and tool_choice not in ["auto", "required", "none"]:
+                    raise ValueError("tool_choice must be one of 'auto', 'required', 'none' or an BaseModel")
+                tool_choice_schema = tool_choice
+            
             for try_num in range(retries):
                 try:
                     completion = await self.client.complete(
                         msgs, 
                         tools=tool_schema, 
                         tool_choice=tool_choice_schema, 
+                        logprobs=logprobs,
                         **llm_kwargs)                    
                 
                     ai_message = self.parse_output(completion, tools, tool_choice, response_model)
@@ -272,6 +323,12 @@ class LLM(BaseModel):
                     if try_num == retries - 1:
                         raise e
                     msgs.append(HumanMessage(content=f"something is wrong with the parameters:\n{str(e)}"))
+                except Exception as e:
+                    import pickle
+                    from datetime import datetime
+                    with open(f"msgs_{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}.pkl", "wb") as f:
+                        pickle.dump(msgs, f)
+                    raise e
                     
 
             llm_run.end(outputs=completion)

@@ -4,7 +4,8 @@ from uuid import uuid4
 from chatboard.text.llms.completion_parsing import is_list_model
 # from pydantic import BaseModel
 # from chatboard.text.app_manager import app_manager
-from chatboard.text.llms.mvc import BaseModel
+# from chatboard.text.llms.mvc import BaseModel
+from pydantic import BaseModel
 from chatboard.text.vectors.stores.base import VectorStoreBase
 from chatboard.text.vectors.stores.qdrant_vector_store import QdrantVectorStore
 from chatboard.text.vectors.vectorizers.base import VectorMetrics, VectorizerBase
@@ -32,8 +33,11 @@ def get_model_indexs(cls_, prefix=""):
     for field, info in cls_.__fields__.items():
         if inspect.isclass(info.annotation) and issubclass(info.annotation, BaseModel):
             indexs_to_create += get_model_indexs(info.annotation, prefix=prefix+field+".")
-        if hasattr(info, 'field_info'): # check if pydantic v1
+        if hasattr(info, 'json_schema_extra'):
+            extra = info.json_schema_extra
+        elif hasattr(info, 'field_info'): # check if pydantic v1
             extra = info.field_info.extra
+        if extra:
             if "index" in extra:
                 # print("found index:", field, extra["index"])
                 indexs_to_create.append({

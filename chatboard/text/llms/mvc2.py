@@ -4,11 +4,18 @@ from functools import wraps
 # from chatboard.text.llms.mvc import BaseModel, Field
 from pydantic import BaseModel, Field
 from uuid import uuid4
+import json
 
+
+ViewWrapperType = Literal["xml", "markdown", None]
+BaseModelRenderType =  Literal['model_dump', 'json']
 class ViewNode(BaseModel):
     vn_id: str = Field(default_factory=lambda: str(uuid4()), description="id of the view node")
     name: str = Field(None, description="name of the view function")
     title: str | None = None
+    numerate: bool = False
+    base_model: BaseModelRenderType = 'json'
+    wrap: ViewWrapperType = None
     role: Literal["assistant", "user", "system"] | None = None
     # views: List[Union["ViewNode", BaseModel, str]] | Tuple[Union["ViewNode", BaseModel, str]] | "ViewNode" | BaseModel | str 
     views: Any
@@ -19,7 +26,15 @@ class ViewNode(BaseModel):
     
 
     
-def view(container=None, title=None, actions=None, role=None):
+def view(
+    container=None, 
+    title=None, 
+    actions=None, 
+    role=None,
+    numerate=False,
+    base_model: BaseModelRenderType = 'json',
+    wrap: ViewWrapperType = None
+    ):
 
     def decorator(func):
         @wraps(func)
@@ -32,6 +47,9 @@ def view(container=None, title=None, actions=None, role=None):
                 title=title,
                 views=outputs,
                 actions=actions,
+                base_model=base_model,
+                numerate=numerate,
+                wrap=wrap,
                 role=role,
             )
             return view_instance            
@@ -49,31 +67,50 @@ def view(container=None, title=None, actions=None, role=None):
     
     return decorator
 
-
-# def view(container=None, title=None, actions=None):
-
-#     def decorator(func):
-#         @wraps(func)
-#         def wrapper(*args, **kwargs):            
-#             outputs = func(*args, **kwargs)
-#             view_instance = ViewNode(
-#                 name=func.__name__,
-#                 title=title,
-#                 views=outputs,
-#                 actions=actions
-#             )            
-#             return view_instance
-#         return wrapper
-    
-#     if container is not None:
-#         return decorator(container)
-    
-#     return decorator
+def list_view(rules: list[str], numbered: bool = True):
+    if numbered:
+        return "\n".join([f"{i}. {r}" for i, r in enumerate(rules)])
+    else:
+        return "\n".join(rules)
 
 
+
+def render_tabs(num: int):
+    return "ֿ\t" * num
+
+def render_model(model: BaseModel, node: ViewNode, i: int, tabs: int = 0):
+    prompt = f"{render_tabs(tabs)}"
+    if node.numerate:
+        prompt += f"{i + 1}. "
+        
+    if node.base_model == 'json':
+        return prompt + json.dumps(model.model_dump(), indent=2)
+    elif node.base_model == 'model_dump':
+        return prompt + str(model.model_dump()) + "\n"
+
+
+def render_string(string: str, node: ViewNode, i:int, tabs: int = 0):
+    prompt = f"{render_tabs(tabs)}"
+    if node.numerate:
+        prompt += f"{i + 1}. "
+    prompt += string + "\n"
+    return prompt
+
+
+def render_title(title: str, node: ViewNode, tabs: int = 0):
+    if node.wrap == "xml":
+        return f"{render_tabs(tabs)}<{title}>\n"
+    if node.wrap == "markdown":
+        return f"{render_tabs(tabs)}## {title}\n"
+    return f"{render_tabs(tabs)}{title}:\n"
+
+def render_ending(title: str, node: ViewNode, tabs: int = 0):
+    if node.wrap == "xml":
+        return f"{render_tabs(tabs)}</{title}>\n"
+    return ''
 
 def render_view(
-    view, 
+    node, 
     **kwargs):
 
 
@@ -90,9 +127,10 @@ def render_view(
 
     
     # node = view(**kwargs)
-    node = view
-
-    stack1 = [node]
+    if type(node) == tuple:
+        stack1 = [*node]    
+    else:
+        stack1 = [node]
     stack2 = []
 
     base_models = {}
@@ -114,23 +152,34 @@ def render_view(
                     if isinstance(v, ViewNode):
                         stack1.append(v)
 
-    def tabs(num: int):
-        return "  " * num
+
         
 
     while stack2:
         node = stack2.pop()
         prompt = ""
         if node.title:
-            prompt += tabs(len(stack2)) + f"### {node.title}\n"
-        for view in _iterate_views(node):
+            # prompt += render_tabs(len(stack2)) + f"### {node.title}\n"
+            prompt += render_title(node.title, node, tabs=len(stack2))
+        for i, view in enumerate(_iterate_views(node)):
             if isinstance(view, str):
-                prompt += tabs(len(stack2)) + f"{view}\n"
+                # prompt += tabs(len(stack2)) + f"{view}\n"
+                prompt += render_string(view, node, i, tabs=len(stack2))
             elif isinstance(view, ViewNode):
-                prompt += tabs(len(stack2)) + rendered_outputs[view.vn_id]
+                prompt += render_tabs(len(stack2)) + rendered_outputs[view.vn_id]
             elif isinstance(view, BaseModel):
-                prompt += tabs(len(stack2)) + str(view.model_dump()) + "\n"
+                # prompt += render_tabs(len(stack2)) + str(view.model_dump(mode="json")) + "\n"
+                prompt += render_model(view, node, i, tabs=len(stack2))
             else:
                 raise ValueError(f"view type not supported: {type(view)}")
+        if node.title:
+            prompt += render_ending(node.title, node, tabs=len(stack2))
         rendered_outputs[node.vn_id] = prompt
-    return prompt, rendered_outputs, base_models
+        
+    final_prompt = "\n".join(rendered_outputs.values())
+    return final_prompt, rendered_outputs, base_models
+
+
+
+
+

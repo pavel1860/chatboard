@@ -11,7 +11,7 @@ from qdrant_client.models import NamedSparseVector, DatetimeRange, SearchRequest
 from qdrant_client import models
 from ..utils import chunks
 import os
-
+from datetime import datetime
 
 
 class VectorSearchResult(BaseModel):
@@ -343,19 +343,42 @@ class QdrantVectorStore(VectorStoreBase):
         must = []
         must_not = []
 
+        # def is_range(value):    
+        #     for k, v in value.items():
+        #         if k not in ["$gt", "$gte", "$lt", "$lte"]:
+        #             return False
+        #     return True
+
+        # def unpack_range(value):
+        #     gt=value.get('$gt', None)
+        #     gte=value.get('$gte', None)
+        #     lt=value.get('$lt', None)
+        #     lte=value.get('$lte', None)
+        #     if type(gt) == datetime or type(gte) == datetime or type(lt) == datetime or type(lte) == datetime:
+        #         gt = gt.isoformat(timespec='seconds') if gt else None
+        #         gte = gte.isoformat(timespec='seconds') if gte else None
+        #         lt = lt.isoformat(timespec='seconds') if lt else None
+        #         lte = lte.isoformat(timespec='seconds') if lte else None
+        #         return models.DatetimeRange(gt=gt,gte=gte,lt=lt,lte=lte)            
+        #     return models.Range(gt=gt,gte=gte,lt=lt,lte=lte)
         def is_range(value):    
             for k, v in value.items():
-                if k not in ["$gt", "$gte", "$lt", "$lte"]:
+                if k not in [">", ">=", "<", "<="]:
                     return False
             return True
 
         def unpack_range(value):
-            models.Range(
-                gt=value.get('$gt', None),
-                gte=value.get('$gte', None),
-                lt=value.get('$lt', None),
-                lte=value.get('$lte', None),
-            )
+            gt=value.get('>', None)
+            gte=value.get('>=', None)
+            lt=value.get('<', None)
+            lte=value.get('<=', None)
+            if type(gt) == datetime or type(gte) == datetime or type(lt) == datetime or type(lte) == datetime:
+                gt = gt.isoformat(timespec='seconds') if gt else None
+                gte = gte.isoformat(timespec='seconds') if gte else None
+                lt = lt.isoformat(timespec='seconds') if lt else None
+                lte = lte.isoformat(timespec='seconds') if lte else None
+                return models.DatetimeRange(gt=gt,gte=gte,lt=lt,lte=lte)            
+            return models.Range(gt=gt,gte=gte,lt=lt,lte=lte)
 
         for field, value in filters.items():
             if type(value) == dict:
