@@ -24,11 +24,12 @@ setup(
             "pinecone-text==0.9.0",
             "scipy==1.11.4",
             "boto3==1.24.47",
-            "openai==1.23.2",
+            "openai==1.37.1",
             "langdetect==1.0.9",
             "GitPython==3.1.31",
             "qdrant-client==1.8.2",
-            "Jinja2==3.1.3"
+            "Jinja2==3.1.3",
+            "docstring_parser==0.16"
         ],
         'media': [
             "starlette==0.24.0",
