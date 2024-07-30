@@ -132,7 +132,8 @@ def validate_msgs(msgs: List[BaseMessage]):
             ai_msg = ai_messages.get(msg.tool_call.id, None)
             if not ai_msg:
                 continue
-            validated_msgs.append((ai_msg, msg))
+            validated_msgs += [ai_msg, msg]
+            # validated_msgs.append((ai_msg, msg))
         else:
             validated_msgs.append(msg)
     return validated_msgs
