@@ -177,7 +177,7 @@ class ChatPrompt(BaseModel):
                 messages.append(view)
                 # if view.is_valid():
                 #     messages.append(view)
-                # continue
+                continue
             prompt, rendered_outputs, base_models = render_view(view, **kwargs)
             if isinstance(view, ViewNode):
                 messages.append(AIMessage(content=prompt) if view.role == 'assistant' else HumanMessage(content=prompt))
