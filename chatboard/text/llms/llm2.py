@@ -1,7 +1,7 @@
 
 import json
 from time import time
-from typing import Any, Coroutine, Dict, Iterable, List, Optional, Tuple, TypeVar, Generic, Union
+from typing import Any, Coroutine, Dict, Iterable, List, Literal, Optional, Tuple, TypeVar, Generic, Union
 
 import aiohttp
 from chatboard.clients.openai_client import build_async_openai_client
@@ -10,11 +10,10 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 
 from chatboard.text.llms.completion_parsing2 import OutputParser
 
-# from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
-# from .system_conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
-from .conversation import AIMessage, Conversation, HumanMessage, SystemMessage, from_langchain_message
-from pydantic import BaseModel, Field, validator
-from pydantic.v1.error_wrappers import ValidationError
+from .conversation import AIMessage, HumanMessage, SystemMessage, from_langchain_message
+from pydantic import BaseModel, Field, ValidationError, validator
+# from pydantic.v1.error_wrappers import ValidationError
+
 from .tracer import Tracer
 import tiktoken
 import yaml
@@ -23,6 +22,40 @@ import os
 
 import openai
 from openai.types.chat.chat_completion import ChatCompletion
+
+
+
+
+
+from docstring_parser import parse
+
+def remove_a_key(d, remove_key):
+    if isinstance(d, dict):
+        for key in list(d.keys()):
+            if key == remove_key:
+                del d[key]
+            else:
+                remove_a_key(d[key], remove_key)
+
+def schema_to_function(schema: Any):
+    assert schema.__doc__, f"{schema.__name__} is missing a docstring."
+    assert (
+        "title" not in schema.__fields__.keys()
+    ), "`title` is a reserved keyword and cannot be used as a field name."
+    schema_dict = schema.model_json_schema()
+    remove_a_key(schema_dict, "title")
+
+    return {
+        "type": "function",
+        "function": {
+            "name": schema.__name__,
+            "description": schema.__doc__,
+            "parameters": schema_dict,
+        }
+    }
+
+
+
 
 
 DEFAULT_MODEL = "gpt-3.5-turbo-0125"
@@ -110,25 +143,7 @@ class PhiLlmClient(BaseModel):
 
     def preprocess(self, msgs):
         return [m.dict() for m in msgs]
-    # async def complete(self, msgs, max_tokens=200, stop_sequences=[]):
-    #     prompt = self.preprocess(msgs)
-    #     async with aiohttp.ClientSession() as session:        
-    #         content, status = await self.fetch(session, self.url, data={
-    #             "prompt": prompt,
-    #             "max_new_tokens": max_tokens,
-    #             "stop_sequences": stop_sequences        
-    #         })
-    #         return content
-    # async def complete(self, msgs, **kwargs):
-    #     prompt = self.preprocess(msgs)
-    #     async with aiohttp.ClientSession() as session:        
-    #         content, status = await self.fetch(session, self.url, data={
-    #             # "prompt": prompt,
-    #             "max_new_tokens": kwargs.get("max_tokens", 200),
-    #             "stop_sequences": kwargs.get("stop", [])        
-    #         })
-    #         # return content
-    #         return AIMessage(content=content)
+
 
     async def complete(self, msgs, **kwargs):
         msgs = self.preprocess(msgs)
@@ -150,22 +165,9 @@ class OpenAiLlmClient:
 
     def __init__(self, api_key=None, api_version=None, azure_endpoint=None, azure_deployment=None):
         self.client = build_async_openai_client()
-        # if azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", None):
-        #     self.client = openai.AsyncAzureOpenAI(
-        #         api_key=api_key or os.getenv("AZURE_OPENAI_API_KEY"),
-        #         api_version=api_version or os.getenv("OPENAI_API_VERSION", "2023-12-01-preview"),
-        #         azure_endpoint=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
-        #         azure_deployment=azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-        #     ) 
-        # elif os.environ.get("OPENAI_API_KEY", None):
-        #     self.client = openai.AsyncClient(
-        #         api_key=api_key or os.getenv("OPENAI_API_KEY")
-        #     )
-        # else:
-        #     raise ValueError("OpenAI API Key not found in environment variables")
 
     def preprocess(self, msgs):
-        return [msg.to_openai() for msg in msgs]
+        return [msg.to_openai() for msg in msgs if msg.is_valid()]
 
     async def complete(self, msgs, tools=None, **kwargs):
         # tools = tools or []
@@ -176,9 +178,6 @@ class OpenAiLlmClient:
             **kwargs
         )
         return openai_completion
-        # output = openai_completion.choices[0].message
-        # return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
-        # return output
 
 
 class LLMToolNotFound(Exception):
@@ -202,6 +201,7 @@ class LLM(BaseModel):
     is_traceable: Optional[bool] = True
     seed: Optional[int] = None
     client: Union[OpenAiLlmClient, PhiLlmClient]    
+    parallel_tool_calls: Optional[bool] = True
 
     class Config:
         arbitrary_types_allowed = True
@@ -250,6 +250,11 @@ class LLM(BaseModel):
         seed = kwargs.get("seed", self.seed)
         if seed is not None:
             model_kwargs['seed'] = seed
+            
+        parallel_tool_calls = kwargs.get("parallel_tool_calls", self.parallel_tool_calls)
+        if parallel_tool_calls is not None:
+            model_kwargs['parallel_tool_calls'] = parallel_tool_calls            
+        
         return model_kwargs
 
 
@@ -257,13 +262,14 @@ class LLM(BaseModel):
             self, 
             msgs: List[SystemMessage | HumanMessage | AIMessage], 
             tools: List[BaseModel] | None=None, 
-            tool_choice: BaseModel | None=None,
+            tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
             response_model: BaseModel | None=None,
             tracer_run=None, 
             metadata={}, 
             completion=None,
             retries=3, 
             smart_retry=True,
+            logprobs: bool=False,
             **kwargs):
 
         llm_kwargs = self.get_llm(**kwargs)
@@ -284,23 +290,27 @@ class LLM(BaseModel):
             extra=extra,
         ) as llm_run:
         
-            # output = await self.llm.ainvoke(messages)
-            # openai_completion = await self.client.chat.completions.create(
-            #     messages=openai_messages,
-            #     **llm_kwargs
-            # )
 
-            tool_schema = [convert_to_openai_tool(t) for t in tools] if tools else None
-            tool_choice_schema = convert_to_openai_tool(tool_choice) if tool_choice else None
+            # tool_schema = [convert_to_openai_tool(t) for t in tools] if tools else None
+            tool_schema = [schema_to_function(t) for t in tools] if tools else None
+            
+            if isinstance(tool_choice, BaseModel):
+                tool_choice_schema =  {"type": "function", "function": {"name": tool_choice.__class__.__name__}}
+            else:
+                if tool_choice and tool_choice not in ["auto", "required", "none"]:
+                    raise ValueError("tool_choice must be one of 'auto', 'required', 'none' or an BaseModel")
+                tool_choice_schema = tool_choice
+            
             for try_num in range(retries):
                 try:
                     completion = await self.client.complete(
                         msgs, 
                         tools=tool_schema, 
                         tool_choice=tool_choice_schema, 
-                        **llm_kwargs)
+                        logprobs=logprobs,
+                        **llm_kwargs)                    
                 
-                    output = self.parse_output(completion, tools, tool_choice, response_model)
+                    ai_message = self.parse_output(completion, tools, tool_choice, response_model)
                     break
                 except LLMToolNotFound as e:
                     print(f"try {try_num} tool not found error")
@@ -313,39 +323,19 @@ class LLM(BaseModel):
                     if try_num == retries - 1:
                         raise e
                     msgs.append(HumanMessage(content=f"something is wrong with the parameters:\n{str(e)}"))
+                except Exception as e:
+                    import pickle
+                    from datetime import datetime
+                    date_str = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+                    with open(f"msgs_{date_str}.pkl", "wb") as f:
+                        pickle.dump(msgs, f)
+                    raise e
                     
 
             llm_run.end(outputs=completion)
 
-            return output
-            # return completion
-            # output = completion.choices[0].message
-            # finish_reason = completion.choices[0].finish_reason
+            return ai_message
 
-            # if response_model:
-            #     parser = OutputParser(response_model)
-            #     try:
-            #         return parser.parse(output.content)
-            #     except Exception as e:
-            #         print("########## ERROR PARSING OUTPUT ##########") 
-            # if finish_reason == "tool_calls":
-            #     tool_lookup = {t.__name__: t for t in tools}
-            #     output_tools = []
-            #     for tool_call in output.tool_calls:
-            #         tool_args = json.loads(tool_call.function.arguments)
-            #         tool_cls = tool_lookup.get(tool_call.function.name, None)
-            #         if tool_cls:
-            #             output_tools.append(tool_cls(**tool_args))
-            #         else:
-            #             raise ValueError(f"Tool {tool_call.function.name} not found in tools")                    
-            #         print(tool_call.function.name, tool_args)
-            #         tool_call.function.name
-            #         # tool_cls = tools[tool_call.function.name]['info'].default.__class__
-                    
-            #     return output_tools
-
-
-            # return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
         
     def parse_output(self, completion, tools, tool_choice, response_model):
         output = completion.choices[0].message
@@ -357,24 +347,25 @@ class LLM(BaseModel):
                 return parser.parse(output.content)
             except Exception as e:
                 print("########## ERROR PARSING OUTPUT ##########") 
+        actions = None
         if finish_reason == "tool_calls":
+            if completion.choices[0].message.content is not None:
+                print("### tool call with message: ", completion.choices[0].message.content)
             tool_lookup = {t.__name__: t for t in tools}
-            output_tools = []
+            actions = []
             for tool_call in output.tool_calls:
                 tool_args = json.loads(tool_call.function.arguments)
                 tool_cls = tool_lookup.get(tool_call.function.name, None)
                 if tool_cls:
-                    output_tools.append(tool_cls(**tool_args))
+                    actions.append(tool_cls(**tool_args))
                 else:
                     raise LLMToolNotFound(f"Tool {tool_call.function.name} not found in tools")                    
                 print(tool_call.function.name, tool_args)
-                tool_call.function.name
-                # tool_cls = tools[tool_call.function.name]['info'].default.__class__
-                
-            return output_tools
+                tool_call.function.name                
+            # return actions
 
 
-        return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
+        return AIMessage(content=output.content, tool_calls=output.tool_calls, actions=actions)
         
 
     async def send_stream(self, openai_messages, tracer_run, metadata={}, completion=None, **kwargs):
@@ -383,9 +374,6 @@ class LLM(BaseModel):
 
         extra = metadata.copy() if metadata else {}
         extra.update(llm_kwargs)  
-
-        # if completion:
-            # yield custom_completion(completion)
 
 
         with Tracer(
@@ -397,7 +385,6 @@ class LLM(BaseModel):
             extra=extra,
         ) as llm_run:
         
-            # output = await self.llm.ainvoke(messages)
             stream = await self.client.chat.completions.create(
                 messages=openai_messages,
                 stream=True,
@@ -410,52 +397,18 @@ class LLM(BaseModel):
                     yield LlmChunk(
                         content=chunk.choices[0].delta.content,
                     )
-                    # print(chunk.choices[0].delta.content, end="")
-
-            # llm_run.end(outputs=openai_completion)
+                    
+            
             llm_run.end(outputs={
                 "messages": [AIMessage(content=openai_completion).to_openai()]
             })
-            # llm_run.end(outputs=AIMessage(content=openai_completion).to_openai())
             yield LlmChunk(
                 content=openai_completion,
                 finish=True
             )
 
 
-
-    async def send_with_tools(self, openai_messages, openai_tools, tracer_run=None, tool_choice=None, metadata={}, **kwargs):
-
-        llm_kwargs = self.get_llm(**kwargs)
-
-        extra = metadata.copy()
-        extra.update(llm_kwargs)      
-
-        with Tracer(
-            is_traceable=self.is_traceable,
-            tracer_run=tracer_run,
-            run_type="llm",
-            name=self.name,
-            inputs={
-                "messages": openai_messages,
-                "tools": openai_tools
-            },
-            extra=extra,
-        ) as llm_run:
-        
-        
-            openai_completion = await self.client.chat.completions.create(
-                messages=openai_messages,
-                tools=openai_tools,
-                tool_choice=tool_choice,
-                **llm_kwargs
-            )
-            
-            llm_run.end(outputs=openai_completion)
-            
-            return openai_completion
-
-        
+    
 
 
 class OpenAiLLM(LLM):

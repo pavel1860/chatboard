@@ -164,10 +164,10 @@ class ChatPrompt(BaseModel):
         if self.background:
             system_prompt += f"{self.background}\n"
         if self.task:
-            system_prompt+= "Your main task is to:\n"
+            system_prompt+= "Task:\n"
             system_prompt += f"{self.task}\n"
         
-        system_prompt += render_output.system_prompt        
+        system_prompt += render_output.system_prompt
         
         if render_output.is_actions:
             system_prompt += "\nyou should use one of the following actions:\n"
@@ -192,11 +192,12 @@ class ChatPrompt(BaseModel):
 
         
         rules = await call_function(self.get_rules, **kwargs)
-        if rules:                                        
-            if isinstance(self.rules, list):
-                system_prompt += "\n".join(self.rules) + "\n"
-            elif isinstance(self.rules, str):
-                system_prompt += self.rules + "\n"
+        if rules:  
+            system_prompt += "\nRules:\n"                                      
+            if isinstance(rules, list):
+                system_prompt += "\n".join(rules) + "\n"
+            elif isinstance(rules, str):
+                system_prompt += rules + "\n"
         
         conversation.append(SystemMessage(content=system_prompt))
 
@@ -247,10 +248,21 @@ class ChatPrompt(BaseModel):
             return await self.call(*partial_args, **kwargs)
         call._prompt_name = self.__class__.__name__
         return call
+    
+
+    async def _render_all(self, context: Context | None=None, view_prompt: View | BaseModel | None = None, **kwargs: Any):
+        view_prompt = view_prompt or self.view
+        if not view_prompt:
+            view_prompt = await call_function(self.render, context=context, **kwargs)
+        if not view_prompt:
+            raise ValueError("View prompt is required.")
+        render_output = await self._view_renderer.render_view(view_prompt, **kwargs)
+        return render_output
+
 
     async def call(
             self, 
-            view_prompt: View | BaseModel=None, 
+            view_prompt: View | BaseModel | None = None, 
             context: Context | None=None, 
             response_model: BaseModel | None=None,
             tracer_run=None, 
@@ -280,14 +292,16 @@ class ChatPrompt(BaseModel):
                 
 
 
-                view_prompt = view_prompt or self.view
-                if not view_prompt:
-                    view_prompt = await call_function(self.render, context=context, **kwargs)
-                if not view_prompt:
-                    raise ValueError("View prompt is required.")
+                # view_prompt = view_prompt or self.view
+                # if not view_prompt:
+                #     view_prompt = await call_function(self.render, context=context, **kwargs)
+                # if not view_prompt:
+                #     raise ValueError("View prompt is required.")
                 
                 
-                render_output = await self._view_renderer.render_view(view_prompt, **kwargs)
+                # render_output = await self._view_renderer.render_view(view_prompt, **kwargs)
+
+                render_output = await self._render_all(context=context, view_prompt=view_prompt, **kwargs)
 
                 msgs = await self._build_conversation(render_output=render_output, context=context, **kwargs)
 

@@ -7,11 +7,12 @@ import uuid
 
 
 from chatboard.text.app_manager import app_manager
-from chatboard.text.llms.history import History
+# from chatboard.text.llms.history import History
+from chatboard.text.llms.history2 import History
 from chatboard.text.llms.view_renderer import RenderOutput
 from chatboard.text.llms.views import BaseModel, Field
 
-from chatboard.text.llms.conversation import HumanMessage, SystemMessage, AIMessage
+from chatboard.text.llms.conversation import BaseMessage, HumanMessage, SystemMessage, AIMessage
 
 
 # class HistoryMessage:
@@ -59,22 +60,45 @@ class Context(BaseModel):
         self.curr_prompt_cls = None
         self.curr_prompt_gen = None
         self.curr_description = None
+        self.set_prompt(None)
 
-    def set_current_prompt(self, prompt_cls):
+
+    def get_prompt(self):
+        raise NotImplementedError
+
+    def set_prompt(self, prompt_name: str):
+        raise NotImplementedError
+        
+    def get_history(self):
+        raise NotImplementedError
+    
+    def set_history(self, messages: List[BaseMessage]):
+        raise NotImplementedError
+
+    async def set_current_prompt(self, prompt_cls):
         self.curr_prompt = prompt_cls.__name__
+        await self.set_prompt(prompt_cls.__name__)
         self.curr_prompt_cls = prompt_cls
         
-
-    def get_current_prompt(self):
-        if not self.curr_prompt:
+    async def get_current_prompt(self):        
+        prompt_name = await self.get_prompt()
+        if not prompt_name:
             return None
-        if self.curr_prompt_cls is not None:
-            prompt = self.curr_prompt_cls
-        else:
-            prompt = app_manager.prompts.get(self.curr_prompt, None)
+        prompt = app_manager.prompts.get(prompt_name, None)
         if not prompt:
             raise Exception(f"Prompt {self.curr_prompt} not found in app_manager.prompts")
         return prompt()
+
+    # def get_current_prompt(self):
+    #     if not self.curr_prompt:
+    #         return None
+    #     if self.curr_prompt_cls is not None:
+    #         prompt = self.curr_prompt_cls
+    #     else:
+    #         prompt = app_manager.prompts.get(self.curr_prompt, None)
+    #     if not prompt:
+    #         raise Exception(f"Prompt {self.curr_prompt} not found in app_manager.prompts")
+    #     return prompt()
 
         
 

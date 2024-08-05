@@ -333,9 +333,10 @@ class PromptTracer:
             filter=None, 
             project_name=LANGCHAIN_PROJECT, 
             limit=10,
+            error: bool=False,
         ):
         return await asyncio.get_running_loop().run_in_executor(
-            None, self.get_run_list, name, execution_order, filter, project_name, limit
+            None, self.get_run_list, name, execution_order, filter, project_name, limit, error
         )
 
 

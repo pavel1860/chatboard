@@ -291,3 +291,7 @@ class RagDocuments:
             return await self.vector_store.delete_documents_ids(ids)
         elif filters is not None:
             return await self.vector_store.delete_documents(filters)
+        
+        
+    async def close(self):
+        await self.vector_store.close()
