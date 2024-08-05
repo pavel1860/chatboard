@@ -326,7 +326,8 @@ class LLM(BaseModel):
                 except Exception as e:
                     import pickle
                     from datetime import datetime
-                    with open(f"msgs_{datetime.now().strftime("%Y_%m_%d_%H_%M_%S")}.pkl", "wb") as f:
+                    date_str = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+                    with open(f"msgs_{date_str}.pkl", "wb") as f:
                         pickle.dump(msgs, f)
                     raise e
                     
