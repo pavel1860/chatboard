@@ -328,7 +328,14 @@ class LLM(BaseModel):
             #     messages=openai_messages,
             #     **llm_kwargs
             # )
-            completion = await self.client.complete(msgs, tools=tools, tool_choice=tool_choice, **llm_kwargs)
+            completion = await self.client.complete(
+                msgs, 
+                # logprobs=True,
+                tools=tools, 
+                tool_choice=tool_choice, 
+                **llm_kwargs
+                )
+            return completion
             llm_run.end(outputs=completion)
             # return completion
             output = completion.choices[0].message

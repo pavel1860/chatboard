@@ -6,6 +6,7 @@ from chatboard.text.app_manager import app_manager
 from chatboard.text.llms.completion_parsing import (is_list_model,
                                                     unpack_list_model)
 from chatboard.text.llms.prompt_tracer import PromptTracer
+from chatboard.text.llms.tracer2 import get_run_messages
 from chatboard.text.vectors.rag_documents2 import RagDocuments
 from chatboard.text.vectors.stores.base import OrderBy
 from fastapi import FastAPI
@@ -155,6 +156,7 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
 
     @app.get("/chatboard/get_runs")
     async def get_runs(limit: int = 10, offset: int = 0, runNames: Optional[List[str]] = None):
+        LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "default")
         tracer = PromptTracer()
         runs = await tracer.aget_runs(name=runNames, limit=limit, project_name=LANGCHAIN_PROJECT)
         return [r.run for r in runs]
@@ -167,3 +169,10 @@ def add_chatboard(app, rag_namespaces=None, assets=None, profiles=None, prompts=
         return run
     
 
+
+    @app.get("/chatboard/get_trace")
+    async def get_trace(run_id: str):
+        tracer = PromptTracer()
+        run = await tracer.aget_run(run_id)
+        trace = get_run_messages(run)
+        return trace.model_dump()
