@@ -7,11 +7,9 @@ import asyncio
 import json
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, Field, validator
-from pydantic.main import TupleGenerator
-from .rag_manager import RagValue, RagVector, RagVectorSpace
 from langsmith import Client
 from pydantic import BaseModel, Field, validator
+from pydantic.main import TupleGenerator
 
 # from ...common.vectors.embeddings.text_embeddings import DenseEmbeddings
 from ..vectors.embeddings.text_embeddings import DenseEmbeddings
@@ -54,9 +52,14 @@ class AIMessage(BaseMessage):
     # role: str = Field("assistant", const=True)
     did_finish: Optional[bool] = True
     role: Literal["assistant"] = "assistant"
-    tool_calls: Optional[List[BaseModel]] = None
-    output: Optional[BaseModel] = None
+    # tool_calls: Optional[List[BaseModel]] = None
+    # output: Optional[BaseModel] = None
     run_id: Optional[str] = None
+    tool_calls: Optional[List[Any]] = None
+    # output: Optional[BaseModel] = None
+    actions: Optional[List[BaseModel]] = []
+    _iterator = -1
+    _tool_responses = {}
 
 
     def to_openai(self):
@@ -76,11 +79,7 @@ class AIMessage(BaseMessage):
     
     # tools: Optional[List[BaseModel]] = None
 
-    tool_calls: Optional[List[Any]] = None
-    # output: Optional[BaseModel] = None
-    actions: Optional[List[BaseModel]] = []
-    _iterator = -1
-    _tool_responses = {}
+    
     
     @property
     def output(self):
@@ -148,7 +147,7 @@ class ActionMessage(BaseMessage):
 ChatMessageType = Union[SystemMessage, HumanMessage, AIMessage]
 
 
-def validate_msgs(msgs: List[BaseMessage]):
+def validate_msgs(msgs: List[BaseMessage]) -> List[BaseMessage]:
     ai_messages = {}
 
     validated_msgs = []

@@ -1,33 +1,35 @@
 
 import json
+import os
+import re
 from time import time
-from typing import Any, Coroutine, Dict, Iterable, List, Literal, Optional, Tuple, TypeVar, Generic, Union
+from typing import (Any, Coroutine, Dict, Generic, Iterable, List, Literal,
+                    Optional, Tuple, TypeVar, Union)
 
 import aiohttp
-from chatboard.clients.openai_client import build_async_openai_client
-from langchain.chat_models import ChatOpenAI
-from langchain_core.utils.function_calling import convert_to_openai_tool
-
-from chatboard.text.llms.completion_parsing2 import OutputParser
-
-from .conversation import AIMessage, HumanMessage, SystemMessage, from_langchain_message
-from pydantic import BaseModel, Field, ValidationError, validator
-# from pydantic.v1.error_wrappers import ValidationError
-
-from .tracer import Tracer
+import openai
 import tiktoken
 import yaml
-import re
-import os
-
-import openai
-from openai.types.chat.chat_completion import ChatCompletion
-
-
-
-
-
+from chatboard.clients.openai_client import build_async_openai_client
+from chatboard.text.llms.completion_parsing2 import OutputParser
 from docstring_parser import parse
+from langchain.chat_models import ChatOpenAI
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from openai.types.chat.chat_completion import ChatCompletion
+from pydantic import BaseModel, Field, ValidationError, validator
+
+from .conversation import (AIMessage, HumanMessage, SystemMessage,
+                           from_langchain_message)
+from .tracer import Tracer
+
+# from pydantic.v1.error_wrappers import ValidationError
+
+
+
+
+
+
+
 
 def remove_a_key(d, remove_key):
     if isinstance(d, dict):
@@ -107,9 +109,16 @@ def encode_logits_dict(logits, encoding_model = None):
 class LlmChunk(BaseModel):
     content: str
     finish: Optional[bool] = False
+    
+    
+    
+class BaseLlmClient(BaseModel):
+    client: Any
+    async def complete(self, msgs, **kwargs):
+        pass
 
 
-class PhiLlmClient(BaseModel):
+class PhiLlmClient(BaseLlmClient):
     # url: str = "http://localhost:3000/complete"
     # url: str = "http://skynet/text/complete"
     # url: str = "http://skynet/text/complete_chat"
@@ -160,17 +169,50 @@ class PhiLlmClient(BaseModel):
             return AIMessage(content=res_msg['content'])
 
 
-class OpenAiLlmClient:
+class OpenAiLlmClient(BaseLlmClient):
 
 
-    def __init__(self, api_key=None, api_version=None, azure_endpoint=None, azure_deployment=None):
-        self.client = build_async_openai_client()
+    def __init__(self, api_key=None):
+        # self.client = build_async_openai_client()
+        super().__init__(
+            client = openai.AsyncClient(
+                api_key=api_key or os.getenv("OPENAI_API_KEY")
+            )
+        )
 
     def preprocess(self, msgs):
         return [msg.to_openai() for msg in msgs if msg.is_valid()]
 
     async def complete(self, msgs, tools=None, **kwargs):
-        # tools = tools or []
+        msgs = self.preprocess(msgs)
+        openai_completion = await self.client.chat.completions.create(
+            messages=msgs,
+            tools=tools,
+            **kwargs
+        )
+        return openai_completion
+    
+    
+class AzureOpenAiLlmClient(BaseLlmClient):
+
+
+    def __init__(self, api_key: str, api_version: str, azure_endpoint:str, azure_deployment: str):
+        super().__init__(
+            client=openai.AsyncAzureOpenAI(
+                    api_key=api_key,
+                    api_version=api_version,
+                    azure_endpoint=azure_endpoint,
+                    azure_deployment=azure_deployment,
+                ) 
+        )
+
+    def preprocess(self, msgs):
+        return [msg.to_openai() for msg in msgs if msg.is_valid()]
+
+    async def complete(self, msgs, tools=None, **kwargs):
+        kwargs = {k: v for k, v in kwargs.items() if k not in [
+            "parallel_tool_calls"
+        ]}
         msgs = self.preprocess(msgs)
         openai_completion = await self.client.chat.completions.create(
             messages=msgs,
@@ -197,6 +239,7 @@ class LLM(BaseModel):
     logit_bias: Optional[Dict[str, int]] = None
     top_p: Optional[float] = None
     presence_penalty: Optional[float] = None
+    logprobs: bool | None = None
     frequency_penalty: Optional[float] = None
     is_traceable: Optional[bool] = True
     seed: Optional[int] = None
@@ -254,6 +297,10 @@ class LLM(BaseModel):
         parallel_tool_calls = kwargs.get("parallel_tool_calls", self.parallel_tool_calls)
         if parallel_tool_calls is not None:
             model_kwargs['parallel_tool_calls'] = parallel_tool_calls            
+            
+        logprobs = kwargs.get("logprobs", self.logprobs)
+        if logprobs is not None:
+            model_kwargs['logprobs'] = logprobs
         
         return model_kwargs
 
@@ -269,7 +316,7 @@ class LLM(BaseModel):
             completion=None,
             retries=3, 
             smart_retry=True,
-            logprobs: bool=False,
+            # logprobs: bool=False,
             **kwargs):
 
         llm_kwargs = self.get_llm(**kwargs)
@@ -307,7 +354,7 @@ class LLM(BaseModel):
                         msgs, 
                         tools=tool_schema, 
                         tool_choice=tool_choice_schema, 
-                        logprobs=logprobs,
+                        # logprobs=logprobs,
                         **llm_kwargs)                    
                 
                     ai_message = self.parse_output(completion, tools, tool_choice, response_model)
@@ -359,8 +406,7 @@ class LLM(BaseModel):
                 if tool_cls:
                     actions.append(tool_cls(**tool_args))
                 else:
-                    raise LLMToolNotFound(f"Tool {tool_call.function.name} not found in tools")                    
-                print(tool_call.function.name, tool_args)
+                    raise LLMToolNotFound(f"Tool {tool_call.function.name} not found in tools")
                 tool_call.function.name                
             # return actions
 
@@ -433,7 +479,7 @@ class PhiLLM(LLM):
 class AzureOpenAiLLM(LLM):
     name: str = "AzureOpenAiLLM"
     # client: Union[OpenAiLlmClient, PhiLlmClient] = Field(default_factory=OpenAiLlmClient)
-    client: Union[OpenAiLlmClient, PhiLlmClient] = None
+    client: BaseLlmClient
     model: str = "gpt-3.5-turbo-0125"
     api_key: Optional[str] = None
     api_version: Optional[str] = "2023-12-01-preview"
@@ -441,13 +487,20 @@ class AzureOpenAiLLM(LLM):
     azure_deployment: Optional[str] = None
     
 
-    def __init__(self, **data):        
-        super().__init__(**data)
-        self.client = OpenAiLlmClient(
-            api_key=data.get("api_key", self.api_key),
-            api_version=data.get("api_version", self.api_version),
-            azure_endpoint=data.get("azure_endpoint", self.azure_endpoint),
-            azure_deployment=data.get("azure_deployment", self.azure_deployment),
+    def __init__(self, api_key, api_version, azure_endpoint, azure_deployment, **kwargs):
+        client = AzureOpenAiLlmClient(
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=azure_endpoint,
+            azure_deployment=azure_deployment,            
+        )
+        super().__init__(
+            client= client,
+            api_key=api_key,
+            api_version=api_version,
+            azure_endpoint=azure_endpoint,
+            azure_deployment=azure_deployment,
+            **kwargs
         )
 
 class CustomMessage(BaseModel):

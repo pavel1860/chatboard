@@ -1,11 +1,11 @@
 
-from typing import Any, Literal, Tuple, Union, List
+import json
 from functools import wraps
+from typing import Any, List, Literal, Tuple, Union
+from uuid import uuid4
+
 # from chatboard.text.llms.mvc import BaseModel, Field
 from pydantic import BaseModel, Field
-from uuid import uuid4
-import json
-
 
 ViewWrapperType = Literal["xml", "markdown", None]
 BaseModelRenderType =  Literal['model_dump', 'json']
@@ -87,6 +87,8 @@ def render_model(model: BaseModel, node: ViewNode, i: int, tabs: int = 0):
         return prompt + json.dumps(model.model_dump(), indent=2)
     elif node.base_model == 'model_dump':
         return prompt + str(model.model_dump()) + "\n"
+    else:
+        raise ValueError(f"base_model type not supported: {node.base_model}")
 
 
 def render_string(string: str, node: ViewNode, i:int, tabs: int = 0):
@@ -109,8 +111,12 @@ def render_ending(title: str, node: ViewNode, tabs: int = 0):
         return f"{render_tabs(tabs)}</{title}>\n"
     return ''
 
+
+
+#? in render view we are using 2 stacks so that we can render the views in the correct order
+# ?is a view is between 2 strings, we want to render the view between the strings
 def render_view(
-    node, 
+    node: ViewNode | Tuple[ViewNode], 
     **kwargs):
 
 
@@ -176,7 +182,8 @@ def render_view(
             prompt += render_ending(node.title, node, tabs=len(stack2))
         rendered_outputs[node.vn_id] = prompt
         
-    final_prompt = "\n".join(rendered_outputs.values())
+    # final_prompt = "\n".join(rendered_outputs.values())
+    final_prompt = prompt
     return final_prompt, rendered_outputs, base_models
 
 

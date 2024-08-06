@@ -1,23 +1,21 @@
 
-from functools import wraps
 import inspect
 import json
-from typing import Any, Callable, Dict, List, Optional, Type, Union, get_args
-from pydantic import BaseModel, Field
+from functools import wraps
+from typing import (Any, Awaitable, Callable, Dict, List, Literal, Optional,
+                    Type, Union, get_args)
 
 from chatboard.text.llms.context import Context
-from chatboard.text.llms.conversation import AIMessage, BaseMessage, HumanMessage, SystemMessage, validate_msgs
+from chatboard.text.llms.conversation import (AIMessage, BaseMessage,
+                                              HumanMessage, SystemMessage,
+                                              validate_msgs)
 from chatboard.text.llms.function_utils import call_function
 from chatboard.text.llms.llm2 import AzureOpenAiLLM, OpenAiLLM
-from chatboard.text.llms.model_schema_prompt_parser import ModelSchemaPromptParser
+from chatboard.text.llms.model_schema_prompt_parser import \
+    ModelSchemaPromptParser
 from chatboard.text.llms.mvc2 import ViewNode, render_view
 from chatboard.text.llms.tracer import Tracer
-
-
-
-
-
-
+from pydantic import BaseModel, Field
 
 
 def render_base_model_schema(base_model: BaseModel) -> str:
@@ -80,10 +78,13 @@ class ChatPrompt(BaseModel):
     response_model: Optional[Type[BaseModel]] = None
     
     
+    tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
+    
+    
     is_traceable: bool = True 
     
     _render_method: Optional[Callable] = None
-  
+
     async def render_system_message(
         self, 
         base_models: Dict[str, BaseModel], 
@@ -157,6 +158,18 @@ class ChatPrompt(BaseModel):
         raise NotImplementedError("render method is not set")
     
     
+    async def _render(self, context=None, **kwargs: Any) -> List[ViewNode] | ViewNode:
+        views = await call_function(
+                self._render if self._render_method is None else self._render_method, 
+                context=context, 
+                **kwargs
+            )
+        return ViewNode(
+            name=self.name or self.__class__.__name__,
+            views=views,
+            role='user'
+        )
+    
     async def _build_conversation(
             self, 
             views: List[ViewNode] | ViewNode, 
@@ -194,7 +207,8 @@ class ChatPrompt(BaseModel):
             response_model=response_model,
             actions=actions,            
             **kwargs)
-        messages = [system_message] + messages
+        if system_message.content:
+            messages = [system_message] + messages
         return messages
 
     
@@ -204,9 +218,11 @@ class ChatPrompt(BaseModel):
             context: Context | None=None, 
             response_model = None,
             actions: List[Type[BaseModel]] = None,
+            tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
             tracer_run: Tracer=None,
+            output_messages: bool = False,
             **kwargs: Any
-        ) -> Any:
+        ) -> AIMessage | List[BaseMessage]:
         
         with Tracer(
                 is_traceable=self.is_traceable,
@@ -224,26 +240,29 @@ class ChatPrompt(BaseModel):
             if response_model and actions:
                 raise ValueError("response_model and actions cannot be used together")
             
-            views = await call_function(
-                self.render if self._render_method is None else self._render_method, 
-                context=context, 
-                **kwargs
-            )
+            # views = await call_function(
+            #     self._render if self._render_method is None else self._render_method, 
+            #     context=context, 
+            #     **kwargs
+            # )
+            views = views or await self._render(context=context, **kwargs)
             
             messages = await self._build_conversation(
                 views, 
                 context=context,
                 actions=actions,
-                response_model=response_model,
+                response_model=response_model,                
                 **kwargs
             )
             
-            # return messages
+            if output_messages:
+                return messages
             
             response_message = await self.llm.complete(
                 msgs=messages,
                 tools=actions,
                 response_model=response_model,
+                tool_choice=tool_choice or self.tool_choice,
                 tracer_run=prompt_run, 
             )            
             
@@ -269,18 +288,18 @@ def prompt(
     actions: Optional[List[Type[BaseModel]]] = None,
     response_model: Optional[Type[BaseModel]] = None,
     parallel_actions: bool = True,
-    is_traceable: bool = True
+    is_traceable: bool = True,
+    tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
 ):
     if llm is None:
         llm = OpenAiLLM(
             model=model, 
             parallel_tool_calls=parallel_actions
         )
-    
-    def decorator(func):
+    def decorator(func) -> Callable[..., Awaitable[AIMessage]]:
         
         @wraps(func)
-        async def wrapper(**kwargs):             
+        async def wrapper(**kwargs) -> AIMessage:
             prompt = ChatPrompt(
                 name=func.__name__,
                 model=model,
@@ -291,8 +310,9 @@ def prompt(
                 examples=examples,
                 actions=actions,
                 response_model=response_model,
+                tool_choice=tool_choice,
             )
-            prompt.set_render_method(func)            
+            prompt.set_render_method(func)
             return await prompt(**kwargs)
 
         return wrapper
