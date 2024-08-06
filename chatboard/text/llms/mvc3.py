@@ -27,6 +27,9 @@ class ViewNode(BaseModel):
     def get_type(self):
         return type(self.views)
     
+    def has_wrap(self):
+        return self.wrap is not None or self.title is not None
+    
     def __hash__(self):
         return self.vn_id.__hash__()
     
@@ -139,10 +142,11 @@ def render_model(node: ViewNode):
 
 def render_string(node: ViewNode):
     prompt = ''
+    depth = node.depth + 1 if node.has_wrap() else node.depth
     if node.numerate:
         prompt += f"{node.index + 1}. "
     prompt += node.views
-    return add_tabs(prompt, node.depth)
+    return add_tabs(prompt, depth)
 
 
 
@@ -196,21 +200,23 @@ def render_view(node: ViewNode, **kwargs):
     base_models = {}
     visited = set()
     result = []
-
     while stack:
         peek_node = stack[-1]
                             
         if peek_node not in visited:
             visited.add(peek_node)
-            if peek_node.title or peek_node.wrap:
+            if peek_node.has_wrap():
                 result.append(render_wrapper_starting(peek_node))
-                peek_node.depth += 1                
             if peek_node.get_type() == str:
                 result.append(render_string(peek_node))
             elif peek_node.get_type() == list or peek_node.get_type() == tuple:
                 for view in reversed(peek_node.views):
-                    # if peek_node.title or peek_node.wrap:
-                    view.depth = peek_node.depth + 1
+                    # if peek_node.has_wrap():
+                    #     view.depth = peek_node.depth + 1                    
+                    if peek_node.has_wrap():
+                        view.depth = peek_node.depth + 1
+                    else:
+                        view.depth = peek_node.depth + 1
                     stack.append(view)
             elif issubclass(peek_node.get_type(), BaseModel):
                 base_models[peek_node.views.__class__.__name__] = peek_node.views
@@ -218,8 +224,7 @@ def render_view(node: ViewNode, **kwargs):
             else:
                 raise ValueError(f"view type not supported: {type(view)}")
         else:
-            if peek_node.title or peek_node.wrap:
-                peek_node.depth -= 1
+            if peek_node.has_wrap():
                 result.append(render_wrapper_ending(peek_node))
             stack.pop(-1)
     prompt = "\n".join(result)

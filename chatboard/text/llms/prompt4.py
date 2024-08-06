@@ -164,12 +164,16 @@ class ChatPrompt(BaseModel):
                 context=context, 
                 **kwargs
             )
+        if isinstance(views, list):
+            return views
+        elif isinstance(views, tuple):
+            return ViewNode(
+                name=self.name or self.__class__.__name__,
+                views=views,
+                role='user'
+            ) 
         return views
-        # return ViewNode(
-        #     name=self.name or self.__class__.__name__,
-        #     views=views,
-        #     role='user'
-        # )
+        
     
     async def _build_conversation(
             self, 
