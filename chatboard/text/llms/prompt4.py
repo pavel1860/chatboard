@@ -13,7 +13,7 @@ from chatboard.text.llms.function_utils import call_function
 from chatboard.text.llms.llm2 import AzureOpenAiLLM, OpenAiLLM
 from chatboard.text.llms.model_schema_prompt_parser import \
     ModelSchemaPromptParser
-from chatboard.text.llms.mvc2 import ViewNode, render_view
+from chatboard.text.llms.mvc3 import ViewNode, render_view
 from chatboard.text.llms.tracer import Tracer
 from pydantic import BaseModel, Field
 
@@ -164,11 +164,12 @@ class ChatPrompt(BaseModel):
                 context=context, 
                 **kwargs
             )
-        return ViewNode(
-            name=self.name or self.__class__.__name__,
-            views=views,
-            role='user'
-        )
+        return views
+        # return ViewNode(
+        #     name=self.name or self.__class__.__name__,
+        #     views=views,
+        #     role='user'
+        # )
     
     async def _build_conversation(
             self, 
