@@ -78,12 +78,13 @@ class ChatPrompt(BaseModel):
     response_model: Optional[Type[BaseModel]] = None
     
     
-    tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
+    tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None
     
     
     is_traceable: bool = True 
     
     _render_method: Optional[Callable] = None
+    _output_parser_method: Optional[Callable] = None
 
     async def render_system_message(
         self, 
@@ -151,16 +152,20 @@ class ChatPrompt(BaseModel):
         return SystemMessage(content=system_prompt)
     
     
-    def set_render_method(self, render_func: Callable) -> None:
+    def set_methods(self, render_func: Callable | None = None, output_parser: Callable | None = None) -> None:
         self._render_method = render_func
+        self._output_parser_method = output_parser
+        
     
     async def render(self, **kwargs: Any) -> List[ViewNode] | ViewNode:
         raise NotImplementedError("render method is not set")
     
+    async def output_parser(self, response_message: AIMessage, **kwargs: Any) -> Dict[str, Any]:
+        return response_message
     
     async def _render(self, context=None, **kwargs: Any) -> List[ViewNode] | ViewNode:
         views = await call_function(
-                self._render if self._render_method is None else self._render_method, 
+                self.render if self._render_method is None else self._render_method, 
                 context=context, 
                 **kwargs
             )
@@ -173,7 +178,14 @@ class ChatPrompt(BaseModel):
                 role='user',
             ) 
         return views
-        
+    
+    
+    async def _output_parser(self, response_message: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
+        return await call_function(
+            self.output_parser if self._output_parser_method is None else self._output_parser_method, 
+            response_message,
+            **kwargs
+        )
     
     async def _build_conversation(
             self, 
@@ -270,6 +282,7 @@ class ChatPrompt(BaseModel):
                 tool_choice=tool_choice or self.tool_choice,
                 tracer_run=prompt_run, 
             )
+            response_message = await self._output_parser(response_message, **kwargs)
             prompt_run.end(outputs={'output': response_message})
             
             return response_message
@@ -293,7 +306,8 @@ def prompt(
     response_model: Optional[Type[BaseModel]] = None,
     parallel_actions: bool = True,
     is_traceable: bool = True,
-    tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
+    output_parser: Optional[Callable] = None,
+    tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,    
 ):
     if llm is None:
         llm = OpenAiLLM(
@@ -316,7 +330,7 @@ def prompt(
                 response_model=response_model,
                 tool_choice=tool_choice,
             )
-            prompt.set_render_method(func)
+            prompt.set_methods(func, output_parser)
             return await prompt(**kwargs)
 
         return wrapper

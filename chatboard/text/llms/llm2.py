@@ -303,7 +303,7 @@ class LLM(BaseModel):
             model_kwargs['seed'] = seed
             
         parallel_tool_calls = kwargs.get("parallel_tool_calls", self.parallel_tool_calls)
-        if parallel_tool_calls is not None and tools is not None:
+        if parallel_tool_calls is not None and tools:
             model_kwargs['parallel_tool_calls'] = parallel_tool_calls            
             
         logprobs = kwargs.get("logprobs", self.logprobs)
@@ -364,9 +364,7 @@ class LLM(BaseModel):
                         **llm_kwargs)                    
                 
                     ai_message = self.parse_output(completion, tools, tool_choice, response_model)
-                    ai_message.run_id = str(llm_run.id)
-                    if ai_message.output is None:
-                        print("ai_message output is None")
+                    ai_message.run_id = str(llm_run.id)                    
                     llm_run.end(outputs=completion)
                     return ai_message
                 except LLMToolNotFound as e:
