@@ -22,13 +22,16 @@ class ViewNode(BaseModel):
     views: Any
     index: int | None = None
     actions: List[BaseModel] | BaseModel | None = None
-    depth: int = -1
+    depth: int = 0
     
     def get_type(self):
         return type(self.views)
     
     def has_wrap(self):
         return self.wrap is not None or self.title is not None
+    
+    def is_leaf(self):
+        return self.get_type() == str or issubclass(self.get_type(), BaseModel)
     
     def __hash__(self):
         return self.vn_id.__hash__()
@@ -212,11 +215,20 @@ def render_view(node: ViewNode, **kwargs):
             elif peek_node.get_type() == list or peek_node.get_type() == tuple:
                 for view in reversed(peek_node.views):
                     # if peek_node.has_wrap():
-                    #     view.depth = peek_node.depth + 1                    
+                    #     view.depth = peek_node.depth + 1
+                    # if view.is_leaf():
+                    #     if peek_node.has_wrap():
+                    #         view.depth = peek_node.depth + 2
+                    #     else:
+                    #         view.depth = peek_node.depth + 1
+                    # else:
+                    #     if peek_node.has_wrap():
+                    #         view.depth = peek_node.depth + 1
                     if peek_node.has_wrap():
                         view.depth = peek_node.depth + 1
                     else:
-                        view.depth = peek_node.depth + 1
+                        view.depth = peek_node.depth
+                    
                     stack.append(view)
             elif issubclass(peek_node.get_type(), BaseModel):
                 base_models[peek_node.views.__class__.__name__] = peek_node.views

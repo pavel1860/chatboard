@@ -170,7 +170,7 @@ class ChatPrompt(BaseModel):
             return ViewNode(
                 name=self.name or self.__class__.__name__,
                 views=views,
-                role='user'
+                role='user',
             ) 
         return views
         
@@ -204,7 +204,7 @@ class ChatPrompt(BaseModel):
             
             total_base_models.update(base_models)
         
-        messages = validate_msgs(messages)
+        # messages = validate_msgs(messages)
             
         system_message = await self.render_system_message(
             total_base_models, 
@@ -269,8 +269,7 @@ class ChatPrompt(BaseModel):
                 response_model=response_model,
                 tool_choice=tool_choice or self.tool_choice,
                 tracer_run=prompt_run, 
-            )            
-            
+            )
             prompt_run.end(outputs={'output': response_message})
             
             return response_message

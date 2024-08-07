@@ -4,7 +4,7 @@ from chatboard.text.llms.completion_parsing import search_field, split_field
 from typing import Optional, Union, get_type_hints, get_origin, get_args, Type
 from chatboard.text.llms.views import BaseModel
 # from pydantic import BaseModel
-
+import inspect
 
 class SplitAction(str, Enum):
     union = 'union'
@@ -16,13 +16,13 @@ def get_field_graph(output_model, parents):
     field_graph = []
     for field_name, field_type in output_model.__annotations__.items():     
         # if get_origin(field_type) == Union:
-        if issubclass(field_type, Enum):
+        if inspect.isclass(field_type) and issubclass(field_type, Enum):
             raise ValueError(f"Enum type {field_type} is not supported in the output model")
         elif any(get_args(field_type)):
             union_args = get_args(field_type)
             action = SplitAction.union
             options = {union_arg.__name__ : get_field_graph(union_arg, parents + [field_name]) for union_arg in union_args}
-        elif issubclass(field_type, BaseModel):
+        elif inspect.isclass(field_type) and issubclass(field_type, BaseModel):
             action = SplitAction.model
             options = get_field_graph(field_type, parents + [field_name])
         else:

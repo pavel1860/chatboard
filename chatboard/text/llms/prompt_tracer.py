@@ -534,7 +534,13 @@ class PromptTracer:
         for f in feedback_list:
             self.delete_feedback(f.id)
 
-
+    def tag(self, run_id: str, tags: List[str] | str):
+        if type(tags) == str:
+            tags = [tags]
+        return self.client.update_run(
+            run_id=run_id,
+            tags=tags #type: ignore
+        )
 
     def delete_project(self, project_name: str):
         self.client.delete_project(project_name=project_name)

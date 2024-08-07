@@ -12,3 +12,4 @@ dist
 build
 *.egg-info
 __pycache__/
+msgs_*.pkl

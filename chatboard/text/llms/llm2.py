@@ -28,7 +28,7 @@ from .tracer import Tracer
 
 
 
-
+ToolChoice = Literal['auto', 'required', 'none']
 
 
 def remove_a_key(d, remove_key):
@@ -191,7 +191,16 @@ class OpenAiLlmClient(BaseLlmClient):
             **kwargs
         )
         return openai_completion
-    
+
+
+
+
+def azure_arg_filters(key, value):
+    if key == "parallel_tool_calls":
+        return False
+    elif key == "tool_choice" and value == "required":
+        return False
+    return True
     
 class AzureOpenAiLlmClient(BaseLlmClient):
 
@@ -210,9 +219,7 @@ class AzureOpenAiLlmClient(BaseLlmClient):
         return [msg.to_openai() for msg in msgs if msg.is_valid()]
 
     async def complete(self, msgs, tools=None, **kwargs):
-        kwargs = {k: v for k, v in kwargs.items() if k not in [
-            "parallel_tool_calls"
-        ]}
+        kwargs = {k: v for k, v in kwargs.items() if azure_arg_filters(k, v)}            
         msgs = self.preprocess(msgs)
         openai_completion = await self.client.chat.completions.create(
             messages=msgs,
@@ -252,6 +259,7 @@ class LLM(BaseModel):
 
     def get_llm(
             self, 
+            tools=None,
             **kwargs            
         ):
 
@@ -295,7 +303,7 @@ class LLM(BaseModel):
             model_kwargs['seed'] = seed
             
         parallel_tool_calls = kwargs.get("parallel_tool_calls", self.parallel_tool_calls)
-        if parallel_tool_calls is not None:
+        if parallel_tool_calls is not None and tools is not None:
             model_kwargs['parallel_tool_calls'] = parallel_tool_calls            
             
         logprobs = kwargs.get("logprobs", self.logprobs)
@@ -309,7 +317,7 @@ class LLM(BaseModel):
             self, 
             msgs: List[SystemMessage | HumanMessage | AIMessage], 
             tools: List[BaseModel] | None=None, 
-            tool_choice: Literal['auto', 'required', 'none'] | BaseModel | None = None,
+            tool_choice: ToolChoice | BaseModel | None = None,
             response_model: BaseModel | None=None,
             tracer_run=None, 
             metadata={}, 
@@ -319,7 +327,7 @@ class LLM(BaseModel):
             # logprobs: bool=False,
             **kwargs):
 
-        llm_kwargs = self.get_llm(**kwargs)
+        llm_kwargs = self.get_llm(tools=tools, **kwargs)
 
         extra = metadata.copy()
         extra.update(llm_kwargs)  
@@ -337,8 +345,6 @@ class LLM(BaseModel):
             extra=extra,
         ) as llm_run:
         
-
-            # tool_schema = [convert_to_openai_tool(t) for t in tools] if tools else None
             tool_schema = [schema_to_function(t) for t in tools] if tools else None
             
             if isinstance(tool_choice, BaseModel):
@@ -358,7 +364,11 @@ class LLM(BaseModel):
                         **llm_kwargs)                    
                 
                     ai_message = self.parse_output(completion, tools, tool_choice, response_model)
-                    break
+                    ai_message.run_id = str(llm_run.id)
+                    if ai_message.output is None:
+                        print("ai_message output is None")
+                    llm_run.end(outputs=completion)
+                    return ai_message
                 except LLMToolNotFound as e:
                     print(f"try {try_num} tool not found error")
                     if try_num == retries - 1:
@@ -378,24 +388,23 @@ class LLM(BaseModel):
                         pickle.dump(msgs, f)
                     raise e
                     
-
-            llm_run.end(outputs=completion)
-
-            return ai_message
-
         
-    def parse_output(self, completion, tools, tool_choice, response_model):
+    def parse_output(self, completion, tools, tool_choice: ToolChoice | BaseModel | None, response_model):
         output = completion.choices[0].message
         finish_reason = completion.choices[0].finish_reason
 
         if response_model:
             parser = OutputParser(response_model)
             try:
-                return parser.parse(output.content)
+                parsing_output = parser.parse(output.content)
+                return AIMessage(content=output.content, output=parsing_output)
             except Exception as e:
                 print("########## ERROR PARSING OUTPUT ##########") 
         actions = None
-        if finish_reason == "tool_calls":
+        if finish_reason == "stop":
+            if tool_choice == "required":
+                raise LLMToolNotFound("Tool call is required")            
+        elif finish_reason == "tool_calls":
             if completion.choices[0].message.content is not None:
                 print("### tool call with message: ", completion.choices[0].message.content)
             tool_lookup = {t.__name__: t for t in tools}
@@ -409,49 +418,47 @@ class LLM(BaseModel):
                     raise LLMToolNotFound(f"Tool {tool_call.function.name} not found in tools")
                 tool_call.function.name                
             # return actions
-
-
         return AIMessage(content=output.content, tool_calls=output.tool_calls, actions=actions)
         
 
-    async def send_stream(self, openai_messages, tracer_run, metadata={}, completion=None, **kwargs):
+    # async def send_stream(self, openai_messages, tracer_run, metadata={}, completion=None, **kwargs):
 
-        llm_kwargs = self.get_llm(**kwargs)
+    #     llm_kwargs = self.get_llm(**kwargs)
 
-        extra = metadata.copy() if metadata else {}
-        extra.update(llm_kwargs)  
+    #     extra = metadata.copy() if metadata else {}
+    #     extra.update(llm_kwargs)  
 
 
-        with Tracer(
-            is_traceable=self.is_traceable,
-            tracer_run=tracer_run,
-            run_type="llm",
-            name=self.name,
-            inputs={"messages": openai_messages},
-            extra=extra,
-        ) as llm_run:
+    #     with Tracer(
+    #         is_traceable=self.is_traceable,
+    #         tracer_run=tracer_run,
+    #         run_type="llm",
+    #         name=self.name,
+    #         inputs={"messages": openai_messages},
+    #         extra=extra,
+    #     ) as llm_run:
         
-            stream = await self.client.chat.completions.create(
-                messages=openai_messages,
-                stream=True,
-                **llm_kwargs,
-            )
-            openai_completion = ""
-            async for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    openai_completion += chunk.choices[0].delta.content
-                    yield LlmChunk(
-                        content=chunk.choices[0].delta.content,
-                    )
+    #         stream = await self.client.chat.completions.create(
+    #             messages=openai_messages,
+    #             stream=True,
+    #             **llm_kwargs,
+    #         )
+    #         openai_completion = ""
+    #         async for chunk in stream:
+    #             if chunk.choices[0].delta.content is not None:
+    #                 openai_completion += chunk.choices[0].delta.content
+    #                 yield LlmChunk(
+    #                     content=chunk.choices[0].delta.content,
+    #                 )
                     
             
-            llm_run.end(outputs={
-                "messages": [AIMessage(content=openai_completion).to_openai()]
-            })
-            yield LlmChunk(
-                content=openai_completion,
-                finish=True
-            )
+    #         llm_run.end(outputs={
+    #             "messages": [AIMessage(content=openai_completion).to_openai()]
+    #         })
+    #         yield LlmChunk(
+    #             content=openai_completion,
+    #             finish=True
+    #         )
 
 
     

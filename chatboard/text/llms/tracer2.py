@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 
 def get_message(run_data):
-    print(run_data)
+    # print(run_data)
     if run_data['role'] == 'user':
         return HumanMessage(content=run_data['content'])
     if run_data['role'] == 'assistant':
@@ -71,6 +71,24 @@ class LsRun(LsRunBase):
     def get_names(self):
         return [c.name for c in self.children]
     
+    @property
+    def messages(self):
+        if self.children and self.children[0].run_type == "llm":
+            return self.children[0].messages
+        return None
+    
+    @property
+    def input_message(self):
+        messages = self.messages
+        if messages:
+            return messages[-2]
+    
+    @property
+    def output_message(self):
+        messages = self.messages
+        if messages:
+            return messages[-1]
+    
     def __repr__(self) -> str:
         return self.show()
     
@@ -78,6 +96,9 @@ class LsRun(LsRunBase):
         idx_str = f"{idx}. " if idx is not None else ""
         tabs_str = '\t' * tabs
         return f"{tabs_str}{idx_str}{self.name} - {self.run_type}\n" + "\n".join([f"{c.show(i, tabs+1)}" for i, c in enumerate(self.children)])
+    
+    def __iter__(self):
+        return iter(self.children)
 
     
 
@@ -121,7 +142,7 @@ def get_run_messages(run):
             id=str(run.id), 
             name=run.name, 
             run_type=run.run_type, 
-            inputs=run.inputs,
+            inputs=run.inputs.get('input', {}),
             metadata=run.metadata,
             start_time=run.start_time,
             end_time=run.end_time,
