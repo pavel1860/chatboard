@@ -4,7 +4,7 @@ import os
 import re
 from time import time
 from typing import (Any, Coroutine, Dict, Generic, Iterable, List, Literal,
-                    Optional, Tuple, TypeVar, Union)
+                    Optional, Tuple, Type, TypeVar, Union)
 
 import aiohttp
 import openai
@@ -316,7 +316,7 @@ class LLM(BaseModel):
     async def complete(
             self, 
             msgs: List[SystemMessage | HumanMessage | AIMessage], 
-            tools: List[BaseModel] | None=None, 
+            tools: List[Type[BaseModel]] | None=None, 
             tool_choice: ToolChoice | BaseModel | None = None,
             response_model: BaseModel | None=None,
             tracer_run=None, 
@@ -370,20 +370,23 @@ class LLM(BaseModel):
                 except LLMToolNotFound as e:
                     print(f"try {try_num} tool not found error")
                     if try_num == retries - 1:
+                        llm_run.end(errors=str(e))
                         raise e
                     if smart_retry:
                         msgs.append(HumanMessage(content=f"there is no such tool:\n{str(e)}"))
                 except ValidationError as e:
                     print(f"try {try_num} validation error")
                     if try_num == retries - 1:
+                        llm_run.end(errors=str(e))
                         raise e
                     msgs.append(HumanMessage(content=f"something is wrong with the parameters:\n{str(e)}"))
                 except Exception as e:
-                    import pickle
-                    from datetime import datetime
-                    date_str = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-                    with open(f"msgs_{date_str}.pkl", "wb") as f:
-                        pickle.dump(msgs, f)
+                    llm_run.end(errors=str(e))
+                    # import pickle
+                    # from datetime import datetime
+                    # date_str = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+                    # with open(f"msgs_{date_str}.pkl", "wb") as f:
+                    #     pickle.dump(msgs, f)
                     raise e
                     
         

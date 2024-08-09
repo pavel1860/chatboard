@@ -37,8 +37,70 @@ class ViewNode(BaseModel):
         return self.vn_id.__hash__()
     
     
+
+
+def transform_list_to_view_node(        
+        items: List[Union["ViewNode", BaseModel, str]],
+        name: str,
+        role: Literal["assistant", "user", "system"] | None = None,
+        numerate: bool = False,
+        base_model: BaseModelRenderType = 'json',
+                
+    ):
+    sub_views = []
+    for i, o in enumerate(items):
+        if isinstance(o, str):
+            sub_views.append(
+                ViewNode(
+                    name=f"{name}_str_{i}",
+                    views=o,
+                    numerate=numerate,
+                    index=i,
+                    role=role
+                )   
+            )
+        elif isinstance(o, ViewNode):
+            sub_views.append(o)
+        elif isinstance(o, BaseModel):
+            sub_views.append(
+                ViewNode(
+                    name=f"{name}_model_{i}",
+                    views=o,
+                    numerate=numerate,
+                    base_model=base_model,
+                    index=i,
+                    role=role
+                )
+            )
+        else:
+            raise ValueError(f"view type not supported: {type(o)}")
+    return sub_views
+
+
+def create_view_node(
+    views,
+    name: str,
+    title: str | None = None,
+    wrap: ViewWrapperType = None,
+    actions: List[BaseModel] | BaseModel | None = None,
+    role: Literal["assistant", "user", "system"] | None = None,
+    numerate: bool = False,
+    base_model: BaseModelRenderType = 'json',
+):
     
+    if type(views) == list:
+        views = transform_list_to_view_node(views, name, role, numerate, base_model)
     
+    return ViewNode(
+        name=name,
+        title=title,
+        views=views,
+        actions=actions,
+        base_model=base_model,
+        numerate=numerate,
+        wrap=wrap,
+        role=role,
+    )
 
     
 def view(
@@ -60,32 +122,33 @@ def view(
                 
             sub_views = []
             if isinstance(outputs, list) or isinstance(outputs, tuple):
-                for i, o in enumerate(outputs):
-                    if isinstance(o, str):
-                        sub_views.append(
-                            ViewNode(
-                                name=f"{func.__name__}_str_{i}",
-                                views=o,
-                                numerate=numerate,
-                                index=i,
-                                role=role
-                            )   
-                        )
-                    elif isinstance(o, ViewNode):
-                        sub_views.append(o)
-                    elif isinstance(o, BaseModel):
-                        sub_views.append(
-                            ViewNode(
-                                name=f"{func.__name__}_model_{i}",
-                                views=o,
-                                numerate=numerate,
-                                base_model=base_model,
-                                index=i,
-                                role=role
-                            )
-                        )
-                    else:
-                        raise ValueError(f"view type not supported: {type(o)}")
+                sub_views = transform_list_to_view_node(outputs, func.__name__, role, numerate, base_model)
+                # for i, o in enumerate(outputs):
+                #     if isinstance(o, str):
+                #         sub_views.append(
+                #             ViewNode(
+                #                 name=f"{func.__name__}_str_{i}",
+                #                 views=o,
+                #                 numerate=numerate,
+                #                 index=i,
+                #                 role=role
+                #             )   
+                #         )
+                #     elif isinstance(o, ViewNode):
+                #         sub_views.append(o)
+                #     elif isinstance(o, BaseModel):
+                #         sub_views.append(
+                #             ViewNode(
+                #                 name=f"{func.__name__}_model_{i}",
+                #                 views=o,
+                #                 numerate=numerate,
+                #                 base_model=base_model,
+                #                 index=i,
+                #                 role=role
+                #             )
+                #         )
+                #     else:
+                #         raise ValueError(f"view type not supported: {type(o)}")
             else:
                 sub_views = outputs
             view_instance = ViewNode(

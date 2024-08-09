@@ -36,6 +36,7 @@ class LsRunBase(BaseModel):
     run_type: str
     inputs: Dict = {}
     metadata: Dict = {}
+    output: Dict | str = {}
     start_time: datetime
     end_time: datetime
     error: str | None = None
@@ -128,6 +129,7 @@ def get_run_messages(run):
             start_time=run.start_time,
             end_time=run.end_time,
             inputs=run.inputs,
+            output=run.outputs,
             metadata=run.metadata,
             documents=[RetrieverDocument(
                 id=doc['metadata']['document_id'], 
@@ -143,6 +145,7 @@ def get_run_messages(run):
             name=run.name, 
             run_type=run.run_type, 
             inputs=run.inputs.get('input', {}),
+            output=run.outputs.get('output', {}) if run.outputs else {},
             metadata=run.metadata,
             start_time=run.start_time,
             end_time=run.end_time,

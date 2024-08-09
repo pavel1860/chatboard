@@ -335,7 +335,6 @@ class LLM(BaseModel):
                 tool_choice=tool_choice, 
                 **llm_kwargs
                 )
-            return completion
             llm_run.end(outputs=completion)
             # return completion
             output = completion.choices[0].message

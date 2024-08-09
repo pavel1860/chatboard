@@ -379,6 +379,7 @@ class Prompt(BaseModel):
                 except (KeyError, PromptParsingException) as e:
                     print(f"try {try_num} KeyError: {str(e)}")
                     if try_num == retries - 1:
+                        prompt_run.end(errors= str(e))
                         raise e
                     if smart_retry:
                         msgs.append(AIMessage(content=completion_msg.content))
@@ -386,6 +387,7 @@ class Prompt(BaseModel):
                         prompt_run.add_tags([f"try_{try_num + 1}"])
                 except Exception as e:
                     traceback.print_exc()
+                    prompt_run.end(errors= str(e))
                     raise e
 
                     

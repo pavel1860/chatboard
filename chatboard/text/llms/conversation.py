@@ -87,6 +87,10 @@ class AIMessage(BaseMessage):
             return None
         return self.actions[0]
     
+    @output.setter
+    def output(self, value):
+        self.actions = [value]
+    
     def is_valid(self):
         if self.content is not None:
             return True 
