@@ -123,7 +123,7 @@ class DenseEmbeddings:
             res = await self.client.embeddings.create(input=texts, model=model)
             return [embs.embedding for embs in res.data]
         except Exception as e:
-            print(texts)
+            print("bad texts:", texts)
             raise e
 
     async def embed_query(self, text: str, model="text-embedding-3-small"):

@@ -1,4 +1,5 @@
 
+import asyncio
 import json
 import os
 import re
@@ -45,6 +46,10 @@ chat_models = [
 
 
 
+rate_limit_event = asyncio.Event()
+rate_limit_event.set()
+
+
 class LlmError(Exception):
     pass
 
@@ -77,8 +82,7 @@ class PhiLlmClient(BaseModel):
     # url: str = "http://skynet/text/complete"
     # url: str = "http://skynet/text/complete_chat"
     # url: str = "http://skynet1/text/complete_chat"
-    url: str = "http://skynet1:31001/complete_chat"
-    
+    url: str = "http://skynet1:31001/complete_chat"    
     # url: str = "http://localhost:3000/complete_chat"
     # url: str = "http://localhost:8001/complete"
     # url: str = "http://localhost:8001/complete_chat"
@@ -106,25 +110,7 @@ class PhiLlmClient(BaseModel):
 
     def preprocess(self, msgs):
         return [m.dict() for m in msgs]
-    # async def complete(self, msgs, max_tokens=200, stop_sequences=[]):
-    #     prompt = self.preprocess(msgs)
-    #     async with aiohttp.ClientSession() as session:        
-    #         content, status = await self.fetch(session, self.url, data={
-    #             "prompt": prompt,
-    #             "max_new_tokens": max_tokens,
-    #             "stop_sequences": stop_sequences        
-    #         })
-    #         return content
-    # async def complete(self, msgs, **kwargs):
-    #     prompt = self.preprocess(msgs)
-    #     async with aiohttp.ClientSession() as session:        
-    #         content, status = await self.fetch(session, self.url, data={
-    #             # "prompt": prompt,
-    #             "max_new_tokens": kwargs.get("max_tokens", 200),
-    #             "stop_sequences": kwargs.get("stop", [])        
-    #         })
-    #         # return content
-    #         return AIMessage(content=content)
+
 
     async def complete(self, msgs, **kwargs):
         msgs = self.preprocess(msgs)
@@ -146,42 +132,33 @@ class OpenAiLlmClient:
 
     def __init__(self, api_key=None, api_version=None, azure_endpoint=None, azure_deployment=None):
         self.client = build_async_openai_client()
-        # if azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", None):
-        #     self.client = openai.AsyncAzureOpenAI(
-        #         api_key=api_key or os.getenv("AZURE_OPENAI_API_KEY"),
-        #         api_version=api_version or os.getenv("OPENAI_API_VERSION", "2023-12-01-preview"),
-        #         azure_endpoint=azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
-        #         azure_deployment=azure_deployment or os.getenv("AZURE_OPENAI_DEPLOYMENT"),
-        #     ) 
-        # elif os.environ.get("OPENAI_API_KEY", None):
-        #     self.client = openai.AsyncClient(
-        #         api_key=api_key or os.getenv("OPENAI_API_KEY")
-        #     )
-        # else:
-        #     raise ValueError("OpenAI API Key not found in environment variables")
+
 
     def preprocess(self, msgs):
         return [msg.to_openai() for msg in msgs]
 
-    async def complete(self, msgs, tools=None, **kwargs):
-        # tools = tools or []
+    async def complete(self, msgs, tools: List[BaseModel] | None=None, retries=10, run_id: str | None=None, **kwargs):
         msgs = self.preprocess(msgs)
-        openai_completion = await self.client.chat.completions.create(
-            messages=msgs,
-            tools=tools,
-            **kwargs
-        )
-        return openai_completion
-        # output = openai_completion.choices[0].message
-        # return AIMessage(content=output.content or '', tool_calls=output.tool_calls)
-        # return output
-
+        await rate_limit_event.wait()
+        for i in range(retries):
+            try:
+                print(f"SENDING-{run_id}")
+                openai_completion = await self.client.chat.completions.create(
+                    messages=msgs,
+                    tools=tools,#type: ignore
+                    **kwargs
+                )
+                return openai_completion
+            except openai.RateLimitError as e:
+                print("Rate limit error. Waiting for 10 seconds")
+                rate_limit_event.clear()
+                await asyncio.sleep(60)
+                rate_limit_event.set()
+                continue        
 
 
 class LLM(BaseModel):
 
-    # model="gpt-3.5-turbo-0125"
-    # name="OpenAiLLM"
     model: str
     name: str
     temperature: Optional[float] = None
@@ -199,46 +176,6 @@ class LLM(BaseModel):
     class Config:
         arbitrary_types_allowed = True
 
-
-    # def __init__(self, **data):
-    #     super().__init__(**data)
-    
-    # def __init__(
-    #         self, 
-    #         model=DEFAULT_MODEL,
-    #         # model='gpt-3.5-turbo-1106',
-    #         name="OpenAiLLM",
-    #         temperature=None, 
-    #         max_tokens=None, 
-    #         stop_sequences=None,
-    #         stream=False,            
-    #         logit_bias=None,            
-    #         top_p=None,
-    #         presence_penalty=None,
-    #         frequency_penalty=None,
-    #         suffix=None, 
-    #         is_traceable=True, 
-    #         seed=None          
-    #     ) -> None:
-    #     if model is not None and model not in chat_models:
-    #         raise ValueError(f"model ({model}) must be one of {chat_models}")
-    #     self.name = name
-    #     self.client = openai.AsyncClient()
-    #     self.model = model
-    #     self.temperature = temperature
-    #     self.max_tokens = max_tokens
-    #     self.stop_sequences = stop_sequences
-    #     self.stream = stream
-    #     self.seed = seed
-    #     self.logit_bias = None
-    #     if logit_bias:
-    #         self.logit_bias = encode_logits_dict(logit_bias, tiktoken.get_encoding("cl100k_base"))
-    #     self.top_p = top_p
-    #     self.presence_penalty = presence_penalty
-    #     self.frequency_penalty = frequency_penalty
-    #     self.suffix = suffix
-    #     self.is_traceable = is_traceable
-    #     # self.encoding_model = tiktoken.get_model(model)
 
 
 
@@ -323,16 +260,13 @@ class LLM(BaseModel):
             tags=tags,
         ) as llm_run:
         
-            # output = await self.llm.ainvoke(messages)
-            # openai_completion = await self.client.chat.completions.create(
-            #     messages=openai_messages,
-            #     **llm_kwargs
-            # )
+
             completion = await self.client.complete(
                 msgs, 
                 # logprobs=True,
                 tools=tools, 
                 tool_choice=tool_choice, 
+                run_id=str(llm_run.id),
                 **llm_kwargs
                 )
             llm_run.end(outputs=completion)
