@@ -123,7 +123,8 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: uuid
     This approach is cleaner and more straightforward than UNNEST.
     """
     nodes = dump_block(block)
-    async with PGConnectionManager.transaction() as tx:
+    # async with PGConnectionManager.transaction() as tx:
+    async def insert_block_transaction(tx):
         tree_id = str(uuid.uuid4())
         created_at = dt.datetime.now()
         await tx.execute(
@@ -170,6 +171,7 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: uuid
 
         return tree_id
     
+    return await PGConnectionManager.run_in_transaction(insert_block_transaction)
 
     
     
