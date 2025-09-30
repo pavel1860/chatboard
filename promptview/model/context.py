@@ -7,6 +7,7 @@ from .model3 import Model
 from .postgres2.pg_query_set import PgSelectQuerySet
 from .versioning.models import Branch, Turn, TurnStatus, VersionedModel
 from dataclasses import dataclass
+from ..utils.function_utils import call_function
 if TYPE_CHECKING:
     from fastapi import Request
 
@@ -84,9 +85,10 @@ class Context(BaseModel):
         # if ctx_args is None:
         #     raise ValueError("ctx is not set")
         # ctx = cls(**ctx_args)
-        ctx = get_request_ctx(request)
+        ctx_kwargs = get_request_ctx(request)
         auth = await get_auth(request)
-        ctx = cls(**ctx, auth=auth)
+        # ctx = cls(**ctx, auth=auth)
+        ctx = await call_function(cls, **ctx_kwargs, auth=auth)
         return ctx
     
     @classmethod

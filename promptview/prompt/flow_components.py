@@ -614,6 +614,7 @@ class StreamController(BaseFbpComponent):
         )
     
     async def on_stop_event(self, payload: Any = None):
+        print("STREAM CONTROLLER on_stop_event", self.get_response())
         response = self.get_response()
         if response is not None:
             await self.span.add_block_event(response, self.index)
@@ -1067,7 +1068,7 @@ class FlowRunner:
             except StopAsyncIteration:
                 gen = self.pop()
                 await gen.on_stop()
-                event = await gen.on_stop_event(None)
+                # event = await gen.on_stop_event(None)
                 if event:=await self.try_build_stop_event(gen, value):
                     return event
                 # if not self.should_output_events:

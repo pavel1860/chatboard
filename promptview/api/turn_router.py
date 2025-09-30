@@ -22,7 +22,11 @@ def create_turn_router(context_cls: Type[Context] | None = None):
     async def get_model_ctx(request: Request):
         return await context_cls.from_request(request)
     
-    turn_router = create_model_router(Turn, get_model_ctx, exclude_routes={"update"})
+    turn_router = create_model_router(
+        Turn, 
+        get_model_ctx, 
+        # exclude_routes={"update"}
+    )
 
 
     @turn_router.get("/spans")   
