@@ -63,3 +63,23 @@ async def test_artifact_model_creation(setup_db):
     assert post.artifact_id is not None
     assert isinstance(post.artifact_id, int)
     assert post.artifact_id == 1
+    
+    
+    
+    
+    
+    
+    
+@pytest.mark.asyncio
+async def test_artifact_model_update(setup_db):
+    """Test basic artifact model update and properties."""
+    branch = await Branch.get_main()
+    with branch:
+        async with branch.start_turn() as turn:
+            post = await Post(text="Hello World").save()
+            post.text = "Hello World2!!!"
+            await post.save()
+            assert post.text == "Hello World2!!!"
+    
+    assert post.text == "Hello World2!!!"
+    

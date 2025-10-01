@@ -435,13 +435,13 @@ class VersionedModel(Model):
         if offset:
             turn_cte = turn_cte.offset(offset)
         
-        
+        art_cte = Artifact.query().join(turn_cte, on=("turn_id", "id")).use_cte(turn_cte, name="committed_turns", alias="ct")
         return (
             PgSelectQuerySet(cls, alias=alias) \
             .use_cte(
-                turn_cte,
-                name="committed_turns",
-                alias="ct",
+                art_cte,
+                name="artifact_cte",
+                alias="ac",
             )
         )
 
