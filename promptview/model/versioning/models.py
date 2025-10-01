@@ -27,6 +27,7 @@ _curr_turn = contextvars.ContextVar("curr_turn", default=None)
 
 
 span_type_enum = Literal["component", "stream", "llm"]
+artifact_kind_enum = Literal["block", "span", "log", "model", "literal"]
 
 class TurnStatus(enum.StrEnum):
     """Status of a turn in the version history."""
@@ -312,7 +313,7 @@ class Artifact(Model):
     Stores lineage metadata for blocks, spans, logs, and user models.
     """
     id: int = KeyField(primary_key=True)
-    kind: str = ModelField()  # 'block', 'span', 'log', 'model'
+    kind: artifact_kind_enum = ModelField()  # 'block', 'span', 'log', 'model'
     model_name: str | None = ModelField(None)  # 'meal_plan', 'workout', etc.
 
     # Lineage
@@ -591,11 +592,12 @@ class Log(Model):
 class SpanEvent(VersionedModel):
     id: int = KeyField(primary_key=True)    
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-    event_type: Literal["block", "span", "log", "model", "stream"] = ModelField()
-    table: str | None = ModelField(default=None)
-    index: int = ModelField()
+    kind: Literal["block", "span", "log", "model", "stream"] = ModelField()
+    io_type: Literal["input", "output"] = ModelField()
+    # index: int = ModelField()
     span_id: uuid.UUID = ModelField(foreign_key=True)
-    event_id: str = ModelField()
+    artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
+    artifact: "Artifact | None" = RelationField("Artifact", primary_key="artifact_id", foreign_key="id")
     
     
 
@@ -605,8 +607,6 @@ class ExecutionSpan(VersionedModel):
     name: str = ModelField()  # Function/component name
     span_type: span_type_enum = ModelField()
     parent_span_id: uuid.UUID | None = ModelField(foreign_key=True, self_ref=True)
-    turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
-    branch_id: int = ModelField(foreign_key=True, foreign_cls=Branch)
     start_time: dt.datetime = ModelField(default_factory=dt.datetime.now)
     end_time: dt.datetime | None = ModelField(default=None)
     tags: list[str] | None = ModelField(default=None)
@@ -628,6 +628,31 @@ class ExecutionSpan(VersionedModel):
     #     turn_id = super()._resolve_turn_id(turn)
     #     return turn_id or 1
     
+    def _get_target_meta(self, target: Any) -> tuple[artifact_kind_enum, int | None]:
+        from ...block import Block
+        if isinstance(target, Block):
+            return "block", None
+        elif isinstance(target, Log):
+            return "log", None
+        elif isinstance(target, ExecutionSpan):
+            return "span", target.artifact_id
+        elif isinstance(target, VersionedModel):
+            return "model", target.artifact_id
+        else:
+            return "literal", None
+        
+
+    
+    async def log(self, target: Any, io_type: Literal["input", "output"]= "output"):
+        kind, artifact_id = self._get_target_meta(target)
+        event = await self.add(SpanEvent(
+            span_id=self.id,
+            kind=kind,
+            io_type=io_type,
+            artifact_id=artifact_id,
+        ))
+        return event
+    
     async def add_block_event(self, block: "Block", index: int):
         from ..block_models.block_log import insert_block
         from ..namespace_manager2 import NamespaceManager
@@ -638,7 +663,7 @@ class ExecutionSpan(VersionedModel):
             
         event = await SpanEvent(
             span_id=self.id,
-            event_type="block",
+            kind="block",
             event_id=tree_id,
             index=index
         ).save()
@@ -647,7 +672,7 @@ class ExecutionSpan(VersionedModel):
     async def add_stream(self, index: int):
         return await SpanEvent(
             span_id=self.id,
-            event_type="stream",
+            kind="stream",
             event_id="",
             index=index
         ).save()
@@ -656,7 +681,7 @@ class ExecutionSpan(VersionedModel):
     async def add_span_event(self, span: "ExecutionSpan", index: int):
         return await SpanEvent(
             span_id=self.id,
-            event_type="span",
+            kind="span",
             event_id=str(span.id),
             index=index
         ).save()
@@ -664,7 +689,7 @@ class ExecutionSpan(VersionedModel):
     async def add_log_event(self, log: "Log", index: int):
         return await SpanEvent(
             span_id=self.id,
-            event_type="log",
+            kind="log",
             event_id=str(log.id),
             index=index
         ).save()
@@ -673,7 +698,7 @@ class ExecutionSpan(VersionedModel):
     async def add_model_event(self, model: "Model", index: int):
         return await SpanEvent(
             span_id=self.id,
-            event_type="model",
+            kind="model",
             event_id=str(model.id),
             table=model._namespace_name,
             index=index
