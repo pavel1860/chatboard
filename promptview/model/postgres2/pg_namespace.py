@@ -15,7 +15,7 @@ from .pg_relation import PgRelation
 
 if TYPE_CHECKING:
     from ..model3 import Model
-    from ..postgres2.pg_query_set import PgSelectQuerySet
+    from ..postgres2.pg_query_set import PgSelectQuerySet, PgMutationSet
 
 
 
@@ -78,10 +78,17 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
             data[rel_name] = value
         return data
     
+    # async def insert(self, data: dict[str, Any]) -> dict[str, Any]:
+        
+    def insert(self, data: dict[str, Any]) -> "PgMutationSet[Model]":
+        from promptview.model.postgres2.pg_query_set import PgMutationSet
+        return PgMutationSet(self).insert(**data)
     
     
+    def update(self, id: Any, data: dict[str, Any]) -> "PgMutationSet[Model]":
+        raise NotImplementedError("Update is not implemented for PgNamespace")
 
-    async def insert(self, data: dict[str, Any]) -> dict[str, Any]:
+    # async def insert(self, data: dict[str, Any]) -> dict[str, Any]:
         # 1. Handle relation fields...
         # for rel_name, relation in self._relations.items():
         #     if rel_name not in data or data[rel_name] is None:
@@ -131,18 +138,18 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
         #     RETURNING *;
         #     """
         #     result = await PGConnectionManager.fetch_one(sql, *values)
-        sql, values = insert_query(self, data)
-        result = await PGConnectionManager.fetch_one(sql, *values)
+        # sql, values = insert_query(self, data)
+        # result = await PGConnectionManager.fetch_one(sql, *values)
 
-        if not result:
-            raise RuntimeError("Insert failed, no row returned")
-        # return dict(result)
-        return self.deserialize(dict(result))
+        # if not result:
+        #     raise RuntimeError("Insert failed, no row returned")
+        # # return dict(result)
+        # return self.deserialize(dict(result))
 
     
     
     
-    async def update(self, id: Any, data: dict[str, Any]) -> dict[str, Any]:
+    # async def update(self, id: Any, data: dict[str, Any]) -> dict[str, Any]:
         # set_clauses = []
         # values = []
 
@@ -172,12 +179,12 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
         # WHERE "{pk_field.name}" = {where_placeholder}
         # RETURNING *;
         # """
-        sql, values = update_query(id, self, data)
+        # sql, values = update_query(id, self, data)
 
-        result = await PGConnectionManager.fetch_one(sql, *values)
-        if not result:
-            raise RuntimeError("Update failed, no row returned")
-        return dict(result)
+        # result = await PGConnectionManager.fetch_one(sql, *values)
+        # if not result:
+        #     raise RuntimeError("Update failed, no row returned")
+        # return dict(result)
 
 
 

@@ -197,11 +197,30 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         return self._model_cls.from_dict(data)
     
     
+    def serialize_field(self, field_name: str, value: Any, use_defaults: bool = False) -> Any:
+        field = self.get_field(field_name)
+        if value is None:
+            if not field.is_optional:
+                if use_defaults:
+                    value = field.default
+                else:
+                    raise ValueError(f"Field {field.name} is not optional and value is None")
+        serialized = field.serialize(value)
+        return serialized
+    
+    def insert(self, data: dict[str, Any]):
+        raise NotImplementedError("Insert is not implemented for this namespace")
+    
+    def update(self, id: Any, data: dict[str, Any]):
+        raise NotImplementedError("Update is not implemented for this namespace")
+    
     def serialize(
         self, 
         data: dict[str, Any], 
         use_defaults: bool = False,
         skip_primary_key: bool = False,
+        skip_missing: bool = False,
+        exclude: set[str] = set()
     ):
         """Serialize the data for the database
         
@@ -214,17 +233,22 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         for field in self.iter_fields():
             if skip_primary_key and field.is_primary_key:
                 continue
-            value = data.get(field.name)
-            if value is None:
-                if not field.is_optional:
-                    if use_defaults:
-                        value = field.default
-                    else:
-                        raise ValueError(f"Field {field.name} is not optional and value is None")
-            serialized = field.serialize(value)
+            if field.name in exclude:
+                continue
+            if field.name in data:
+                value = data[field.name]
+            else:
+                if skip_missing:
+                    continue
+                else:
+                    raise ValueError(f"Field {field.name} not found in data")
+            serialized = self.serialize_field(field.name, value, use_defaults)
             fields.append(field.name)
             values.append(serialized)
         return fields, values
+    
+
+
     
     
     def deserialize(self, data: dict[str, Any]) -> dict[str, Any]:

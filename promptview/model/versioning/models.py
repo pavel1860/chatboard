@@ -246,9 +246,13 @@ class Turn(Model):
         ns.set_ctx(None)
         self._ctx_token = None
         if exc_type is not None:
-            await self.revert(str(exc_value))
+            if self._auto_commit:
+                await self.revert(str(exc_value))
+            else:
+                return False
         elif not self._auto_commit:
-            await self.revert()
+            # await self.revert()
+            return True
         else:
             await self.commit()
         if self._raise_on_error:
@@ -367,12 +371,33 @@ class VersionedModel(Model):
         #     self.turn_id = self._resolve_turn_id(turn)
          
         # if self.branch_id is None or self.turn_id is None:
+        ns = self.get_namespace()
         if not self._should_save_to_db(branch, turn):
-            ns = self.get_namespace()
+            print(f"WARNING: {self.__class__.__name__} is not saved to database")
             if not ns.has_primary_key(self):
                 ns.set_primary_key(self, ns.generate_fake_key())
             return self
-        return await super().save()
+        # return await super().save()
+        
+        pk_value = self.primary_id
+        if pk_value is None:
+            branch_id = Branch.resolve_target_id(branch)
+            turn_id = Turn.resolve_target_id(turn)
+            art_query = Artifact(
+                kind=self._artifact_kind,
+                model_name=self.get_namespace_name(),
+                branch_id=branch_id,
+                turn_id=turn_id
+            ).insert()
+            dump = self.model_dump()
+            dump["artifact_id"] = art_query.col("id")
+            result = await ns.insert(dump).select("*").one().json()
+            # result = await ns.insert(self.model_dump()).select("*").one().json()
+        else:
+            result = await ns.update(pk_value, self.model_dump()).select("*").one().json()
+        for key, value in result.items():
+            setattr(self, key, value)
+        return self
     
     def _should_save_to_db(self, branch: Branch | int | None = None, turn: Turn | int | None = None) -> bool:        
         branch_id = self._resolve_branch_id(branch)        

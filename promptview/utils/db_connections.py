@@ -305,7 +305,16 @@ class PGConnectionManager:
     @classmethod
     async def close(cls) -> None:
         await cls._safe_close_pool()
-        
+
+
+
+def print_error_sql(sql: str, values: Any | None = None, error: Exception | None = None):
+    print("---------- SQL ------------:\n", sql)
+    if values:
+        print("---------- VALUES ----------:\n", values)
+    if error:
+        print("---------- ERROR ----------:\n", error)
+    
 
 class SyncPGConnectionManager:
     _pool: "SimpleConnectionPool | None" = None

@@ -236,6 +236,12 @@ class Compiler:
 
 
     def _compile_insert(self, q: InsertQuery):
+        sql = ""
+
+        # Add CTEs first
+        if q.ctes:
+            sql += self._compile_ctes(q.ctes, q.recursive) + "\n"
+
         table = self.compile_table(q.table)
 
         # Compile column names
@@ -248,7 +254,7 @@ class Compiler:
             value_rows.append(f"({', '.join(placeholders)})")
         values_sql = ",\n".join(value_rows)
 
-        sql = f"INSERT INTO {table} ({columns})\nVALUES {values_sql}"
+        sql += f"INSERT INTO {table} ({columns})\nVALUES {values_sql}"
 
         # RETURNING clause
         if q.returning:

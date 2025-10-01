@@ -12,7 +12,7 @@ from ..postgres2.rowset import RowsetNode
 from ..relation_info import RelationInfo
 from ..sql.joins import Join
 from ..sql.queries import CTENode, InsertQuery, SelectQuery, Table, Column, NestedSubquery, Subquery
-from ..sql.expressions import Coalesce, Eq, Expression, RawSQL, WhereClause, param, OrderBy, Function, Value, Null
+from ..sql.expressions import Coalesce, Eq, Expression, RawSQL, RawValue, WhereClause, param, OrderBy, Function, Value, Null
 from ..sql.compiler import Compiler
 from ..sql.json_processor import Preprocessor
 from ...utils.db_connections import PGConnectionManager
@@ -936,14 +936,19 @@ class RelationSet(Generic[MODEL]):
         return self.projection_set[name] 
     
     
-    
-    def use_cte(self, query_set, name: str, alias: str | None = None, on: tuple[str, str] | None = None):
+    def _register_cte(self, query_set, name: str, alias: str | None = None):
         self._cte_registry.merge(query_set._cte_registry)
         query_set._cte_registry.clear()
         if alias is None:
             alias = self.table_registry.gen_alias(name)
         cte_table = self.table_registry.register(name, alias, query_set.namespace)
         cte_set = self._cte_registry.register(query_set, name, alias=alias)                
+        return cte_set, cte_table
+    
+    def use_cte(self, query_set, name: str, alias: str | None = None, on: tuple[str, str] | None = None):
+        # self._cte_registry.merge(query_set._cte_registry)
+        # query_set._cte_registry.clear()
+        cte_set, cte_table = self._register_cte(query_set, name, alias)
         # self.join(cte_set, on=on)
         return self  
     
@@ -984,10 +989,42 @@ class RelationSet(Generic[MODEL]):
         return [self.parse_row(row) for row in rows]
     
     
+    async def execute_json(self):
+        sql, params = self.render()
+        rows = await PGConnectionManager.fetch(sql, *params)
+        return [self.namespace.deserialize(dict(row)) for row in rows]
+    
+
+class RelationSetSingleAdapter(Generic[T_co]):
+    def __init__(self, rel_set: "RelationSet[T_co]"):
+        self.rel_set = rel_set
+        
+        
+    async def json(self):
+        res = await self.rel_set.execute_json()
+        if not res:
+            return None
+        return res[0]
+
+    def __await__(self) -> Generator[Any, None, T_co]:
+        async def await_rel_set():
+            results = await self.rel_set.execute()
+            if results:
+                return results[0]
+            return None
+            # raise ValueError("No results found")
+            # return None
+            # raise DoesNotExist(self.queryset.model)
+        return await_rel_set().__await__()  
+
+
+
+  
 class ValueRefSet:
-    def __init__(self, rel_set: RelationSet):
+    def __init__(self, rel_set: RelationSet, table: Table | None = None):
         self.rel_set = rel_set
         self.value = None
+        self.table = table or rel_set.table
     
     def get(self, field):
         self.value = field
@@ -1008,13 +1045,18 @@ class PgMutationSet(RelationSet[MODEL]):
         self.projection_set(*fields)
         return self
     
+    def one(self) -> "RelationSetSingleAdapter[MODEL]":
+        return RelationSetSingleAdapter(self)
+    
     def insert(self, **kwargs):
         args = {}
         ref_args = {}
         for key, value in kwargs.items():
             if isinstance(value, ValueRefSet):
                 ref_args[key] = value
-                self.use_cte(value.rel_set, f"{key}_cte")
+                cte_set, cte_table = self._register_cte(value.rel_set, f"{key}_cte")
+                value.table = cte_table
+                value.rel_set = cte_set
             else:
                 args[key] = value                        
         self.arg_list.append(args)
@@ -1024,12 +1066,30 @@ class PgMutationSet(RelationSet[MODEL]):
     def resulve_values(self):
         columns = []
         values = []
-        for args in self.arg_list:
-            cols, vals = self.namespace.serialize(args, use_defaults=True, skip_primary_key=False)
+        for args, ref_args in zip(self.arg_list, self.ref_arg_list):
+            cols, vals = self.namespace.serialize(
+                args, 
+                use_defaults=True, 
+                skip_primary_key=True,
+                exclude=set(ref_args.keys())
+            )
             if not columns:
                 for col in cols:
                     columns.append(Column(col, self.table))
-            values.append([Value(val, inline=False) for val in vals])
+                for ref_col in ref_args.keys():
+                    if not self.namespace.has_field(ref_col):
+                        raise ValueError(f"Field {ref_col} not found in namespace {self.namespace.name}")
+                    columns.append(Column(ref_col, self.table))
+            curr_vals: list[Value | Subquery] =[Value(val, inline=False) for val in vals]
+            if ref_args:
+                for ra in ref_args.values():
+                    # vals.append("test")
+                    # curr_vals.append(Value("ref_value", inline=True))
+                    # cte = self._cte_registry
+                    # cte_q = SelectQuery().from_(ra.table).select(Column(ra.value, ra.table))
+                    # curr_vals.append(Column(Subquery(cte_q, str(self.table)), ra.table))
+                    curr_vals.append(RawValue(f"(SELECT {ra.value} FROM {ra.rel_set.name})"))
+            values.append(curr_vals)
         return columns, values
     
     def build_query(
@@ -1041,11 +1101,12 @@ class PgMutationSet(RelationSet[MODEL]):
         if self.projection_set.is_empty:
             raise ValueError(f"No columns selected for query {self.model_class.__name__}. Use .select() to select columns.")
         query = InsertQuery(self.table)
-        query.columns, query.values = self.resulve_values()
-        query.returning = self.projection_set.resulve_columns()
         if include_ctes:
             for name, cte_qs in self._cte_registry:
                 query.with_cte(name, cte_qs.build_query(), recursive=self._cte_registry.recursive)
+        query.columns, query.values = self.resulve_values()
+        query.returning = self.projection_set.resulve_columns()
+
         return query
     
         
