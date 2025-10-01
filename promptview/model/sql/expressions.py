@@ -1,7 +1,7 @@
 
 
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 
 if TYPE_CHECKING:
@@ -26,10 +26,35 @@ class Expression:
     def __repr__(self):
         return f"<{self.__class__.__name__} {self.to_str()}>"
 
-    
-class RawValue(Expression):
+
+T = TypeVar("T")
+class RawValue(Generic[T], Expression):
     def __init__(self, value):
         self.value = value
+        
+    def __le__(self, other: T):
+        return self.value <= other
+    
+    def __ge__(self, other: T):
+        return self.value >= other
+    
+    def __lt__(self, other: T):
+        return self.value < other
+    
+    def __gt__(self, other: T):
+        return self.value > other
+    
+    # def __eq__(self, other: T):
+    #     return self.value == other
+    
+    # def __ne__(self, other: T):
+    #     return self.value != other
+    
+    def __str__(self):
+        return str(self.value)
+    
+    def __repr__(self):
+        return f"<{self.__class__.__name__} {self.to_str()}>"
 
 
 class Value(Expression):

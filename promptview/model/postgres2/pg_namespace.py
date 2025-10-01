@@ -4,6 +4,9 @@ import json
 from typing import TYPE_CHECKING, Any, Optional, Type
 import uuid
 
+from promptview.model.base.types import VersioningStrategy
+from promptview.model.postgres2.queries import insert_query, update_query
+
 from ...utils.db_connections import PGConnectionManager
 from ..base.base_namespace import BaseNamespace
 from .pg_field_info import PgFieldInfo
@@ -19,8 +22,8 @@ if TYPE_CHECKING:
 
 class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
     
-    def __init__(self, name: str, *fields: PgFieldInfo):
-        super().__init__(name, db_type="postgres")
+    def __init__(self, name: str, versioning_strategy: VersioningStrategy = VersioningStrategy.NONE, *fields: PgFieldInfo):
+        super().__init__(name, db_type="postgres", versioning_strategy=versioning_strategy)
         self._composite_primary_key = []
         for field in fields:
             self._register_field(field)
@@ -97,34 +100,36 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
         #         data[rel_name] = keys
 
         # 2. Usual insert logic
-        fields = []
-        placeholders = []
-        values = []
-        param_idx = 1
+        # fields = []
+        # placeholders = []
+        # values = []
+        # param_idx = 1
 
-        for field in self.iter_fields():
-            value = data.get(field.name, field.default)
-            if field.is_primary_key and value is None:
-                continue
-            if value is None:
-                if not field.is_optional and not field.is_primary_key:
-                    raise ValueError(f"Missing required field: '{field.name}' on Model '{self._model_cls.__name__}'")
-            serialized = field.serialize(value)
-            fields.append(f'"{field.name}"')
-            placeholders.append(field.get_placeholder(param_idx))
-            values.append(serialized)
-            param_idx += 1
+        # for field in self.iter_fields():
+        #     value = data.get(field.name, field.default)
+        #     if field.is_primary_key and value is None:
+        #         continue
+        #     if value is None:
+        #         if not field.is_optional and not field.is_primary_key:
+        #             raise ValueError(f"Missing required field: '{field.name}' on Model '{self._model_cls.__name__}'")
+        #     serialized = field.serialize(value)
+        #     fields.append(f'"{field.name}"')
+        #     placeholders.append(field.get_placeholder(param_idx))
+        #     values.append(serialized)
+        #     param_idx += 1
 
-        if not fields:
-            sql = f'INSERT INTO "{self.name}" DEFAULT VALUES RETURNING *;'
-            result = await PGConnectionManager.fetch_one(sql)
-        else:
-            sql = f"""
-            INSERT INTO "{self.name}" ({", ".join(fields)})
-            VALUES ({", ".join(placeholders)})
-            RETURNING *;
-            """
-            result = await PGConnectionManager.fetch_one(sql, *values)
+        # if not fields:
+        #     sql = f'INSERT INTO "{self.name}" DEFAULT VALUES RETURNING *;'
+        #     result = await PGConnectionManager.fetch_one(sql)
+        # else:
+        #     sql = f"""
+        #     INSERT INTO "{self.name}" ({", ".join(fields)})
+        #     VALUES ({", ".join(placeholders)})
+        #     RETURNING *;
+        #     """
+        #     result = await PGConnectionManager.fetch_one(sql, *values)
+        sql, values = insert_query(self, data)
+        result = await PGConnectionManager.fetch_one(sql, *values)
 
         if not result:
             raise RuntimeError("Insert failed, no row returned")
@@ -135,35 +140,36 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
     
     
     async def update(self, id: Any, data: dict[str, Any]) -> dict[str, Any]:
-        set_clauses = []
-        values = []
+        # set_clauses = []
+        # values = []
 
-        index = 1
-        for field in self.iter_fields():
-            if field.is_primary_key:
-                continue  # primary key goes in WHERE clause
-            if field.name not in data:
-                continue
+        # index = 1
+        # for field in self.iter_fields():
+        #     if field.is_primary_key:
+        #         continue  # primary key goes in WHERE clause
+        #     if field.name not in data:
+        #         continue
 
-            value = data[field.name]
-            serialized = field.serialize(value)
-            placeholder = field.get_placeholder(index)
-            set_clauses.append(f'"{field.name}" = {placeholder}')
-            values.append(serialized)
-            index += 1
+        #     value = data[field.name]
+        #     serialized = field.serialize(value)
+        #     placeholder = field.get_placeholder(index)
+        #     set_clauses.append(f'"{field.name}" = {placeholder}')
+        #     values.append(serialized)
+        #     index += 1
 
-        # WHERE clause for primary key
-        pk_field = self.primary_key_field
-        where_placeholder = f"${index}"
-        set_clause = ", ".join(set_clauses)
-        values.append(pk_field.serialize(id))
+        # # WHERE clause for primary key
+        # pk_field = self.primary_key_field
+        # where_placeholder = f"${index}"
+        # set_clause = ", ".join(set_clauses)
+        # values.append(pk_field.serialize(id))
 
-        sql = f"""
-        UPDATE "{self.name}"
-        SET {set_clause}
-        WHERE "{pk_field.name}" = {where_placeholder}
-        RETURNING *;
-        """
+        # sql = f"""
+        # UPDATE "{self.name}"
+        # SET {set_clause}
+        # WHERE "{pk_field.name}" = {where_placeholder}
+        # RETURNING *;
+        # """
+        sql, values = update_query(id, self, data)
 
         result = await PGConnectionManager.fetch_one(sql, *values)
         if not result:

@@ -3,6 +3,8 @@ from typing import TYPE_CHECKING, Any, Dict, Generic, Literal, Optional, Self, T
 import contextvars
 import uuid
 
+from promptview.model.base.types import VersioningStrategy
+
 from .base_field_info import BaseFieldInfo
 from ..relation_info import RelationInfo
 
@@ -36,10 +38,13 @@ class RelationPlan:
     junction_table: Optional[str] = None
     j_outer_key: Optional[str] = None
     j_target_key: Optional[str] = None
+    
+    
+
 
 
 class BaseNamespace(Generic[MODEL, FIELD]):
-    def __init__(self, name: str, db_type: str):
+    def __init__(self, name: str, db_type: str, versioning_strategy: VersioningStrategy = VersioningStrategy.NONE):
         self.name = name
         self.db_type = db_type
         self._fields: dict[str, FIELD] = {}
@@ -51,7 +56,7 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         self._pending_field_parser: Optional["FieldParser"] = None
         self._pending_relation_parser: Optional["RelationParser"] = None
         self._default_order_field = None
-
+        self._versioning_strategy = versioning_strategy
     # -------------------------
     # Model class binding
     # -------------------------

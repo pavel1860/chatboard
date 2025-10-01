@@ -5,6 +5,8 @@ import datetime as dt
 import contextvars
 from typing import TYPE_CHECKING, AsyncGenerator, Callable, List, Literal, Type, TypeVar, Self, Any
 
+from promptview.model.base.types import ArtifactKind
+
 
 
 from .. import Model
@@ -180,7 +182,6 @@ class Branch(Model):
     
 
 
-
 class Turn(Model):
     # _is_base: bool = True
     id: int = KeyField(primary_key=True)
@@ -255,16 +256,7 @@ class Turn(Model):
         return True
     
     
-    
-    
-    @classmethod
-    def _resolve_branch_id(cls, branch: Branch | None = None) -> int:
-        if branch is not None:
-            return branch.id
-        curr_branch = Branch.current()
-        if curr_branch is None:
-            raise ValueError("No branch in context for a versioned query and no branch was provided.")
-        return curr_branch.id
+
     
     @classmethod
     def vquery(
@@ -274,13 +266,13 @@ class Turn(Model):
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
-        branch_id = cls._resolve_branch_id(branch)
+        branch_id = Branch.resolve_target_id(branch)
         branch_cte = Branch.recursive_query(branch_id)
         col = branch_cte.get_field("start_turn_index")
         query = (
             PgSelectQuerySet(cls) \
             .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))    
-            .where(lambda t: (t.index <= RawValue("bh.start_turn_index")))
+            .where(lambda t: (t.index <= RawValue[int]("bh.start_turn_index")))
             # .where(lambda t: (t.index <= branch_cte.get_field("start_turn_index")))
         )
         return cls.query_extra(query, **kwargs)
@@ -308,17 +300,64 @@ class Turn(Model):
             span.status = "completed"
             await span.save()
         
+
+
+class Artifact(Model):
+    """
+    Hub table for all versionable objects.
+    Stores lineage metadata for blocks, spans, logs, and user models.
+    """
+    id: int = KeyField(primary_key=True)
+    kind: str = ModelField()  # 'block', 'span', 'log', 'model'
+    model_name: str | None = ModelField(None)  # 'meal_plan', 'workout', etc.
+
+    # Lineage
+    branch_id: int = ModelField(foreign_key=True, foreign_cls=Branch)
+    turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
+    turn: "Turn | None" = RelationField("Turn", primary_key="turn_id", foreign_key="id")
+    branch: "Branch | None" = RelationField("Branch", foreign_key="id")
+    # span_id: int | None = ModelField()
+
+    # Event sourcing
+    version: int = ModelField(default=1)
+    # parent_artifact_id: int | None = ModelField(foreign_key=True, self_ref=True)
+
+    # Timeline
+    # seq: int = ModelField()
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+    # deleted_at: dt.datetime | None = ModelField()
+
+    _namespace_name = "artifacts"
+    _is_artifact_hub = True
     
+    @classmethod
+    def from_model(
+        cls, 
+        model: "VersionedModel | ArtifactModel", 
+        branch: Branch | int | None = None,
+        turn: Turn | int | None = None
+    ) -> "Artifact":
+        # if isinstance(model, VersionedModel):
+        branch_id = Branch.resolve_target_id(branch)
+        turn_id = Turn.resolve_target_id(turn)
+        return cls(
+            kind=model._artifact_kind,
+            model_name=model.get_namespace_name(),
+            branch_id=branch_id,
+            turn_id=turn_id
+        )
+        
+
         
 
 
 class VersionedModel(Model):
     """Mixin for models tied to a specific branch & turn."""
     _is_base = True
-    branch_id: int = ModelField(foreign_key=True, foreign_cls=Branch)
-    turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
-    turn: "Turn | None" = RelationField("Turn", primary_key="turn_id", foreign_key="id")
-    branch: "Branch | None" = RelationField("Branch", foreign_key="id")
+    _artifact_kind: ArtifactKind = "model"
+    artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
+    artifact: "Artifact | None" = RelationField("Artifact", primary_key="artifact_id", foreign_key="id")
+    
     
 
     async def save(self, *, branch: Branch | int | None = None, turn: Turn | int | None = None):
@@ -335,12 +374,10 @@ class VersionedModel(Model):
             return self
         return await super().save()
     
-    def _should_save_to_db(self, branch: Branch | int | None = None, turn: Turn | int | None = None) -> bool:
-        if self.branch_id is None:
-            self.branch_id = self._resolve_branch_id(branch)
-        if self.turn_id is None:
-            self.turn_id = self._resolve_turn_id(turn)
-        return self.branch_id is not None and self.turn_id is not None
+    def _should_save_to_db(self, branch: Branch | int | None = None, turn: Turn | int | None = None) -> bool:        
+        branch_id = self._resolve_branch_id(branch)        
+        turn_id = self._resolve_turn_id(turn)
+        return branch_id is not None and turn_id is not None
 
     def _resolve_branch_id(self, branch):
         if branch is None:

@@ -1,5 +1,10 @@
+from tkinter import N
 from pydantic import BaseModel, PrivateAttr
 from typing import TYPE_CHECKING, Any, Type, Self, TypeVar, Generic, runtime_checkable, Protocol
+
+from promptview.model.base.types import VersioningStrategy
+
+
 
 
 
@@ -29,6 +34,7 @@ class Model(BaseModel, metaclass=ModelMeta):
     _namespace_name: str = PrivateAttr(default=None)
     _is_versioned: bool = PrivateAttr(default=False)
     _ctx_token: Any = PrivateAttr(default=None)
+    _versioning_strategy: VersioningStrategy = VersioningStrategy.NONE
     # ...add other ORM-internal attrs as needed...
 
     @classmethod
@@ -72,6 +78,25 @@ class Model(BaseModel, metaclass=ModelMeta):
     @classmethod
     def current_or_none(cls) -> Self | None:
         return cls.get_namespace().get_ctx()
+    
+    @classmethod
+    def resolve_target_id_or_none(cls, target: "Model | int | None", use_ctx: bool = True) -> int | None:
+        if target is None and use_ctx:
+            curr = cls.current_or_none()
+            return curr.primary_id if curr else None
+        elif isinstance(target, int):
+            return target
+        elif isinstance(target, Model):
+            return target.primary_id
+        else:
+            return None
+        
+    @classmethod
+    def resolve_target_id(cls, target: "Model | int | None", use_ctx: bool = True) -> int:
+        res = cls.resolve_target_id_or_none(target, use_ctx)
+        if res is None:
+            raise ValueError(f"Could not resolve id for target for {cls.__name__}: {target}")
+        return res
 
     @classmethod
     async def get(cls: Type[Self], id: Any) -> Self:

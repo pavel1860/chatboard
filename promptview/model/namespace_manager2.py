@@ -1,5 +1,7 @@
 import sys
 from typing import TYPE_CHECKING, Any, Dict, ForwardRef, Type, Optional, get_args, get_origin, List, Union
+
+from promptview.model.base.types import VersioningStrategy
 from .postgres2.pg_namespace import PgNamespace
 from .qdrant2.qdrant_namespace import QdrantNamespace
 from .util import resolve_annotation
@@ -15,12 +17,12 @@ class NamespaceManager:
     _model_to_namespace: Dict[Type, Any] = {}
 
     @classmethod
-    def build_namespace(cls, model_name: str, db_type: str = "postgres", **kwargs):
+    def build_namespace(cls, model_name: str, db_type: str = "postgres", versioning_strategy: VersioningStrategy = VersioningStrategy.NONE, **kwargs):
         key = (model_name, db_type)
         if key in cls._registry:
             return cls._registry[key]
         if db_type == "postgres":
-            ns = PgNamespace(model_name)
+            ns = PgNamespace(model_name, versioning_strategy=versioning_strategy)
         elif db_type == "qdrant":
             ns = QdrantNamespace(model_name)
         else:
