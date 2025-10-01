@@ -1,11 +1,11 @@
 import pytest
 
-from promptview.model3.fields import ModelField
-from promptview.model3.model3 import Model
-from promptview.model3.postgres2.pg_query_set import PgSelectQuerySet
-from promptview.model3.sql.compiler import Compiler
-from promptview.model3.sql.expressions import And, Like, In, Between, Eq, Gt, Value, Or, Not, Function, Coalesce, IsNull
-from promptview.model3.sql.queries import Column, DeleteQuery, InsertQuery, SelectQuery, Subquery, Table, UpdateQuery
+from promptview.model.fields import ModelField
+from promptview.model.model3 import Model
+from promptview.model.postgres2.pg_query_set import PgSelectQuerySet
+from promptview.model.sql.compiler import Compiler
+from promptview.model.sql.expressions import And, Like, In, Between, Eq, Gt, Value, Or, Not, Function, Coalesce, IsNull
+from promptview.model.sql.queries import Column, DeleteQuery, InsertQuery, SelectQuery, Subquery, Table, UpdateQuery
 from __tests__.model.utils import assert_sql
 import datetime as dt
 

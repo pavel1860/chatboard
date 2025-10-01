@@ -1,4 +1,3 @@
-from tkinter import N
 from pydantic import BaseModel, PrivateAttr
 from typing import TYPE_CHECKING, Any, Type, Self, TypeVar, Generic, runtime_checkable, Protocol
 
@@ -185,6 +184,7 @@ class Model(BaseModel, metaclass=ModelMeta):
     def primary_id(self):
         ns = self.get_namespace()
         return getattr(self, ns.primary_key)
+    
 
     @classmethod
     def query(

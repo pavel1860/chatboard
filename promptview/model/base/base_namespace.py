@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 from typing import TYPE_CHECKING, Any, Dict, Generic, Literal, Optional, Self, Type, TypeVar, runtime_checkable, Protocol
 import contextvars
 import uuid
@@ -194,6 +195,56 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         if not self._model_cls:
             raise ValueError("Model class not set")
         return self._model_cls.from_dict(data)
+    
+    
+    def serialize(
+        self, 
+        data: dict[str, Any], 
+        use_defaults: bool = False,
+        skip_primary_key: bool = False,
+    ):
+        """Serialize the data for the database
+        
+        Args:
+            data: The data to serialize
+            use_defaults: Whether to use the default values for the fields
+        """
+        fields = []
+        values = []
+        for field in self.iter_fields():
+            if skip_primary_key and field.is_primary_key:
+                continue
+            value = data.get(field.name)
+            if value is None:
+                if not field.is_optional:
+                    if use_defaults:
+                        value = field.default
+                    else:
+                        raise ValueError(f"Field {field.name} is not optional and value is None")
+            serialized = field.serialize(value)
+            fields.append(field.name)
+            values.append(serialized)
+        return fields, values
+    
+    
+    def deserialize(self, data: dict[str, Any]) -> dict[str, Any]:
+        ret_data = {}
+        for key, value in data.items():
+            if key in self._fields:
+                ret_data[key] = self._fields[key].deserialize(value)
+            elif key in self._relations:
+                if value is None:
+                    raise ValueError(f"Relation {key} is not optional and value is None")
+                if isinstance(value, str):
+                    value = json.loads(value)
+                ret_data[key] = value
+            else:
+                raise ValueError(f"Field {key} not found in {self.name}")
+        return ret_data
+            
+
+                
+
 
     def validate_model_fields(self, data: dict[str, Any]) -> dict[str, Any]:
         # Add foreign key default resolution here if needed

@@ -77,6 +77,9 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
                 value = json.loads(value)
             data[rel_name] = value
         return data
+    
+    
+    
 
     async def insert(self, data: dict[str, Any]) -> dict[str, Any]:
         # 1. Handle relation fields...
