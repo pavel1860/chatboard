@@ -1034,7 +1034,7 @@ class ValueRefSet:
         return self.value
         
 
-class PgMutationSet(RelationSet[MODEL]):
+class PgInsertSet(RelationSet[MODEL]):
     
     def __init__(self, namespace: BaseNamespace, table_registry: TableRegistry | None = None, alias: str | None = None):
         super().__init__(namespace, table_registry, alias=alias)        
