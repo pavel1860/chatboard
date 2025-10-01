@@ -265,6 +265,12 @@ class Compiler:
 
     
     def _compile_update(self, q: UpdateQuery):
+        sql = ""
+
+        # Add CTEs first
+        if q.ctes:
+            sql += self._compile_ctes(q.ctes, q.recursive) + "\n"
+
         table = self.compile_table(q.table)
 
         # SET clause
@@ -275,7 +281,7 @@ class Compiler:
             set_fragments.append(f"{col_sql} = {val_sql}")
         set_clause = ", ".join(set_fragments)
 
-        sql = f"UPDATE {table}\nSET {set_clause}"
+        sql += f"UPDATE {table}\nSET {set_clause}"
 
         # WHERE clause
         if q.where.condition:

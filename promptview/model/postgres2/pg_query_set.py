@@ -11,7 +11,7 @@ from ..model3 import Model
 from ..postgres2.rowset import RowsetNode
 from ..relation_info import RelationInfo
 from ..sql.joins import Join
-from ..sql.queries import CTENode, InsertQuery, SelectQuery, Table, Column, NestedSubquery, Subquery
+from ..sql.queries import CTENode, InsertQuery, UpdateQuery, SelectQuery, Table, Column, NestedSubquery, Subquery
 from ..sql.expressions import Coalesce, Eq, Expression, RawSQL, RawValue, WhereClause, param, OrderBy, Function, Value, Null
 from ..sql.compiler import Compiler
 from ..sql.json_processor import Preprocessor
@@ -1035,7 +1035,9 @@ class ValueRefSet:
         
 
 class PgInsertSet(RelationSet[MODEL]):
-    
+    """
+    Insert set for inserting models into the database.
+    """
     def __init__(self, namespace: BaseNamespace, table_registry: TableRegistry | None = None, alias: str | None = None):
         super().__init__(namespace, table_registry, alias=alias)        
         self.arg_list = [] 
@@ -1110,6 +1112,105 @@ class PgInsertSet(RelationSet[MODEL]):
         return query
     
         
+
+
+class PgUpdateSet(RelationSet[MODEL]):
+    """
+    Update set for updating models in the database.
+    """
+    def __init__(self, namespace: BaseNamespace, table_registry: TableRegistry | None = None, alias: str | None = None):
+        super().__init__(namespace, table_registry, alias=alias)
+        self.update_values = {}
+        self.ref_values = {}
+        self.selection_set = SelectionSet(self.namespace, self.table)
+
+    def select(self, *fields: str):
+        self.projection_set(*fields)
+        return self
+
+    def one(self) -> "RelationSetSingleAdapter[MODEL]":
+        return RelationSetSingleAdapter(self)
+
+    def update(self, **kwargs):
+        """Set values to update. Supports both regular values and ValueRefSet references."""
+        for key, value in kwargs.items():
+            if isinstance(value, ValueRefSet):
+                self.ref_values[key] = value
+                cte_set, cte_table = self._register_cte(value.rel_set, f"{key}_cte")
+                value.table = cte_table
+                value.rel_set = cte_set
+            else:
+                self.update_values[key] = value
+        return self
+
+    def where(
+        self,
+        condition: Callable[[MODEL], bool] | None = None,
+        **kwargs: Any
+    ) -> Self:
+        """
+        Add a WHERE clause to the update query.
+        condition: callable taking a QueryProxy or direct Expression
+        kwargs: field=value pairs, ANDed together
+        """
+        if condition is not None:
+            self.selection_set.select_condition(condition)
+        if kwargs:
+            self.selection_set.select(**kwargs)
+        return self
+
+    def filter(self, condition=None, **kwargs):
+        """Alias for .where()"""
+        return self.where(condition, **kwargs)
+
+    def resolve_set_clauses(self):
+        """Convert update values into SET clauses for the UPDATE query."""
+        set_clauses = []
+
+        # Handle regular values
+        cols, vals = self.namespace.serialize(
+            self.update_values,
+            use_defaults=False,
+            skip_primary_key=True,
+            skip_missing=True,
+            exclude=set(self.ref_values.keys())
+        )
+
+        for col_name, val in zip(cols, vals):
+            # In PostgreSQL UPDATE, SET columns cannot be qualified with table name/alias
+            col = Column(col_name, table=None)
+            set_clauses.append((col, Value(val, inline=False)))
+
+        # Handle reference values (from CTEs)
+        for ref_col, ref_value in self.ref_values.items():
+            if not self.namespace.has_field(ref_col):
+                raise ValueError(f"Field {ref_col} not found in namespace {self.namespace.name}")
+            # In PostgreSQL UPDATE, SET columns cannot be qualified with table name/alias
+            col = Column(ref_col, table=None)
+            set_clauses.append((col, RawValue(f"(SELECT {ref_value.value} FROM {ref_value.rel_set.name})")))
+
+        return set_clauses
+
+    def build_query(
+        self,
+        include_columns: bool = True,
+        self_group: bool = True,
+        include_ctes: bool = True
+    ):
+        if self.projection_set.is_empty:
+            raise ValueError(f"No columns selected for query {self.model_class.__name__}. Use .select() to select columns.")
+
+        query = UpdateQuery(self.table)
+
+        if include_ctes:
+            for name, cte_qs in self._cte_registry:
+                query.with_cte(name, cte_qs.build_query(), recursive=self._cte_registry.recursive)
+
+        query.set_clauses = self.resolve_set_clauses()
+        query.where = self.selection_set.reduce()
+        query.returning = self.projection_set.resulve_columns()
+
+        return query
 
 
 def select(model_class: Type[MODEL]) -> "PgSelectQuerySet[MODEL]":

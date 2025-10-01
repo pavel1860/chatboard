@@ -372,11 +372,11 @@ class VersionedModel(Model):
          
         # if self.branch_id is None or self.turn_id is None:
         ns = self.get_namespace()
-        if not self._should_save_to_db(branch, turn):
-            print(f"WARNING: {self.__class__.__name__} is not saved to database")
-            if not ns.has_primary_key(self):
-                ns.set_primary_key(self, ns.generate_fake_key())
-            return self
+        # if not self._should_save_to_db(branch, turn):
+        #     print(f"WARNING: {self.__class__.__name__} is not saved to database")
+        #     if not ns.has_primary_key(self):
+        #         ns.set_primary_key(self, ns.generate_fake_key())
+        #     return self
         # return await super().save()
         
         pk_value = self.primary_id

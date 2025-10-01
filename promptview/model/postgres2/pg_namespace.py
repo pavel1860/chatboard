@@ -15,7 +15,7 @@ from .pg_relation import PgRelation
 
 if TYPE_CHECKING:
     from ..model3 import Model
-    from ..postgres2.pg_query_set import PgSelectQuerySet, PgInsertSet
+    from ..postgres2.pg_query_set import PgSelectQuerySet, PgInsertSet, PgUpdateSet
 
 
 
@@ -85,8 +85,9 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
         return PgInsertSet(self).insert(**data)
     
     
-    def update(self, id: Any, data: dict[str, Any]) -> "PgInsertSet[Model]":
-        raise NotImplementedError("Update is not implemented for PgNamespace")
+    def update(self, id: Any, data: dict[str, Any]) -> "PgUpdateSet[Model]":
+        from promptview.model.postgres2.pg_query_set import PgUpdateSet
+        return PgUpdateSet(self).update(**data).where(id=id)
 
     # async def insert(self, data: dict[str, Any]) -> dict[str, Any]:
         # 1. Handle relation fields...

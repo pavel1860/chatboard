@@ -353,9 +353,17 @@ class UpdateQuery:
         self.set_clauses = []
         self.where = WhereClause()
         self.returning = []
-        
+        self.ctes = []
+        self.recursive = False
+
     def set(self, values: list[tuple[Column, Value]]):
         self.set_clauses = values
+        return self
+
+    def with_cte(self, name, query, recursive: bool = False):
+        self.ctes.append((name, query))
+        if self.recursive == False:
+            self.recursive = recursive
         return self
 
 
