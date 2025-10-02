@@ -1,6 +1,10 @@
 from pydantic import BaseModel, PrivateAttr
 from typing import TYPE_CHECKING, Any, Type, Self, TypeVar, Generic, runtime_checkable, Protocol
 
+from promptview.model.base.types import VersioningStrategy
+
+
+
 
 
 from .model_meta import ModelMeta
@@ -29,6 +33,7 @@ class Model(BaseModel, metaclass=ModelMeta):
     _namespace_name: str = PrivateAttr(default=None)
     _is_versioned: bool = PrivateAttr(default=False)
     _ctx_token: Any = PrivateAttr(default=None)
+    _versioning_strategy: VersioningStrategy = VersioningStrategy.NONE
     # ...add other ORM-internal attrs as needed...
 
     @classmethod
@@ -72,6 +77,25 @@ class Model(BaseModel, metaclass=ModelMeta):
     @classmethod
     def current_or_none(cls) -> Self | None:
         return cls.get_namespace().get_ctx()
+    
+    @classmethod
+    def resolve_target_id_or_none(cls, target: "Model | int | None", use_ctx: bool = True) -> int | None:
+        if target is None and use_ctx:
+            curr = cls.current_or_none()
+            return curr.primary_id if curr else None
+        elif isinstance(target, int):
+            return target
+        elif isinstance(target, Model):
+            return target.primary_id
+        else:
+            return None
+        
+    @classmethod
+    def resolve_target_id(cls, target: "Model | int | None", use_ctx: bool = True) -> int:
+        res = cls.resolve_target_id_or_none(target, use_ctx)
+        if res is None:
+            raise ValueError(f"Could not resolve id for target for {cls.__name__}: {target}")
+        return res
 
     @classmethod
     async def get(cls: Type[Self], id: Any) -> Self:
@@ -89,33 +113,56 @@ class Model(BaseModel, metaclass=ModelMeta):
         return cls(**data)
 
 
-    async def save(self, *args, **kwargs) -> Self:
+    # async def save(self, *args, **kwargs) -> Self:
         
+    #     ns = self.get_namespace()
+        
+        
+    #     pk_value = getattr(self, ns.primary_key, None)
+        
+    #     for field in ns.iter_fields():
+    #         if field.is_foreign_key and getattr(self, field.name) is None:
+    #             fk_cls = field.foreign_cls
+    #             if fk_cls:
+    #                 ctx_instance = fk_cls.get_namespace().get_ctx()
+    #                 if ctx_instance:
+    #                     setattr(self, field.name, ctx_instance.primary_id)
+
+    #     dump = self.model_dump()
+
+    #     if pk_value is None:
+    #         # Insert new record
+    #         result = await ns.insert(dump)
+    #     else:
+    #         # Update existing record
+    #         result = await ns.update(pk_value, dump)
+
+    #     for key, value in result.items():
+    #         setattr(self, key, value)
+    #     return self
+    
+    def insert(self):
+        ns = self.get_namespace()
+        return ns.insert(self.model_dump()).select("*")
+    
+    def update(self):
+        ns = self.get_namespace()
+        return ns.update(self.primary_id, self.model_dump()).select("*")
+
+    
+    async def save(self):        
         ns = self.get_namespace()
         
-        
-        pk_value = getattr(self, ns.primary_key, None)
-        
-        for field in ns.iter_fields():
-            if field.is_foreign_key and getattr(self, field.name) is None:
-                fk_cls = field.foreign_cls
-                if fk_cls:
-                    ctx_instance = fk_cls.get_namespace().get_ctx()
-                    if ctx_instance:
-                        setattr(self, field.name, ctx_instance.primary_id)
-
-        dump = self.model_dump()
-
+        pk_value = self.primary_id
         if pk_value is None:
-            # Insert new record
-            result = await ns.insert(dump)
+            result = await self.insert().one().json()   
         else:
-            # Update existing record
-            result = await ns.update(pk_value, dump)
-
+            result = await self.update().one().json()
         for key, value in result.items():
             setattr(self, key, value)
         return self
+    
+    
     
     async def add(self, model: MODEL | Modelable[MODEL], **kwargs) -> MODEL:
         """Add a model instance to the database"""
@@ -160,6 +207,7 @@ class Model(BaseModel, metaclass=ModelMeta):
     def primary_id(self):
         ns = self.get_namespace()
         return getattr(self, ns.primary_key)
+    
 
     @classmethod
     def query(

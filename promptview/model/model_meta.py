@@ -1,5 +1,7 @@
 from typing import Any, Type
 from pydantic._internal._model_construction import ModelMetaclass
+
+from promptview.model.base.types import VersioningStrategy
 from .namespace_manager2 import NamespaceManager
 
 class ModelMeta(ModelMetaclass, type):
@@ -16,7 +18,7 @@ class ModelMeta(ModelMetaclass, type):
         db_type = dct.get("_db_type", "postgres")
         model_name = name
         namespace_name = dct.get("_namespace_name") or cls._default_namespace_name(model_name, db_type)
-
+        versioning_strategy = dct.get("_versioning_strategy", VersioningStrategy.NONE)
         # Create the actual Pydantic model class
         cls_obj = super().__new__(cls, name, bases, dct)
 

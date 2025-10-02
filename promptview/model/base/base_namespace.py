@@ -1,7 +1,10 @@
 from dataclasses import dataclass
+import json
 from typing import TYPE_CHECKING, Any, Dict, Generic, Literal, Optional, Self, Type, TypeVar, runtime_checkable, Protocol
 import contextvars
 import uuid
+
+from promptview.model.base.types import VersioningStrategy
 
 from .base_field_info import BaseFieldInfo
 from ..relation_info import RelationInfo
@@ -36,10 +39,13 @@ class RelationPlan:
     junction_table: Optional[str] = None
     j_outer_key: Optional[str] = None
     j_target_key: Optional[str] = None
+    
+    
+
 
 
 class BaseNamespace(Generic[MODEL, FIELD]):
-    def __init__(self, name: str, db_type: str):
+    def __init__(self, name: str, db_type: str, versioning_strategy: VersioningStrategy = VersioningStrategy.NONE):
         self.name = name
         self.db_type = db_type
         self._fields: dict[str, FIELD] = {}
@@ -51,7 +57,7 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         self._pending_field_parser: Optional["FieldParser"] = None
         self._pending_relation_parser: Optional["RelationParser"] = None
         self._default_order_field = None
-
+        self._versioning_strategy = versioning_strategy
     # -------------------------
     # Model class binding
     # -------------------------
@@ -189,6 +195,80 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         if not self._model_cls:
             raise ValueError("Model class not set")
         return self._model_cls.from_dict(data)
+    
+    
+    def serialize_field(self, field_name: str, value: Any, use_defaults: bool = False) -> Any:
+        field = self.get_field(field_name)
+        if value is None:
+            if not field.is_optional:
+                if use_defaults:
+                    value = field.default
+                else:
+                    raise ValueError(f"Field {field.name} is not optional and value is None")
+        serialized = field.serialize(value)
+        return serialized
+    
+    def insert(self, data: dict[str, Any]):
+        raise NotImplementedError("Insert is not implemented for this namespace")
+    
+    def update(self, id: Any, data: dict[str, Any]):
+        raise NotImplementedError("Update is not implemented for this namespace")
+    
+    def serialize(
+        self, 
+        data: dict[str, Any], 
+        use_defaults: bool = False,
+        skip_primary_key: bool = False,
+        skip_missing: bool = False,
+        exclude: set[str] = set()
+    ):
+        """Serialize the data for the database
+        
+        Args:
+            data: The data to serialize
+            use_defaults: Whether to use the default values for the fields
+        """
+        fields = []
+        values = []
+        for field in self.iter_fields():
+            if skip_primary_key and field.is_primary_key:
+                continue
+            if field.name in exclude:
+                continue
+            if field.name in data:
+                value = data[field.name]
+            else:
+                if skip_missing:
+                    continue
+                else:
+                    raise ValueError(f"Field {field.name} not found in data")
+            serialized = self.serialize_field(field.name, value, use_defaults)
+            fields.append(field.name)
+            values.append(serialized)
+        return fields, values
+    
+
+
+    
+    
+    def deserialize(self, data: dict[str, Any]) -> dict[str, Any]:
+        ret_data = {}
+        for key, value in data.items():
+            if key in self._fields:
+                ret_data[key] = self._fields[key].deserialize(value)
+            elif key in self._relations:
+                if value is None:
+                    raise ValueError(f"Relation {key} is not optional and value is None")
+                if isinstance(value, str):
+                    value = json.loads(value)
+                ret_data[key] = value
+            else:
+                raise ValueError(f"Field {key} not found in {self.name}")
+        return ret_data
+            
+
+                
+
 
     def validate_model_fields(self, data: dict[str, Any]) -> dict[str, Any]:
         # Add foreign key default resolution here if needed

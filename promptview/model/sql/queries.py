@@ -47,7 +47,7 @@ class Column:
         return f"{base} AS {self.alias}" if self.alias else base
 
     def __repr__(self):
-        return str(self)
+        return f"Column({str(self)})"
     
     
     # Inside Column class (or better: a ColumnExpression wrapper if you want to separate it from raw SQL)
@@ -335,6 +335,15 @@ class InsertQuery:
         self.values = []  # List of rows (each row is a list of values)
         self.returning = []
         self.on_conflict = None  # Optional: for UPSERT
+        self.ctes = []
+        self.recursive = False
+        
+        
+    def with_cte(self, name, query, recursive: bool = False):
+        self.ctes.append((name, query))
+        if self.recursive == False:
+            self.recursive = recursive
+        return self
 
 
 
@@ -344,9 +353,17 @@ class UpdateQuery:
         self.set_clauses = []
         self.where = WhereClause()
         self.returning = []
-        
+        self.ctes = []
+        self.recursive = False
+
     def set(self, values: list[tuple[Column, Value]]):
         self.set_clauses = values
+        return self
+
+    def with_cte(self, name, query, recursive: bool = False):
+        self.ctes.append((name, query))
+        if self.recursive == False:
+            self.recursive = recursive
         return self
 
 

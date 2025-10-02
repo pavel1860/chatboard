@@ -3,7 +3,7 @@ from .model3 import Model
 from .fields import ModelField, RelationField, KeyField, VectorField
 from .postgres2.pg_namespace import PgNamespace
 from .namespace_manager2 import NamespaceManager
-from .versioning.models import Branch, Turn, TurnStatus, VersionedModel, ArtifactModel, BlockModel, BlockNode, BlockTree, ExecutionSpan, Log, SpanEvent
+from .versioning.models import Branch, Turn, TurnStatus, VersionedModel, ArtifactModel, BlockModel, BlockNode, BlockTree, ExecutionSpan, Log, SpanEvent, Artifact   
 # from .context import Context
 from .vectors import Vector, transformer
 # from ..context.model_context import ModelCtx, Context
@@ -38,5 +38,6 @@ __all__ = [
     "SpanEvent",
     "RawValue",
     "BlockLog",
-    "Context"
+    "Context",
+    "Artifact",
 ]
