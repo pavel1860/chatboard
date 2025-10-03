@@ -1,3 +1,4 @@
+from typing import Iterator, Protocol
 import uuid
 
 from ..base.base_namespace import BaseNamespace
@@ -15,17 +16,95 @@ class RelField:
     
     def __str__(self):
         return f"{self.source.name}.{self.name}"
+    
+    
+    
+    
+    
+class RelationProtocol(Protocol):
+    
+    @property
+    def sources(self) -> "tuple[RelationProtocol, ...]":
+        ...
+    
+    @property
+    def name(self) -> str:
+        ...
+    
+    @property
+    def alias(self) -> str | None:
+        ...
+        
+    @property
+    def final_name(self) -> str:
+        ...
+        
+    def get(self, field_name: str) -> RelField:
+        ...
+        
+    def iter_fields(self, include_sources: set[str] | None = None) -> "Iterator[RelField]":
+        ...
+        
+        
+    def get_source_and_field(self, field_name: str) -> tuple["RelationProtocol", RelField]:
+        ...
+    
+        
+
+
+class NsRelation:
+    
+    def __init__(self, namespace: BaseNamespace, alias: str | None = None):
+        self.namespace = namespace
+        self.alias = alias
+        
+    @property
+    def sources(self) -> "tuple[RelationProtocol, ...]":
+        return (self,)
+        
+    
+    @property
+    def name(self) -> str:
+        return self.namespace.name
+    
+    @property
+    def final_name(self) -> str:
+        return self.alias or self.name
+    
+    def get(self, field_name: str) -> RelField:
+        field_info = self.namespace.get_field(field_name)
+        return RelField(self, field_info.name, field_info)
+        
+    def iter_fields(self, include_sources: set[str] | None = None) -> "Iterator[RelField]":
+        if include_sources is not None and self.namespace.name not in include_sources:
+            return
+        for field_info in self.namespace.iter_fields():
+            yield RelField(self, field_info.name, field_info)
+        
+        
+    def get_source_and_field(self, field_name: str) -> tuple["RelationProtocol", RelField]:
+        return self, self.get(field_name)
+    
+    
+    def print(self):
+        return f"NS({self.name})"
+    
 
 class Relation:
     
     
-    def __init__(self, sources: "tuple[Relation | BaseNamespace, ...]", alias: str | None = None):
+    def __init__(self, sources: "tuple[RelationProtocol, ...]", alias: str | None = None):
         self.sources = sources
         self.name = self._gen_name(sources)
         self.alias = alias
         
+        
+    @property
+    def final_name(self) -> str:
+        return self.alias or self.name
+        
     
-    def _gen_name(self, sources: "tuple[Relation | BaseNamespace, ...]"):
+    def _gen_name(self, sources: "tuple[RelationProtocol, ...]"):
         if len(sources) == 1:
             if isinstance(sources[0], BaseNamespace):
                 return sources[0].name
@@ -33,15 +112,62 @@ class Relation:
                 return sources[0].name
         else:
             return "_".join([source.name for source in sources])
-    
-    def iter_fields(self):
+        
+    # def join(self, target: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
+    #     # self.sources = self.sources + (target,)
+    #     return Relation(self.sources + (target,), alias=self.alias)
+    def get_source_and_field(self, field_name: str) -> tuple["RelationProtocol", RelField]:
+        _f = field_name.split(".")
+        if len(_f) == 1:
+            if len(self.sources) == 1:
+                source = self.sources[0]
+                field = self._get_field(source, _f[0])
+                return source, field
+            else:
+                raise ValueError(f"for multiple sources, field name must be in the format of 'source.field'")
+        elif len(_f) == 2:
+            source = self._get_source(_f[0])
+            field = self._get_field(source, _f[1])
+            return source, field
+        else:
+            raise ValueError(f"Invalid field name: {field_name}")
+        
+    def _get_source(self, source_name: str) -> "RelationProtocol":        
         for source in self.sources:
-            if isinstance(source, BaseNamespace):
-                for field_info in source.iter_fields():
-                    yield RelField(source, field_info.name, field_info)
-            elif isinstance(source, Relation):
-                for field in source.iter_fields():
+            if source.name == source_name:
+                return source
+        raise ValueError(f"Source {source_name} not found")
+    
+    def _get_field(self, source: "RelationProtocol", field_name: str) -> RelField:
+        for field in self.iter_fields(include_sources={source.name}):
+            if field.name == field_name:
+                return field
+        raise ValueError(f"Field {field_name} not found")
+        
+    def get(self, field_name: str) -> RelField:
+        _, field = self.get_source_and_field(field_name)
+        return field
+        
+    
+    def iter_fields(self, include_sources: set[str] | None = None) -> "Iterator[RelField]":
+        for source in self.sources:
+            if include_sources is not None and source.name not in include_sources:
+                continue
+            for field in source.iter_fields():
                     yield field
+                    
+    def print(self):
+        return f"REL({self.name})"
+            
+            
+    def print_tree(self, indent: int = 0):
+        print(" " * indent + "REL", self.name)
+        indent += 1
+        for source in self.sources:
+            if isinstance(source, NsRelation):
+                print(" " * indent + "NS", source.name)
+            elif isinstance(source, Relation):
+                source.print_tree(indent)
             else:
                 raise ValueError(f"Invalid source: {source}")
             
@@ -67,25 +193,41 @@ class RelationProjection(Relation):
         
 
 class JoinedRelation(Relation):
-    def __init__(self, left_rel: "Relation", right_rel: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
-        super().__init__((left_rel, right_rel), alias=alias)
+    def __init__(self, left_rel: "RelationProtocol", right_rel: "RelationProtocol", on: tuple[RelField, RelField], join_type: str = "INNER", alias: str | None = None):
+        super().__init__((right_rel,), alias=alias)
+        self.left_rel = left_rel
+        self.right_rel = right_rel
         self.on = on
         self.join_type = join_type
+        
+        
+    def get_on_clause(self) -> str:
+        return f"{self.left_rel.final_name}.{self.on[0].name} = {self.right_rel.final_name}.{self.on[1].name}"
 
-def project(relation: "Relation", fields: tuple[str, ...]):     
+def project(relation: "Relation", fields: tuple[str, ...]):
     return RelationProjection(relation.sources, fields, alias=relation.alias)
     
 
-def join(left_rel: "Relation", right_rel: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
-    return JoinedRelation(
-        left_rel,
-        right_rel,
-        alias=alias,
-        on=on,
-        join_type=join_type
+# def join(left_rel: "Relation", right_rel: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
+#     left_rel.get(on[0])
+#     right_rel.get(on[1])
+#     right_join_rel = JoinedRelation(left_rel, right_rel, on, join_type, alias)
+#     return Relation(
+#         (left_rel, right_join_rel),
+#         # left_rel + (right_join_rel,),
+#         alias=left_rel.alias
+#     )
+
+
+def join(left_rel: "RelationProtocol", right_rel: "RelationProtocol", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None) -> "RelationProtocol":
+    l_source, l_field = left_rel.get_source_and_field(on[0])
+    r_source, r_field = right_rel.get_source_and_field(on[1])    
+    right_join_rel = JoinedRelation(l_source, r_source, (l_field, r_field), join_type, alias)
+    return Relation(
+        left_rel.sources + (right_join_rel,),
+        alias=left_rel.alias
     )
-
-
+    
 
 
 
@@ -94,16 +236,16 @@ def join(left_rel: "Relation", right_rel: "Relation", on: tuple[str, str], join_
 
 
 class QuerySet:
-    def __init__(self, target: "Relation"):
+    def __init__(self, target: "RelationProtocol"):
         # self.source = source
-        self.target = target
+        self.target: "RelationProtocol" = target
         
         
-    def select(self, *fields: str):
-        self.target = project(self.target, fields)
-        return self
+    # def select(self, *fields: str):
+    #     self.target = project(self.target, fields)
+    #     return self
     
-    def join(self, target: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
+    def join(self, target: "RelationProtocol", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
         self.target = join(self.target, target, on, join_type, alias)
         return self
     
@@ -113,7 +255,7 @@ class QuerySet:
 
 
 class SelectQuerySet(QuerySet):
-    def __init__(self, source: "Relation"):
+    def __init__(self, source: "RelationProtocol"):
         super().__init__(source)
         
         
