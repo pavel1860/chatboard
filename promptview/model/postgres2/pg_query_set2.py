@@ -84,3 +84,39 @@ def join(left_rel: "Relation", right_rel: "Relation", on: tuple[str, str], join_
         on=on,
         join_type=join_type
     )
+
+
+
+
+
+
+
+
+
+class QuerySet:
+    def __init__(self, target: "Relation"):
+        # self.source = source
+        self.target = target
+        
+        
+    def select(self, *fields: str):
+        self.target = project(self.target, fields)
+        return self
+    
+    def join(self, target: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
+        self.target = join(self.target, target, on, join_type, alias)
+        return self
+    
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self.target})"
+    
+
+
+class SelectQuerySet(QuerySet):
+    def __init__(self, source: "Relation"):
+        super().__init__(source)
+        
+        
+    
+    
+        
