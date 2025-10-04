@@ -181,20 +181,21 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int 
     
     
     
-async def get_blocks(tree_ids: list[str], dump_models: bool = True) -> dict[str, Block]:
-    if not tree_ids:
+async def get_blocks(art_ids: list[str], dump_models: bool = True) -> dict[str, Block]:
+    if not art_ids:
         return {}
     block_trees = await BlockTree.query(alias="bt").select("*").include(
             BlockNode.query(alias="bn").select("*").include(
                 BlockModel.query(alias="bm").select("*")
             )
-        ).where(lambda b: b.artifact_id.isin(tree_ids)).json()
-    blocks = {}
+        ).where(lambda b: b.artifact_id.isin(art_ids)).json()
+    blocks_lookup = {}
     for tree in block_trees:
-        tree_id = tree["id"]
+        # tree_id = tree["id"]
+        art_id = tree["artifact_id"]
         block = load_block_dump(tree["nodes"])
-        blocks[tree_id] = block.model_dump() if dump_models else block
-    return blocks
+        blocks_lookup[art_id] = block.model_dump() if dump_models else block
+    return blocks_lookup
 
 
 

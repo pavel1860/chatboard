@@ -459,6 +459,17 @@ class VersionedModel(Model):
                 alias="ac",
             )
         )
+        
+        
+    def __repr__(self):
+        fields_str = ""
+        artifact_str = ""
+        for k, v in self.model_dump().items():
+            if k == "artifact":
+                artifact_str = f"artifact={v}"
+            else:
+                fields_str += f"{k}={v}, "
+        return f"{self.__class__.__name__}({fields_str}) {artifact_str}"
 
 
 
@@ -572,7 +583,7 @@ class ArtifactModel(VersionedModel):
         direction: Literal["asc", "desc"] = "desc",
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
         **kwargs
-    ):
+    ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
 
         # Build turn CTE with versioning context
@@ -600,6 +611,7 @@ class ArtifactModel(VersionedModel):
                 name="artifact_cte",
                 alias="ac",
             )
+            .select(*fields or "*")
             .join(art_cte, on=("artifact_id", "id"))
             .distinct_on("artifact_id")
             .include(Artifact)
@@ -617,9 +629,10 @@ class ArtifactModel(VersionedModel):
     
     def __setattr__(self, name, value):
         print(f"Setting {name} = {value}")
-        curr_value = super().__getattribute__(name)
-        if curr_value != value and name not in self._dirty_fields:
-            self._dirty_fields[name] = curr_value
+        if name != "_dirty_fields":
+            curr_value = super().__getattribute__(name)
+            if curr_value != value and name not in self._dirty_fields:
+                self._dirty_fields[name] = curr_value
         # Prevent recursion by calling the base implementation
         super().__setattr__(name, value)
         
@@ -687,6 +700,8 @@ class ExecutionSpan(VersionedModel):
         elif isinstance(target, Log):
             return "log", target.artifact_id
         elif isinstance(target, ExecutionSpan):
+            if target == self:
+                print(f"target == self {target.id} {self.id}")
             return "span", target.artifact_id
         elif isinstance(target, VersionedModel):
             return "model", target.artifact_id

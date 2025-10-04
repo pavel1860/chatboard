@@ -6,7 +6,7 @@ from ..prompt.flow_components import EventLogLevel
 from ..block.util import StreamEvent
 from ..block import Block
 from ..api.utils import get_auth, get_request_content, get_request_ctx
-
+from ..auth.user_manager2 import AuthModel
 from fastapi import APIRouter, FastAPI, Query, Request, Depends
 import datetime as dt
 
@@ -143,12 +143,13 @@ class Agent():
     async def run_debug(
         self,
         message: str,                
-        branch_id: int | None = None, 
+        auth: AuthModel | None = None,
+        branch_id: int | None = None,         
         auto_commit: bool = True,
-        level: Literal["chunk", "span", "turn"] = "chunk",
+        level: Literal["chunk", "span", "turn"] = "chunk",      
         **kwargs: dict,
     ):
-        ctx = await Context.from_kwargs(**kwargs)
+        ctx = await Context.from_kwargs(**kwargs, auth=auth)
         async with ctx.start_turn(auto_commit=auto_commit) as turn:            
             async for event in self.agent_component(message).stream_events(event_level=EventLogLevel[level]):
                 print("--------------------------------")

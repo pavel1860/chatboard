@@ -36,63 +36,76 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         ctx = Depends(get_model_ctx)
     ):
         async with ctx:
-            turns = await Turn.query() \
-                .include(Artifact.query().agg("spans", ExecutionSpan.query().include(SpanValue), on=("id", "artifact_id"))) \
-                .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id")) \
-                .where(status = TurnStatus.COMMITTED) \
-                .limit(10) \
-                .offset(0) \
-                .order_by("-created_at") \
+            turns = await (
+                Turn.query() 
+                .include(Artifact)
+                .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id"))
+                .where(status = TurnStatus.COMMITTED)
+                .limit(10) 
+                .offset(0) 
+                .order_by("-created_at") 
                 .json()
+            )
                 
                 
-            def get_artifacts(turns: list[dict], kind: str):
-                return [a for turn in turns for a in turn["artifacts"] if a["kind"] == kind]
+            # filter_artifacts = lambda kind: [a for turn in turns for a in turn["artifacts"] if a["kind"] == kind]
+            filter_art_ids = lambda kind: [a["id"] for turn in turns for a in turn["artifacts"] if a["kind"] == kind]
 
-
-            async def get_spans(turns: list[dict]):
-                span_art = get_artifacts(turns, 'span')
-                if not span_art:
+            async def get_spans(art_ids: list[int]):
+                if not art_ids:
                     return {}
-                spans = await ExecutionSpan.query().where(lambda t: t.artifact_id.isin([a["id"] for a in span_art])).include(SpanValue)
-                return {s.artifact_id: s for s in spans}
+                spans = await ExecutionSpan.query().where(lambda t: t.artifact_id.isin(art_ids)).include(SpanValue).json()
+                return {s["artifact_id"]: s for s in spans}
 
-            async def get_logs(turns: list[dict]):
-                log_art = get_artifacts(turns, 'log')
-                if not log_art:
+            async def get_logs(art_ids: list[int]):
+                if not art_ids:
                     return {}
-                logs = await Log.query().where(lambda t: t.artifact_id.isin([a["id"] for a in log_art]))
-                return {l.artifact_id: l for l in logs}
+                logs = await Log.query().where(lambda t: t.artifact_id.isin(art_ids)).json()
+                return {l["artifact_id"]: l for l in logs}
 
 
-            blocks_lookup = await get_blocks([a["id"] for a in get_artifacts(turns, 'block')])
-            log_lookup = await get_logs(turns)
-            spans_lookup = await get_spans(turns)
+            blocks_lookup = await get_blocks(filter_art_ids('block'))
+            log_lookup = await get_logs(filter_art_ids('log'))
+            spans_lookup = await get_spans(filter_art_ids('span'))
+
+            visited = set()
+
+
+            root_spans = []
+            visited = set()
 
             for turn in turns:
                 root_span = None
-                has_spans = False
                 for art in turn['artifacts']:
-                    for span in art['spans']:
-                        has_spans = True
+                    if art['kind'] == 'span':
+                        span = spans_lookup[art['id']]
                         if span['parent_span_id'] is None:
+                            if root_span is not None:
+                                raise ValueError("Multiple root spans found")                
                             root_span = span
-                        for value in span['values']:
-                            if value['kind'] == 'block':
-                                try:
-                                    value['artifact'] = blocks_lookup[value['artifact_id']]
-                                except KeyError:
-                                    print(f"Block {value['artifact_id']} not found")
-                            elif value['kind'] == 'log':
-                                value['artifact'] = log_lookup[int(value['artifact_id'])]
-                            elif value['kind'] == 'span':
-                                value['artifact'] = spans_lookup[value['artifact_id']]
-                
-                if root_span is None and has_spans:
-                    raise ValueError("No root span found")
+                            root_spans.append(span['id'])
                 turn['span'] = root_span
-                del turn['artifacts']
+                del turn['artifacts']                
+
+            def populate_span_values(span, depth=0, max_depth=2):
+                if span['id'] in visited:
+                    raise ValueError(f"Circular reference detected: {span['id']}")
+                visited.add(span['id'])    
+                for value in span['values']:
+                    if value['kind'] == "block":
+                        value['artifact'] = blocks_lookup[value['artifact_id']]
+                    elif value['kind'] == "log":
+                        value['artifact'] = log_lookup[value['artifact_id']]
+                    elif value['kind'] == "span":
+                        value['artifact'] = spans_lookup[value['artifact_id']]
+                        vs = value['artifact']
+                        print(depth*" ", "populating value:", value["id"], "span:", vs["id"], f"(parent {vs["parent_span_id"]})")
+                        populate_span_values(vs, depth+1, max_depth)
                 
+            for turn in turns:
+                if turn['span']:
+                    populate_span_values(turn['span'])
+
             return turns
 
 

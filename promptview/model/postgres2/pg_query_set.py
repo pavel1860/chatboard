@@ -727,7 +727,7 @@ class PgSelectQuerySet(QuerySet[MODEL]):
         query.group_by = self.ordering_set.group_by        
         
         if is_artifact and not self.ordering_set.order_by:
-            self.ordering_set.infer_order_by("turn_id")
+            self.ordering_set.infer_order_by("artifact_id")
             
         query.order_by = self.ordering_set.order_by
         
