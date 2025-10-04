@@ -6,7 +6,7 @@ from ..model.query_url_params import parse_query_params, QueryListType
 from ..model import TurnStatus
 from .utils import query_filters
 from ..model.block_models.block_log import get_blocks
-from ..model.versioning.models import Turn, ExecutionSpan, SpanEvent, Log
+from ..model.versioning.models import Turn, ExecutionSpan, SpanValue, Log, Artifact
 from ..model.versioning.models import Branch
 from .utils import ListParams, get_list_params
 
@@ -27,9 +27,77 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         get_model_ctx, 
         # exclude_routes={"update"}
     )
-
-
+    
+    
     @turn_router.get("/spans")   
+    async def get_turn_spans(
+        list_params: ListParams = Depends(get_list_params),
+        filters: QueryListType | None = Depends(query_filters),
+        ctx = Depends(get_model_ctx)
+    ):
+        async with ctx:
+            turns = await Turn.query() \
+                .include(Artifact.query().agg("spans", ExecutionSpan.query().include(SpanValue), on=("id", "artifact_id"))) \
+                .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id")) \
+                .where(status = TurnStatus.COMMITTED) \
+                .limit(10) \
+                .offset(0) \
+                .order_by("-created_at") \
+                .json()
+                
+                
+            def get_artifacts(turns: list[dict], kind: str):
+                return [a for turn in turns for a in turn["artifacts"] if a["kind"] == kind]
+
+
+            async def get_spans(turns: list[dict]):
+                span_art = get_artifacts(turns, 'span')
+                if not span_art:
+                    return {}
+                spans = await ExecutionSpan.query().where(lambda t: t.artifact_id.isin([a["id"] for a in span_art])).include(SpanValue)
+                return {s.artifact_id: s for s in spans}
+
+            async def get_logs(turns: list[dict]):
+                log_art = get_artifacts(turns, 'log')
+                if not log_art:
+                    return {}
+                logs = await Log.query().where(lambda t: t.artifact_id.isin([a["id"] for a in log_art]))
+                return {l.artifact_id: l for l in logs}
+
+
+            blocks_lookup = await get_blocks([a["id"] for a in get_artifacts(turns, 'block')])
+            log_lookup = await get_logs(turns)
+            spans_lookup = await get_spans(turns)
+
+            for turn in turns:
+                root_span = None
+                has_spans = False
+                for art in turn['artifacts']:
+                    for span in art['spans']:
+                        has_spans = True
+                        if span['parent_span_id'] is None:
+                            root_span = span
+                        for value in span['values']:
+                            if value['kind'] == 'block':
+                                try:
+                                    value['artifact'] = blocks_lookup[value['artifact_id']]
+                                except KeyError:
+                                    print(f"Block {value['artifact_id']} not found")
+                            elif value['kind'] == 'log':
+                                value['artifact'] = log_lookup[int(value['artifact_id'])]
+                            elif value['kind'] == 'span':
+                                value['artifact'] = spans_lookup[value['artifact_id']]
+                
+                if root_span is None and has_spans:
+                    raise ValueError("No root span found")
+                turn['span'] = root_span
+                del turn['artifacts']
+                
+            return turns
+
+
+
+    @turn_router.get("/spans2")   
     async def get_turn_blocks(
         list_params: ListParams = Depends(get_list_params),
         filters: QueryListType | None = Depends(query_filters),
@@ -38,7 +106,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         async with ctx:
             turns = await Turn.query().include(
                         ExecutionSpan.query(alias="es").select("*").include(
-                            SpanEvent
+                            SpanValue
                         )
                 ) \
                 .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id")) \
@@ -47,8 +115,6 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                 .offset(0) \
                 .order_by("-created_at") \
                 .json()
-                
-        
 
             block_ids = []
             log_ids = []
@@ -63,12 +129,9 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                             block_ids.append(event['event_id'])
                         elif event['event_type'] == 'log':
                             log_ids.append(int(event['event_id']))
-                
-
-
 
             blocks_lookup = {}
-            if block_ids:        
+            if block_ids:
                 blocks_lookup = await get_blocks(block_ids)
                 
                 

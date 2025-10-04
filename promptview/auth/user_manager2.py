@@ -1,11 +1,14 @@
 from typing import Any, Dict, Generic, List, Optional, Type, final
 from datetime import datetime
 from uuid import UUID, uuid4
+import os
 from fastapi import HTTPException, Request
 from typing_extensions import TypeVar
 
 
 from pydantic import BaseModel
+
+from promptview.auth.crypto import decode_nextauth_session_token
 from .google_auth import GoogleAuth
 from ..model import Model, ModelField, RelationField, Branch, KeyField
 from uuid import UUID
@@ -139,7 +142,14 @@ class AuthManager(Generic[UserT]):
     
     async def get_user_from_request(self, request: Request) -> Optional[UserT]:
         guest_token = request.cookies.get("temp_user_token")
-        auth_user_id = request.headers.get("X-Auth-User")
+        session_token = request.cookies.get("next-auth.session-token")
+        auth_user_id = None
+        if session_token:
+            NEXTAUTH_SECRET = os.getenv("NEXTAUTH_SECRET")
+            session = decode_nextauth_session_token(session_token, NEXTAUTH_SECRET)
+            print("session", session)
+            auth_user_id = session.get("user", {}).get("auth_user_id")
+        # auth_user_id = request.headers.get("X-Auth-User")
         user = None
         if auth_user_id:
             user = await self.fetch_by_auth_user_id(auth_user_id)

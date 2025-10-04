@@ -117,20 +117,21 @@ def load_block_dump(dumps: list[dict]):
     
     
 
-async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: uuid.UUID | None = None) -> str:
+async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int | None = None) -> BlockTree:
     """
     Alternative implementation using executemany for bulk inserts.
     This approach is cleaner and more straightforward than UNNEST.
     """
+    from ..versioning.models import BlockTree
     nodes = dump_block(block)
     # async with PGConnectionManager.transaction() as tx:
-    async def insert_block_transaction(tx):
-        tree_id = str(uuid.uuid4())
+    async def insert_block_transaction(tx, tree_id: int):
+        # tree_id = str(uuid.uuid4())
         created_at = dt.datetime.now()
-        await tx.execute(
-            "INSERT INTO block_trees (id, created_at, branch_id, turn_id, span_id) VALUES ($1, $2, $3, $4, $5)", 
-            tree_id, created_at, branch_id, turn_id, span_id
-        )
+        # await tx.execute(
+        #     "INSERT INTO block_trees (id, created_at, branch_id, turn_id, span_id) VALUES ($1, $2, $3, $4, $5)", 
+        #     tree_id, created_at, branch_id, turn_id, span_id
+        # )
 
         # --- prepare rows for blocks ---
         block_rows = []
@@ -170,22 +171,27 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: uuid
             )
 
         return tree_id
-    
-    return await PGConnectionManager.run_in_transaction(insert_block_transaction)
+    block_tree = await BlockTree().save()
+    async def tx_wrapper(tx):
+        return await insert_block_transaction(tx, block_tree.id)
+    result = await PGConnectionManager.run_in_transaction(tx_wrapper)
+    return block_tree
 
     
     
     
     
 async def get_blocks(tree_ids: list[str], dump_models: bool = True) -> dict[str, Block]:
+    if not tree_ids:
+        return {}
     block_trees = await BlockTree.query(alias="bt").select("*").include(
             BlockNode.query(alias="bn").select("*").include(
                 BlockModel.query(alias="bm").select("*")
             )
-        ).where(lambda b: b.id.isin(tree_ids)).json()
+        ).where(lambda b: b.artifact_id.isin(tree_ids)).json()
     blocks = {}
     for tree in block_trees:
-        tree_id = str(tree["id"])
+        tree_id = tree["id"]
         block = load_block_dump(tree["nodes"])
         blocks[tree_id] = block.model_dump() if dump_models else block
     return blocks

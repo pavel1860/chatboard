@@ -16,7 +16,7 @@ from lxml import etree
 
 from ..block import BlockSchema, Block
 if TYPE_CHECKING:
-    from ..model.versioning.models import ExecutionSpan, SpanEvent, Log, span_type_enum
+    from ..model.versioning.models import ExecutionSpan, SpanValue, Log, SpanTypeEnum
 
 
 
@@ -436,7 +436,7 @@ class StreamController(BaseFbpComponent):
         gen: AsyncGenerator, 
         name:str,
         tags: list[str] | None = None,
-        span_type: "span_type_enum" = "stream",
+        span_type: "SpanTypeEnum" = "stream",
         response_schema=None, 
         acc_factory=None
     ):
@@ -454,7 +454,7 @@ class StreamController(BaseFbpComponent):
         self._span_type = span_type
         self.parent: "PipeController | None" = None
         self._span: "ExecutionSpan | None" = None
-        self.event: "SpanEvent | None" = None
+        self.span_value: "SpanValue | None" = None
         
         
     async def build_span(self, parent_span_id: str | None = None):
@@ -582,7 +582,7 @@ class StreamController(BaseFbpComponent):
         self.span.status = "failed"
         self.span.metadata = {"error": str(error)}
         self._span = await self.span.save()
-        self.stream_event = None
+        self.span_value = None
         
         
     
@@ -591,39 +591,40 @@ class StreamController(BaseFbpComponent):
     
     
     async def on_start_event(self, payload: Any = None, attrs: dict[str, Any] | None = None):
-        event = await self.span.add_stream(self.index)
-        self.stream_event = event
-        return StreamEvent(
+        value = await self.span.log_value(self.span, io_kind="output")
+        self.span_value = value
+        StreamEvent(
             type="stream_start", 
             name=self._name, 
             payload=self.span, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            event=self.stream_event,
-            parent_event_id=self.event.id if self.event else None,
+            value=self.span_value,
+            parent_value_id=self.span_value.id if self.span_value else None,
         )
     
     async def on_value_event(self, payload: Any = None):
+        
         return StreamEvent(
             type="stream_delta", 
             name=self._name, 
             payload=payload, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            parent_event_id=self.stream_event.id if self.stream_event else None,
+            parent_value_id=self.span_value.id if self.span_value else None,
         )
     
     async def on_stop_event(self, payload: Any = None):
         print("STREAM CONTROLLER on_stop_event", self.get_response())
         response = self.get_response()
         if response is not None:
-            await self.span.add_block_event(response, self.index)
+            await self.span.log_value(response)
         return StreamEvent(
             type="stream_end", 
             name=self._name, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            parent_event_id=self.stream_event.id if self.stream_event else None,
+            parent_value_id=self.span_value.id if self.span_value else None,
         )
     
     async def on_error_event(self, error: Exception):
@@ -632,15 +633,15 @@ class StreamController(BaseFbpComponent):
             message=str(error),
             level="error"
         ).save()
-        event = await self.span.add_log_event(log, self.index)
+        value = await self.span.log_value(log)
         return StreamEvent(
             type="stream_error", 
             name=self._name, 
             payload=error, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            event=event,
-            parent_event_id=self.stream_event.id if self.stream_event else None,
+            value=value,
+            parent_value_id=self.span_value.id if self.span_value else None,
         )
         
     def __aiter__(self):
@@ -687,7 +688,7 @@ class PipeController(BaseFbpComponent):
         self, 
         gen_func, 
         name: str, 
-        span_type: "span_type_enum",
+        span_type: "SpanTypeEnum",
         tags: list[str] | None = None,
         args = (),
         kwargs = {}
@@ -702,7 +703,7 @@ class PipeController(BaseFbpComponent):
         self.parent: "PipeController | None" = None
         self._span: "ExecutionSpan | None" = None
         self.index = 0
-        self.event: "SpanEvent | None" = None
+        self.event: "SpanValue | None" = None
     
     @property
     def span(self):
@@ -731,27 +732,27 @@ class PipeController(BaseFbpComponent):
             attrs=attrs, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            parent_event_id=self.event.id if self.event else None,            
+            parent_value_id=self.event.id if self.event else None,            
         )
     
     async def on_value_event(self, payload: Any = None):
         if isinstance(payload, StreamController):
             span = await payload.build_span(str(self.span_id))
-            event = await self.span.add_span_event(span, self.index)
-            payload.event = event
+            event = await self.span.log_value(span)
+            payload.span_value = event
             return StreamEvent(
                 type="span_event", 
                 name=self._gen_func.__name__, 
                 payload=span, 
                 span_id=str(self.span_id), 
                 path=self.get_execution_path(), 
-                event=event,
-                parent_event_id=self.event.id if self.event else None,
+                value=event,
+                parent_value_id=self.event.id if self.event else None,
             )
             
         elif isinstance(payload, PipeController):
             span = await payload.build_span(str(self.span_id))
-            event = await self.span.add_span_event(span, self.index)
+            event = await self.span.log_value(span)
             payload.event = event
             return StreamEvent(
                 type="span_event", 
@@ -759,19 +760,19 @@ class PipeController(BaseFbpComponent):
                 payload=span, 
                 span_id=str(self.span_id), 
                 path=self.get_execution_path(), 
-                event=event,
-                parent_event_id=self.event.id if self.event else None,
+                value=event,
+                parent_value_id=self.event.id if self.event else None,
             )
         elif isinstance(payload, Block):
-            event = await self.span.add_block_event(payload, self.index)
+            event = await self.span.log_value(payload)
             return StreamEvent(
                 type="span_event", 
                 name=self._gen_func.__name__, 
                 payload=payload, 
                 span_id=str(self.span_id), 
                 path=self.get_execution_path(), 
-                event=event,
-                parent_event_id=self.event.id if self.event else None,
+                value=event,
+                parent_value_id=self.event.id if self.event else None,
             )
         else:
             # raise ValueError(f"Invalid payload type: {type(payload)}")
@@ -784,7 +785,7 @@ class PipeController(BaseFbpComponent):
             payload=payload, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            parent_event_id=self.event.id if self.event else None,
+            parent_value_id=self.event.id if self.event else None,
         )
     
     async def on_error_event(self, error: Exception):
@@ -793,14 +794,14 @@ class PipeController(BaseFbpComponent):
             message=str(error),
             level="error"
         ).save()
-        event = await self.span.add_log_event(log, self.index)
+        event = await self.span.log_value(log)
         return StreamEvent(
             type="span_error", 
             name=self._gen_func.__name__, 
             payload=error, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
-            event=event
+            value=event
         )
     
     async def post_next(self, value: Any = None):
@@ -844,19 +845,19 @@ class PipeController(BaseFbpComponent):
         return self._span
     
     async def add_span(self, span: "ExecutionSpan"):
-        event = await self.span.add_span_event(span, self.index)
+        event = await self.span.log_value(span)
         return event
     
     
     async def add_event(self, gen: "PipeController | StreamController"):
         if isinstance(gen, StreamController):
             span = await gen.build_span(str(self.span_id))
-            event = await self.span.add_span_event(span, self.index)
-            gen.event = event
+            event = await self.span.log_value(span)
+            gen.span_value = event
             return event
         elif isinstance(gen, PipeController):
             span = await gen.build_span(str(self.span_id))
-            event = await self.span.add_span_event(span, self.index)        
+            event = await self.span.log_value(span)        
             gen.event = event
             return event
         else:
@@ -887,7 +888,7 @@ class PipeController(BaseFbpComponent):
             message=str(error),
             level="error"
         ).save()
-        await self.span.add_log_event(log, self.index)
+        await self.span.log_value(log)
         self.span.end_time = dt.datetime.now()
         self.span.status = "failed"
         self.span.metadata = {"error": str(error)}

@@ -148,11 +148,22 @@ class Model(BaseModel, metaclass=ModelMeta):
     def update(self):
         ns = self.get_namespace()
         return ns.update(self.primary_id, self.model_dump()).select("*")
+    
+    def _load_context_vars(self):
+        ns = self.get_namespace()
+        for field in ns.iter_fields():
+            if field.is_foreign_key and getattr(self, field.name) is None:
+                fk_cls = field.foreign_cls
+                if fk_cls:
+                    ctx_instance = fk_cls.get_namespace().get_ctx()
+                    if ctx_instance:
+                        setattr(self, field.name, ctx_instance.primary_id)
+
 
     
     async def save(self):        
         ns = self.get_namespace()
-        
+        self._load_context_vars()
         pk_value = self.primary_id
         if pk_value is None:
             result = await self.insert().one().json()   
@@ -188,6 +199,29 @@ class Model(BaseModel, metaclass=ModelMeta):
         if field is not None:
             field.append(result)
         return result
+    
+    
+    async def include(self, field: str, limit: int | None = None) -> Self:
+        ns = self.get_namespace()
+        relation = ns.get_relation(field)
+        if not relation:
+            raise ValueError(f"Relation model not found for type: {field}")
+        if relation.is_one_to_one:
+            result = await relation.foreign_cls.query().where(**{relation.foreign_key: self.primary_id}).one()
+        # elif relation.is_many_to_many:
+        #     result = await relation.foreign_cls.query().where(**{relation.foreign_key: self.primary_id})
+        else:
+            query = relation.foreign_cls.query().where(**{relation.foreign_key: self.primary_id})            
+            if limit:
+                query = query.limit(limit)
+            result = await query
+        setattr(self, field, result)
+        return self
+        
+        
+        
+        
+        
 
 
     async def delete(self):

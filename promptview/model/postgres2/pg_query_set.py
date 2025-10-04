@@ -536,7 +536,7 @@ class PgSelectQuerySet(QuerySet[MODEL]):
         """Alias for .where()"""
         return self.where(condition, **kwargs)
     
-    def join(self, target: "Type[Model] | QuerySet", on: tuple[str, str] | None = None, nest_as: str | None = None):
+    def join(self, target: "Type[Model] | QuerySet", on: tuple[str, str] | None = None, nest_as: str | None = None, join_type: str = 'INNER'):
         query_set = self._resolve_query_set_target(target)
         relation = self._get_qs_relation(query_set, on=on)
         
@@ -545,15 +545,15 @@ class PgSelectQuerySet(QuerySet[MODEL]):
             junction_ns = relation.relation_model.get_namespace()
             jt = self.table_registry.get_ns_table(junction_ns)
             
-            join = Join(jt, Eq(Column(relation.primary_key, self.table), Column(relation.junction_keys[0], jt)))
+            join = Join(jt, Eq(Column(relation.primary_key, self.table), Column(relation.junction_keys[0], jt)), join_type=join_type)
             self.join_set.append(relation, join)
-            j_join = Join(jt, Eq(Column(relation.foreign_key, query_set.table), Column(relation.junction_keys[1], jt)))            
+            j_join = Join(jt, Eq(Column(relation.foreign_key, query_set.table), Column(relation.junction_keys[1], jt)), join_type=join_type)            
             self.join_set.append(relation, j_join)
             
             # self.selection_set.clause &= Eq(Column(relation.primary_key, self.table), Column(relation.junction_keys[0], jt))
         else:
             # self.selection_set.clause &= Eq(Column(relation.foreign_key, query_set.table), Column(relation.primary_key, self.table))
-            join = Join(query_set.table, Eq(Column(relation.foreign_key, query_set.table), Column(relation.primary_key, self.table)))
+            join = Join(query_set.table, Eq(Column(relation.foreign_key, query_set.table), Column(relation.primary_key, self.table)), join_type=join_type)
             self.join_set.append(relation, join)
         if nest_as:
             self.projection_set.nest(query_set, nest_as)
@@ -717,7 +717,7 @@ class PgSelectQuerySet(QuerySet[MODEL]):
             art_query = SelectQuery().from_(table)
             pk = self.namespace.primary_key
             art_query.distinct_on = [Column(pk, table)]
-            art_query.order_by = [Column(pk, table), Column("version", table)]
+            art_query.order_by = [Column(pk, table), Column("artifact_id", table)]
             query.from_(Subquery(art_query, str(self.table)))
         else:
             query.from_(self.table)

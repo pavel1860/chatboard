@@ -35,8 +35,8 @@ class StreamEvent:
     name: str | None = None
     attrs: dict | None = None
     depth: int = 0
-    parent_event_id: int | None = None
-    event: Any | None = None
+    parent_value_id: int | None = None
+    value: Any | None = None
     payload: Any | None = None    
     created_at: dt.datetime | None = None
     error: str | None = None
@@ -91,8 +91,8 @@ class StreamEvent:
             "payload": payload,            
             "request_id": self.request_id,
             "span_id": self.span_id,   
-            "parent_event_id": self.parent_event_id,
-            "event": self.event.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.event else None,
+            "parent_event_id": self.parent_value_id,
+            "event": self.value.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.value else None,
         }        
         if self.error:
             dump["error"] = self.error

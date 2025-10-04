@@ -26,8 +26,8 @@ _curr_turn = contextvars.ContextVar("curr_turn", default=None)
 
 
 
-span_type_enum = Literal["component", "stream", "llm"]
-artifact_kind_enum = Literal["block", "span", "log", "model", "literal"]
+SpanTypeEnum = Literal["component", "stream", "llm"]
+ArtifactKindEnum = Literal["block", "span", "log", "model", "literal"]
 
 class TurnStatus(enum.StrEnum):
     """Status of a turn in the version history."""
@@ -194,6 +194,7 @@ class Turn(Model):
     branch_id: int = ModelField(foreign_key=True, foreign_cls=Branch)
     trace_id: str | None = ModelField(default=None)
     metadata: dict | None = ModelField(default=None)
+    artifacts: List["Artifact"] = RelationField(foreign_key="turn_id")
     spans: List["ExecutionSpan"] = RelationField(foreign_key="turn_id")
     block_trees: List["BlockTree"] = RelationField(foreign_key="turn_id")
     
@@ -214,7 +215,7 @@ class Turn(Model):
         ).parse(parse_block_tree_turn)
         
         
-    async def add_block(self, block: "Block", span_id: uuid.UUID | None = None):
+    async def add_block(self, block: "Block", span_id: int | None = None):
         from ..block_models.block_log import insert_block
         return await insert_block(block, self.branch_id, self.id, span_id)
         
@@ -288,7 +289,7 @@ class Turn(Model):
     
     
     @asynccontextmanager
-    async def start_span(self, name: str, span_type: span_type_enum):
+    async def start_span(self, name: str, span_type: SpanTypeEnum):
         span = await ExecutionSpan(
             name=name,
             span_type=span_type,
@@ -313,7 +314,7 @@ class Artifact(Model):
     Stores lineage metadata for blocks, spans, logs, and user models.
     """
     id: int = KeyField(primary_key=True)
-    kind: artifact_kind_enum = ModelField()  # 'block', 'span', 'log', 'model'
+    kind: ArtifactKindEnum = ModelField()  # 'block', 'span', 'log', 'model'
     model_name: str | None = ModelField(None)  # 'meal_plan', 'workout', etc.
 
     # Lineage
@@ -361,17 +362,25 @@ class VersionedModel(Model):
     _is_base = True
     _artifact_kind: ArtifactKind = "model"
     artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
-    artifact: "Artifact | None" = RelationField("Artifact", primary_key="artifact_id", foreign_key="id")
+    artifact: "Artifact | None" = RelationField(primary_key="artifact_id", foreign_key="id")
     
     
+    def _build_insert_query(self, branch: Branch | int | None = None, turn: Turn | int | None = None, version: int = 1):
+        ns = self.get_namespace()
+        branch_id = Branch.resolve_target_id(branch)
+        turn_id = Turn.resolve_target_id(turn)
+        art_query = Artifact(
+            kind=self._artifact_kind,
+            model_name=self.get_namespace_name(),
+            version=version,
+            branch_id=branch_id,
+            turn_id=turn_id
+        ).insert()
+        dump = self.model_dump()
+        dump["artifact_id"] = art_query.col("id")
+        return ns.insert(dump).select("*").one().json()                        
 
     async def save(self, *, branch: Branch | int | None = None, turn: Turn | int | None = None):
-        # if self.branch_id is None:
-        #     self.branch_id = self._resolve_branch_id(branch)
-        # if self.turn_id is None:
-        #     self.turn_id = self._resolve_turn_id(turn)
-         
-        # if self.branch_id is None or self.turn_id is None:
         ns = self.get_namespace()
         # if not self._should_save_to_db(branch, turn):
         #     print(f"WARNING: {self.__class__.__name__} is not saved to database")
@@ -381,23 +390,28 @@ class VersionedModel(Model):
         # return await super().save()
         
         pk_value = self.primary_id
+        self._load_context_vars()
         if pk_value is None:
-            branch_id = Branch.resolve_target_id(branch)
-            turn_id = Turn.resolve_target_id(turn)
-            art_query = Artifact(
-                kind=self._artifact_kind,
-                model_name=self.get_namespace_name(),
-                branch_id=branch_id,
-                turn_id=turn_id
-            ).insert()
-            dump = self.model_dump()
-            dump["artifact_id"] = art_query.col("id")
-            result = await ns.insert(dump).select("*").one().json()
+            result = await self._build_insert_query(branch, turn)
+            # branch_id = Branch.resolve_target_id(branch)
+            # turn_id = Turn.resolve_target_id(turn)
+            # art_query = Artifact(
+            #     kind=self._artifact_kind,
+            #     model_name=self.get_namespace_name(),
+            #     branch_id=branch_id,
+            #     turn_id=turn_id
+            # ).insert()
+            # dump = self.model_dump()
+            # dump["artifact_id"] = art_query.col("id")
+            # result = await ns.insert(dump).select("*").one().json()                        
             # result = await ns.insert(self.model_dump()).select("*").one().json()
         else:
             result = await ns.update(pk_value, self.model_dump()).select("*").one().json()
         for key, value in result.items():
             setattr(self, key, value)
+            
+        if self.artifact is None:
+            await self.include("artifact")
         return self
     
     def _should_save_to_db(self, branch: Branch | int | None = None, turn: Turn | int | None = None) -> bool:        
@@ -459,7 +473,7 @@ class BlockModel(Model):
 
 class BlockNode(Model):
     id: int = KeyField(primary_key=True)
-    tree_id: uuid.UUID = ModelField(foreign_key=True)
+    tree_id: int = ModelField(foreign_key=True)
     path: str = ModelField(db_type="LTREE")
     block_id: str = ModelField(foreign_key=True)
     styles: list[str] | None = ModelField(default=None)
@@ -490,23 +504,25 @@ class BlockNode(Model):
      
         
 class BlockTree(VersionedModel):
-    id: uuid.UUID = KeyField(primary_key=True)
+    _artifact_kind: ArtifactKind = "block"
+    id: int = KeyField(primary_key=True)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
     nodes: List[BlockNode] = RelationField(foreign_key="tree_id")
-    span_id: uuid.UUID | None = ModelField(foreign_key=True)
+    span_id: int | None = ModelField(foreign_key=True)
     
 
 
 class ArtifactModel(VersionedModel):
     """VersionedModel with artifact tracking."""
     _is_base = True
+    _dirty_fields: dict[str, Any] = {}
     # id: int = KeyField(primary_key=True)
     # artifact_id: uuid.UUID = KeyField(
     #         default_factory=uuid.uuid4, 
     #         type="uuid"
     #     )
     # version: int = ModelField(default=1)
-    version: int = KeyField(default=1)
+    # version: int = KeyField(default=1)
 
     @classmethod
     async def latest(cls, artifact_id: uuid.UUID) -> Self | None:
@@ -521,11 +537,14 @@ class ArtifactModel(VersionedModel):
     async def save(self, *, branch: Branch | int | None = None, turn: Turn | int | None = None):        
         ns = self.get_namespace()
         if primary_key:= ns.get_primary_key(self):
-            obj = self.model_copy(update={"turn_id": None, "branch_id": None})
-            obj.version += 1
-            return await obj._super_save()
+            result = await self._build_insert_query(branch, turn, self.artifact.version + 1)
+            # obj = self.model_copy(update={"turn_id": None, "branch_id": None})
+            # obj.version += 1
+            # return await obj._super_save()
         else:
-            return await super().save()
+            result = await super().save()
+        self._dirty_fields = {}
+        return result
     
     # @classmethod
     # def query(
@@ -545,43 +564,72 @@ class ArtifactModel(VersionedModel):
         
     @classmethod
     def vquery(
-        cls, 
-        fields: list[str] | None = None, 
-        alias: str | None = None, 
-        limit: int | None = None, 
-        offset: int | None = None, 
-        direction: Literal["asc", "desc"] = "desc", 
+        cls,
+        fields: list[str] | None = None,
+        alias: str | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        direction: Literal["asc", "desc"] = "desc",
+        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
         **kwargs
     ):
         from ..postgres2.pg_query_set import PgSelectQuerySet
-        turn_cte = Turn.vquery().select(*fields or "*").where(status=TurnStatus.COMMITTED)
+
+        # Build turn CTE with versioning context
+        turn_cte = Turn.vquery().select(*fields or "*")
+        if statuses:
+            turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
         if limit:
             turn_cte = turn_cte.limit(limit)
             turn_cte = turn_cte.order_by(f"-index" if direction == "desc" else "index")
         if offset:
             turn_cte = turn_cte.offset(offset)
-        
-        
+
+        # Join Artifact with turn CTE to get event-sourced versions
+        art_cte = (
+            Artifact.query()
+            .join(turn_cte, on=("turn_id", "id"))
+            .use_cte(turn_cte, name="committed_turns", alias="ct")
+        )
+
+        # Query the model using the artifact CTE
         query = (
             PgSelectQuerySet(cls, alias=alias) \
             .use_cte(
-                turn_cte,
-                name="committed_turns",
-                alias="ct",
-            ).distinct_on("artifact_id")
-            .order_by("-artifact_id", "-version")
+                art_cte,
+                name="artifact_cte",
+                alias="ac",
+            )
+            .join(art_cte, on=("artifact_id", "id"))
+            .distinct_on("artifact_id")
+            .include(Artifact)
+            .order_by("-artifact_id", "-artifact_id")
         )
-        where_keys = cls._get_context_fields()
-        if where_keys:
-            query.where(**where_keys)
         return query
 
+    # def __getattr__(self, name: str):
+    #     print(f"__getattr__ {name}")
+    #     return super().__getattr__(name)
+    # def __getattribute__(self, name):
+    #     print(f"Accessing attribute: {name}")
+    #     # Call the default implementation to avoid recursion
+    #     value = super().__getattribute__(name)
+    
+    def __setattr__(self, name, value):
+        print(f"Setting {name} = {value}")
+        curr_value = super().__getattribute__(name)
+        if curr_value != value and name not in self._dirty_fields:
+            self._dirty_fields[name] = curr_value
+        # Prevent recursion by calling the base implementation
+        super().__setattr__(name, value)
+        
 
 
 
 
 
-class Log(Model):
+class Log(VersionedModel):
+    _artifact_kind: ArtifactKind = "log"
     id: int = KeyField(primary_key=True)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
     message: str = ModelField()
@@ -589,13 +637,16 @@ class Log(Model):
     
 
 
-class SpanEvent(VersionedModel):
+
+ValueIOKind = Literal["input", "output"]
+
+class SpanValue(Model):
     id: int = KeyField(primary_key=True)    
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-    kind: Literal["block", "span", "log", "model", "stream"] = ModelField()
-    io_type: Literal["input", "output"] = ModelField()
+    kind: ArtifactKindEnum = ModelField()
+    io_kind: ValueIOKind = ModelField()
     # index: int = ModelField()
-    span_id: uuid.UUID = ModelField(foreign_key=True)
+    span_id: int = ModelField(foreign_key=True)
     artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
     artifact: "Artifact | None" = RelationField("Artifact", primary_key="artifact_id", foreign_key="id")
     
@@ -603,10 +654,11 @@ class SpanEvent(VersionedModel):
 
 class ExecutionSpan(VersionedModel):
     """Represents a single execution unit (component call, stream, etc.)"""
-    id: uuid.UUID = KeyField(primary_key=True)
+    _artifact_kind: ArtifactKind = "span"
+    id: int = KeyField(primary_key=True)
     name: str = ModelField()  # Function/component name
-    span_type: span_type_enum = ModelField()
-    parent_span_id: uuid.UUID | None = ModelField(foreign_key=True, self_ref=True)
+    span_type: SpanTypeEnum = ModelField()
+    parent_span_id: int | None = ModelField(foreign_key=True, self_ref=True)
     start_time: dt.datetime = ModelField(default_factory=dt.datetime.now)
     end_time: dt.datetime | None = ModelField(default=None)
     tags: list[str] | None = ModelField(default=None)
@@ -616,7 +668,7 @@ class ExecutionSpan(VersionedModel):
     index: int = ModelField()
     
     # Relations
-    events: List["SpanEvent"] = RelationField(foreign_key="span_id")
+    values: List["SpanValue"] = RelationField(foreign_key="span_id")
     # events: List[Event] = RelationField(foreign_key="execution_span_id")
     block_trees: List[BlockTree] = RelationField(foreign_key="span_id")
     
@@ -628,81 +680,84 @@ class ExecutionSpan(VersionedModel):
     #     turn_id = super()._resolve_turn_id(turn)
     #     return turn_id or 1
     
-    def _get_target_meta(self, target: Any) -> tuple[artifact_kind_enum, int | None]:
+    def _get_target_meta(self, target: Any) -> tuple[ArtifactKindEnum, int | None]:
         from ...block import Block
         if isinstance(target, Block):
             return "block", None
         elif isinstance(target, Log):
-            return "log", None
+            return "log", target.artifact_id
         elif isinstance(target, ExecutionSpan):
             return "span", target.artifact_id
         elif isinstance(target, VersionedModel):
             return "model", target.artifact_id
         else:
             return "literal", None
-        
 
     
-    async def log(self, target: Any, io_type: Literal["input", "output"]= "output"):
+    async def log_value(self, target: Any, io_kind: ValueIOKind= "output"):
         kind, artifact_id = self._get_target_meta(target)
-        event = await self.add(SpanEvent(
+        if kind == "block":
+            return await self.add_block_event(target, io_kind)
+        value = await self.add(SpanValue(
             span_id=self.id,
             kind=kind,
-            io_type=io_type,
+            io_kind=io_kind,            
             artifact_id=artifact_id,
         ))
-        return event
+        value.artifact = target
+        return value
     
-    async def add_block_event(self, block: "Block", index: int):
+    async def add_block_event(self, block: "Block", io_kind: ValueIOKind= "output"):
         from ..block_models.block_log import insert_block
         from ..namespace_manager2 import NamespaceManager
-        if self._should_save_to_db():
-            tree_id = await insert_block(block, self.branch_id, self.turn_id, self.id)
-        else:
-            tree_id = str(uuid.uuid4())
+        # if self._should_save_to_db():
+        #     tree_id = await insert_block(block, self.artifact.branch_id, self.artifact.turn_id, self.id)
+        # else:
+        #     tree_id = str(uuid.uuid4())
+        block_tree = await insert_block(block, self.artifact.branch_id, self.artifact.turn_id, self.id)
             
-        event = await SpanEvent(
+        value = await self.add(SpanValue(
             span_id=self.id,
             kind="block",
-            event_id=tree_id,
-            index=index
-        ).save()
-        return event
+            io_kind=io_kind,
+            artifact_id=block_tree.artifact.id,
+        ))
+        return value
     
-    async def add_stream(self, index: int):
-        return await SpanEvent(
-            span_id=self.id,
-            kind="stream",
-            event_id="",
-            index=index
-        ).save()
+    # async def add_stream(self, index: int):
+    #     return await SpanValue(
+    #         span_id=self.id,
+    #         kind="stream",
+    #         artifact_id="",
+    #         index=index
+    #     ).save()
     
     
-    async def add_span_event(self, span: "ExecutionSpan", index: int):
-        return await SpanEvent(
-            span_id=self.id,
-            kind="span",
-            event_id=str(span.id),
-            index=index
-        ).save()
+    # async def add_span_event(self, span: "ExecutionSpan", index: int):
+    #     return await SpanValue(
+    #         span_id=self.id,
+    #         kind="span",
+    #         artifact_id=str(span.id),
+    #         index=index
+    #     ).save()
     
-    async def add_log_event(self, log: "Log", index: int):
-        return await SpanEvent(
-            span_id=self.id,
-            kind="log",
-            event_id=str(log.id),
-            index=index
-        ).save()
+    # async def add_log_event(self, log: "Log", index: int):
+    #     return await SpanValue(
+    #         span_id=self.id,
+    #         kind="log",
+    #         artifact_id=str(log.id),
+    #         index=index
+    #     ).save()
         
         
-    async def add_model_event(self, model: "Model", index: int):
-        return await SpanEvent(
-            span_id=self.id,
-            kind="model",
-            event_id=str(model.id),
-            table=model._namespace_name,
-            index=index
-        ).save()
+    # async def add_model_event(self, model: "Model", index: int):
+    #     return await SpanValue(
+    #         span_id=self.id,
+    #         kind="model",
+    #         artifact_id=str(model.id),
+    #         table=model._namespace_name,
+    #         index=index
+    #     ).save()
         
         
     
