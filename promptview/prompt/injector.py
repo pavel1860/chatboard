@@ -69,10 +69,10 @@ async def resolve_dependencies_kwargs(func, args, kwargs):
         if isinstance(val, DependsContainer):
             resolved = await resolve_dependency(val.dependency)
             dep_kwargs[name] = resolved
-            param_dict[name] = resolved            
+            param_dict[name] = resolved
         elif name not in bound.arguments:
             dep_kwargs[name] = val
-        elif name in args:
+        elif name in bound.arguments and name not in ('self', 'cls'):
             param_dict[name] = val
         elif name in kwargs:
             param_dict[name] = kwargs[name]

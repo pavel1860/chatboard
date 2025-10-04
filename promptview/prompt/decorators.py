@@ -32,9 +32,11 @@ def stream(
     ) -> Callable[P, StreamController]:
         @wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> StreamController:            
-            gen = func(*args, **kwargs)
+            
             return StreamController(
-                gen=gen, 
+                gen_func=func, 
+                args=args, 
+                kwargs=kwargs,
                 name=func.__name__,
                 tags=tags
             )

@@ -5,7 +5,7 @@ from .openai_llm3 import OpenAiLLM
 # from .legacy.phi_llm import PhiLLM
 # from .llm import LLM, OutputModel
 from .llm import OutputModel
-from .llm2 import LLM
+from .llm2 import LLM, LlmConfig
 from .exceptions import LlmError, LLMToolNotFound
 from .types import ToolChoice, ErrorMessage
 from .utils.completion_parsing import PromptParsingException
@@ -18,6 +18,7 @@ LLM.register(OpenAiLLM, default_model="gpt-4o")
 __all__ = [
     # "PhiLLM", 
     "LLM", 
+    "LlmConfig",
     "LlmError", 
     "LLMToolNotFound", 
     "PromptParsingException", 

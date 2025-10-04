@@ -26,7 +26,9 @@ class EventLogLevel(Enum):
     span = 1
     turn = 2
     
-    
+
+class FlowException(Exception):
+    pass
 
 
 class BaseFbpComponent:
@@ -44,7 +46,7 @@ class BaseFbpComponent:
     @property
     def gen(self):
         if self._gen is None:
-            raise ValueError(f"Flow generator ({self.__class__.__name__}) is not initialized")
+            raise FlowException(f"Flow generator ({self.__class__.__name__}) is not initialized")
         return self._gen
     
     @property
@@ -112,9 +114,9 @@ class BaseFbpComponent:
     
     async def start_generator(self):
         if self._did_start:
-            raise RuntimeError(f"Generator ({self.__class__.__name__}) already started")
+            raise FlowException(f"Generator ({self.__class__.__name__}) already started")
         await self.on_start()
-        self._did_start = True
+        self._did_start = True        
     
     def __aiter__(self):
         return self
@@ -141,6 +143,7 @@ class BaseFbpComponent:
         # print(f"Intercepted asend({value})")
         # Optionally modify the value before sending
         if not self._did_start:
+            # raise FlowException("Generator is not started")
             await self.on_start(value)
             self._did_start = True
         value = await self.gen.asend(value)
@@ -369,8 +372,8 @@ class Parser(BaseFbpComponent):
             except StopAsyncIteration:
                 raise 
             except Exception as e:
-                print(self._full_content)
-                print(f"Parser Error happened on content: {value.content}")
+                print(self._full_content)                
+                print(f"Parser Error happened on content: {value.content if value is not None else 'None'}")
                 raise e
         else:
             raise StopAsyncIteration
@@ -429,32 +432,64 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
+async def build_input_values(comp: "StreamController | PipeController", kwargs: dict):
+    from ..llms import LLM, LlmConfig
+    is_stream = isinstance(comp, StreamController)
+    try:
+        value_kwargs = {}
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+            if isinstance(value, LLM):
+                continue
+            if isinstance(value, LlmConfig):
+                continue
+            if is_stream and key == "blocks":
+                for i, block in enumerate(value):
+                    value = await comp.span.log_value(block, io_kind="input")
+                    value_kwargs[f"block_{i}"] = value            
+                
+            value = await comp.span.log_value(value, io_kind="input")
+            value_kwargs[key] = value
+        return value_kwargs
+    except Exception as e:
+        print(f"Error building input values: {e}")
+        raise e
+
+
 class StreamController(BaseFbpComponent):
     
     def __init__(
         self, 
-        gen: AsyncGenerator, 
+        gen_func, 
         name:str,
         tags: list[str] | None = None,
         span_type: "SpanTypeEnum" = "stream",
         response_schema=None, 
-        acc_factory=None
+        acc_factory=None,
+        args=(),
+        kwargs={}
     ):
         super().__init__(None)
+        self._gen_func = gen_func
+        self._args = args
+        self._kwargs = kwargs
         self._name = name
-        self._tags = tags
-        self._stream = Stream(gen)
-        self._gen = self._stream
-        # self._acc = Accumulator(BlockList())
-        # self._gen |= self._acc
+        self._tags = tags   
+        self._gen = None
+        self._save_path = None
+        self._load_path = None     
+        # self._stream = Stream(gen)
+        # self._gen = self._stream
         self._response_schema = response_schema
-        # self._acc_factory = acc_factory or (lambda: BlockList(style="stream"))
         self._parser = None
         self.index = 0
         self._span_type = span_type
         self.parent: "PipeController | None" = None
         self._span: "ExecutionSpan | None" = None
         self.span_value: "SpanValue | None" = None
+        self.resolved_kwargs: dict[str, Any] = {}
+
         
         
     async def build_span(self, parent_span_id: str | None = None):
@@ -472,13 +507,13 @@ class StreamController(BaseFbpComponent):
     @property
     def acc(self):
         if self._acc is None:
-            raise ValueError("StreamController is not initialized")
+            raise FlowException("StreamController is not initialized")
         return self._acc.result
     
     @property
     def span(self):
         if self._span is None:
-            raise ValueError(f"Span is not started for {self.__class__.__name__}")
+            raise FlowException(f"Span is not started for {self.__class__.__name__}")
         return self._span
     
     @property
@@ -501,38 +536,44 @@ class StreamController(BaseFbpComponent):
         
     def parse(self, block_schema: Block) -> Self:
         if self._parser is not None:
-            raise ValueError("Parser already initialized")
-        if self._gen is None:
-            raise ValueError("StreamController is not initialized")
+            raise FlowException("Parser already initialized")
+        if self._gen_func is None:
+            raise FlowException("StreamController is not initialized")
         self._parser = Parser(response_schema=block_schema)
-        self._gen |= self._parser        
+        # self._gen |= self._parser        
         return self
     
     def save(self, name: str, dir: str | None = None):
-        import os
-        path = f"{dir}/{name}.jsonl" if dir else f"{name}.jsonl"
-        self._stream.save_stream(path)
-        if os.path.exists(path):
-            os.remove(path)
+        if self._load_path is not None:
+            raise FlowException("StreamController is already loaded a stream")
+        self._save_path = f"{dir}/{name}.jsonl" if dir else f"{name}.jsonl"
+        # import os
+        # path = f"{dir}/{name}.jsonl" if dir else f"{name}.jsonl"
+        # self._stream.save_stream(path)
+        # if os.path.exists(path):
+        #     os.remove(path)
         return self
     
     def load(self, name: str, dir: str | None = None, delay: float = 0.07):
-        import asyncio
-        import random
-        path = f"{dir}/{name}.jsonl" if dir else f"{name}.jsonl"
+        if self._save_path is not None:
+            raise FlowException("StreamController is already loaded a stream")
+        self._load_path = (f"{dir}/{name}.jsonl" if dir else f"{name}.jsonl", delay)
+        # import asyncio
+        # import random
+        # path = f"{dir}/{name}.jsonl" if dir else f"{name}.jsonl"
         
-        async def load_stream():
-            with open(path, "r") as f:
-                for line in f:
-                    # Add random delay between 0.5x and 1.5x of base delay
-                    random_delay = delay * (max(-0.5 + random.random(), 0))
-                    if random_delay > 0:
-                        await asyncio.sleep(random_delay)
-                    j = json.loads(line)
-                    block = BlockChunk.model_validate(j)
-                    yield block
+        # async def load_stream():
+        #     with open(path, "r") as f:
+        #         for line in f:
+        #             # Add random delay between 0.5x and 1.5x of base delay
+        #             random_delay = delay * (max(-0.5 + random.random(), 0))
+        #             if random_delay > 0:
+        #                 await asyncio.sleep(random_delay)
+        #             j = json.loads(line)
+        #             block = BlockChunk.model_validate(j)
+        #             yield block
                     
-        self._gen = Stream(load_stream())
+        # self._gen = Stream(load_stream())
         return self
     
                 
@@ -553,8 +594,42 @@ class StreamController(BaseFbpComponent):
     #     ).save()
     #     if self.parent:
     #         await self.parent.span.add_span(self.span, self.parent.index)
+
+    
+    def _build_load_stream(self, path: str, delay: float):
+        import random
+
+        async def load_stream():
+            with open(path, "r") as f:
+                for line in f:
+                    # Add random delay between 0.5x and 1.5x of base delay
+                    random_delay = delay * (max(-0.5 + random.random(), 0))
+                    if random_delay > 0:
+                        await asyncio.sleep(random_delay)
+                    j = json.loads(line)
+                    block = BlockChunk.model_validate(j)
+                    yield block
+        return Stream(load_stream())
+
     
     async def on_start(self, value: Any = None):
+        import os
+        
+        bound, kwargs = await resolve_dependencies_kwargs(self._gen_func, args=self._args, kwargs=self._kwargs)
+        self.resolved_kwargs = kwargs
+        gen = self._gen_func(*bound.args, **bound.kwargs)
+        if self._load_path is not None:
+            self._stream = self._build_load_stream(self._load_path[0], self._load_path[1])
+        else:
+            self._stream = Stream(gen)
+        self._gen = self._stream
+        if self._parser is not None:
+            self._gen |= self._parser
+        if self._save_path is not None:
+            self._stream.save_stream(self._save_path)
+            if os.path.exists(self._save_path):
+                os.remove(self._save_path)
+            
         if not self._span:
             from ..model.versioning.models import ExecutionSpan
             self._span = await ExecutionSpan(
@@ -565,6 +640,7 @@ class StreamController(BaseFbpComponent):
                 start_time=dt.datetime.now(),
                 parent_span_id=self.parent.span_id if self.parent else None,
             ).save()
+            
 
             
     async def on_stop(self):
@@ -589,9 +665,11 @@ class StreamController(BaseFbpComponent):
     async def on_start_event(self, payload: Any = None, attrs: dict[str, Any] | None = None):
         # value = await self.span.log_value(self.span, io_kind="output")
         # self.span_value = value
-        StreamEvent(
+        value_attrs = await build_input_values(self, self.resolved_kwargs)
+        return StreamEvent(
             type="stream_start", 
             name=self._name, 
+            attrs=value_attrs, 
             payload=self.span, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
@@ -700,11 +778,12 @@ class PipeController(BaseFbpComponent):
         self._span: "ExecutionSpan | None" = None
         self.index = 0
         self.span_value: "SpanValue | None" = None
+        self.resolved_kwargs: dict[str, Any] = {}
     
     @property
     def span(self):
         if self._span is None:
-            raise ValueError(f"Span is not started for {self.__class__.__name__}")
+            raise FlowException(f"Span is not started for {self.__class__.__name__}")
         return self._span
 
     @property
@@ -719,13 +798,30 @@ class PipeController(BaseFbpComponent):
             path.insert(0, current.index)  # Prepend to build path from root
             current = current.parent
         return path
+    
+
+    
+    async def on_start(self, value: Any = None):
+        from ..model.versioning.models import ExecutionSpan
+        bound, kwargs = await resolve_dependencies_kwargs(self._gen_func, args=self._args, kwargs=self._kwargs)
+        self.resolved_kwargs = kwargs
+        self._gen = self._gen_func(*bound.args, **bound.kwargs)
+        if not self._span:
+            self._span = await ExecutionSpan(
+                span_type=self._span_type,
+                name=self._name,
+                tags=self._tags,
+                index=self.index,
+                parent_span_id=self.parent.span_id if self.parent else None,
+            ).save()
         
     async def on_start_event(self, payload: Any = None, attrs: dict[str, Any] | None = None):
+        value_attrs = await build_input_values(self, self.resolved_kwargs)
         return StreamEvent(
             type="span_start", 
             name=self._gen_func.__name__, 
             payload=self.span, 
-            attrs=attrs, 
+            attrs=value_attrs, 
             span_id=str(self.span_id), 
             path=self.get_execution_path(), 
             parent_value_id=self.span_value.id if self.span_value else None,            
@@ -857,20 +953,9 @@ class PipeController(BaseFbpComponent):
             gen.span_value = event
             return event
         else:
-            raise ValueError(f"Invalid generator type: {type(gen)}")
+            raise FlowException(f"Invalid generator type: {type(gen)}")
 
-    async def on_start(self, value: Any = None):
-        from ..model.versioning.models import ExecutionSpan
-        bound, kwargs = await resolve_dependencies_kwargs(self._gen_func, self._args, self._kwargs)
-        self._gen = self._gen_func(*bound.args, **bound.kwargs)
-        if not self._span:
-            self._span = await ExecutionSpan(
-                span_type=self._span_type,
-                name=self._name,
-                tags=self._tags,
-                index=self.index,
-                parent_span_id=self.parent.span_id if self.parent else None,
-            ).save()
+
         
         
     async def on_stop(self):
@@ -1034,7 +1119,7 @@ class FlowRunner:
                     # raise self._error_to_raise
                     await gen.athrow(self._error_to_raise)
                 if not gen._did_start:
-                    await gen.start_generator()                    
+                    await gen.start_generator()                     
                     payload = gen.span if isinstance(gen, PipeController) and len(self.stack) == 1 else None
                     # event = await gen.on_start_event(payload)
                     # if not self.should_output_events:

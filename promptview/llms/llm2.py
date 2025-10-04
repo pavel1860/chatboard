@@ -106,8 +106,9 @@ def llm_stream(
             if "config" not in kwargs or kwargs["config"] is None:
                 kwargs["config"] = getattr(self, "config", None)
             blocks, extra_args = pack_blocks(args)
-            gen = method(self, blocks, *extra_args, **kwargs)
-            return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
+            # gen = method(self, blocks, *extra_args, **kwargs)
+            # return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
+            return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name or method.__name__, span_type="llm")
         return wrapper
     return llm_stream_decorator
     
