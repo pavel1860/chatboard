@@ -1,0 +1,1243 @@
+"""
+FBP Process - Flow-Based Programming Core Components
+
+This module implements Flow-Based Programming (FBP) primitives for LLM streaming.
+
+## The Telegram Problem & FBP
+
+When information is split into parts (like streaming LLM tokens), each part must
+preserve its context and boundaries. FBP solves this by treating data as continuous
+flows of discrete packets (Information Packets - IPs), each carrying metadata,
+flowing through independent, connected processes.
+
+## Architecture
+
+1. **Information Packets (IPs)**: Discrete data units with boundaries
+   - In LLM context: BlockChunk, StreamEvent, nested Controllers
+
+2. **Processes**: Independent components that transform IPs
+   - All processes share same interface: receive IPs, transform, send IPs
+   - Types: Stateless (Parser), Stateful (StreamController), Composite (PipeController)
+
+3. **Connections**: Bounded buffers between processes (async generators)
+
+4. **Ports**: Input/output interfaces (asend/yield)
+
+## Replay Capability
+
+Critical requirement: Process network must support starting execution from any
+subcomponent by reconstructing state from SpanTree inputs/outputs.
+
+Like telegram retransmission: if message fails at station 5, restart from station 5
+by replaying messages from stations 1-4.
+
+## Modes
+
+- **Normal Mode**: Process receives IPs from upstream, executes, logs I/O to SpanTree
+- **Replay Mode**: Process reconstructs from SpanTree, yields saved outputs
+
+---
+
+PRD: Flow-Based Programming Process Implementation
+===================================================
+
+## Goals
+
+1. Create FBP process architecture for LLM streaming pipelines
+2. Enable process composition via pipes (|)
+3. Support observability through SpanTree integration
+4. Enable replay/resumption from any point in process network
+5. Maintain backward compatibility with existing flow_components.py
+
+## Non-Goals
+
+- Replacing flow_components.py immediately (gradual migration)
+- Distributed execution across machines (single-process for now)
+- Visual flow editor (code-first approach)
+
+## Requirements
+
+### Functional
+
+1. **Process Base Class**
+   - Async iteration protocol (__aiter__, __anext__)
+   - Pipe composition operator (|)
+   - Lifecycle hooks (on_start, on_stop, on_error)
+   - Dual mode: normal execution vs replay from SpanTree
+   - I/O logging to SpanTree for observability
+
+2. **Stream Process**
+   - Wraps async generator as FBP source
+   - Optional persistence (save stream to file)
+   - Optional replay (load stream from file)
+
+3. **Accumulator Process**
+   - Sink process that collects all IPs
+   - Returns accumulated result
+
+4. **StreamController Process**
+   - Composite process (contains stream + optional parser)
+   - Span tracking integration
+   - Event emission (start, delta, end, error)
+   - Replay from saved span
+
+5. **PipeController Process**
+   - Dynamic composite (yields other processes)
+   - Child process management
+   - Replay with subnetwork reconstruction
+
+6. **Parser Process** (later phase)
+   - XML stream parsing into structured blocks
+   - Stateful transformation
+
+7. **FlowRunner**
+   - Orchestrates process network execution
+   - Manages process stack (when processes yield other processes)
+   - Emits events at different granularities (chunk/span/turn)
+
+### Non-Functional
+
+1. **Performance**: Minimal overhead vs raw async generators
+2. **Testability**: Each component independently testable
+3. **Type Safety**: Full type hints
+4. **Documentation**: Inline examples and docstrings
+
+## Implementation Phases
+
+### Phase 1: Core Process (MVP)
+- [ ] Process base class with normal execution mode
+- [ ] Pipe operator (|)
+- [ ] Lifecycle hooks
+- [ ] Basic tests
+
+### Phase 2: Source & Sink
+- [ ] Stream process (source)
+- [ ] Accumulator process (sink)
+- [ ] Pipe composition tests
+- [ ] Stream persistence (save/load)
+
+### Phase 3: Observable Composite
+- [ ] StreamController with span tracking
+- [ ] Context integration
+- [ ] Event emission
+- [ ] Integration tests
+
+### Phase 4: Dynamic Composite & Orchestration
+- [ ] PipeController
+- [ ] FlowRunner (stack management)
+- [ ] Nested process tests
+
+### Phase 5: Parser Integration
+- [ ] Parser process
+- [ ] End-to-end pipeline tests
+- [ ] Performance benchmarks
+
+### Phase 6: Replay Foundation
+- [ ] SpanTree I/O logging
+- [ ] Replay mode in Process base
+- [ ] Full replay from root span
+- [ ] Replay tests
+
+### Phase 7: Advanced Replay
+- [ ] Partial replay (resume from specific span)
+- [ ] Function registry for reconstruction
+- [ ] Resume tests
+
+## Success Criteria
+
+1. Can compose simple pipeline: `stream | parser | accumulator`
+2. Can execute nested pipelines with PipeController + StreamController
+3. Can save execution to SpanTree and replay from start
+4. All tests pass with 80%+ coverage
+5. Performance within 10% of current flow_components.py
+
+---
+
+TASK BREAKDOWN
+==============
+
+## Phase 1: Core Process (MVP)
+
+### Task 1.1: Process Base Class - Structure
+**File**: fbp_process.py
+**Playground**: research/fbp/fbp_process_playground.py (Cell 1)
+**Estimate**: 30 min
+
+**Requirements**:
+- Create `Process` base class
+- Constructor: `__init__(upstream: Process | None = None)`
+- Properties: `upstream`, `_did_start`, `_last_ip`
+- Method stubs: `on_start()`, `on_stop()`, `on_error()`
+
+**Test in Playground**:
+```python
+# %%
+# Cell 1: Basic Process instantiation
+from promptview.prompt.fbp_process import Process
+
+proc = Process()
+assert proc._did_start == False
+assert proc._last_ip is None
+```
+
+### Task 1.2: Process Base Class - Async Iteration
+**File**: fbp_process.py
+**Playground**: Cell 2
+**Estimate**: 45 min
+
+**Requirements**:
+- Implement `__aiter__()` and `__anext__()`
+- Call `on_start()` on first iteration
+- Receive IP from upstream
+- Store last IP
+- Raise `StopAsyncIteration` when upstream exhausted
+
+**Test in Playground**:
+```python
+# %%
+# Cell 2: Async iteration protocol
+async def test_iteration():
+    # Create mock upstream that yields 3 values
+    async def mock_gen():
+        for i in range(3):
+            yield i
+
+    class MockUpstream:
+        def __init__(self, gen):
+            self.gen = gen
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            return await self.gen.__anext__()
+
+    upstream = MockUpstream(mock_gen())
+    proc = Process(upstream=upstream)
+
+    results = []
+    async for ip in proc:
+        results.append(ip)
+
+    assert results == [0, 1, 2]
+    assert proc._did_start == True
+
+await test_iteration()
+```
+
+### Task 1.3: Process Base Class - Pipe Operator
+**File**: fbp_process.py
+**Playground**: Cell 3
+**Estimate**: 20 min
+
+**Requirements**:
+- Implement `__or__()` operator
+- Implement `connect()` method
+- Set downstream's upstream to self
+- Return downstream for chaining
+
+**Test in Playground**:
+```python
+# %%
+# Cell 3: Pipe composition
+proc1 = Process()
+proc2 = Process()
+proc3 = Process()
+
+result = proc1 | proc2 | proc3
+
+assert proc2._upstream is proc1
+assert proc3._upstream is proc2
+assert result is proc3
+```
+
+### Task 1.4: Process Base Class - Lifecycle Hooks
+**File**: fbp_process.py
+**Playground**: Cell 4
+**Estimate**: 30 min
+
+**Requirements**:
+- Implement `on_start()`, `on_stop()`, `on_error()`
+- Call hooks at appropriate times in `__anext__()`
+- Handle exceptions and call `on_error()`
+
+**Test in Playground**:
+```python
+# %%
+# Cell 4: Lifecycle hooks
+class LifecycleTestProcess(Process):
+    def __init__(self, upstream=None):
+        super().__init__(upstream)
+        self.started = False
+        self.stopped = False
+        self.errored = False
+
+    async def on_start(self, value=None):
+        self.started = True
+
+    async def on_stop(self):
+        self.stopped = True
+
+    async def on_error(self, error):
+        self.errored = True
+
+# Test successful execution
+async def test_lifecycle():
+    async def gen():
+        yield 1
+
+    class MockUpstream:
+        def __aiter__(self):
+            return gen().__aiter__()
+        async def __anext__(self):
+            return await gen().__anext__()
+
+    proc = LifecycleTestProcess(upstream=MockUpstream())
+
+    async for _ in proc:
+        pass
+
+    assert proc.started == True
+
+await test_lifecycle()
+```
+
+---
+
+## Phase 2: Source & Sink Processes
+
+### Task 2.1: Stream Process - Basic
+**File**: fbp_process.py
+**Playground**: Cell 5
+**Estimate**: 30 min
+
+**Requirements**:
+- Create `Stream(Process)` class
+- Constructor: `__init__(gen: AsyncGenerator)`
+- Override `upstream` property to return generator
+- No actual upstream (Stream is a source)
+
+**Test in Playground**:
+```python
+# %%
+# Cell 5: Stream as source process
+from promptview.prompt.fbp_process import Stream
+
+async def number_gen():
+    for i in range(5):
+        yield i
+
+stream = Stream(number_gen())
+
+results = []
+async for ip in stream:
+    results.append(ip)
+
+assert results == [0, 1, 2, 3, 4]
+```
+
+### Task 2.2: Stream Process - Persistence
+**File**: fbp_process.py
+**Playground**: Cell 6
+**Estimate**: 45 min
+
+**Requirements**:
+- Add `save_stream(filepath: str)` method
+- Override `__anext__()` to write to file
+- Add `load(filepath: str)` class method
+- Return new Stream that reads from file
+
+**Test in Playground**:
+```python
+# %%
+# Cell 6: Stream persistence
+import json
+import os
+from pydantic import BaseModel
+
+class TestChunk(BaseModel):
+    content: str
+    index: int
+
+async def chunk_gen():
+    for i in range(3):
+        yield TestChunk(content=f"chunk_{i}", index=i)
+
+# Save stream
+stream = Stream(chunk_gen())
+stream.save_stream("/tmp/test_stream.jsonl")
+
+results_save = []
+async for chunk in stream:
+    results_save.append(chunk)
+
+# Load stream
+stream_loaded = Stream.load("/tmp/test_stream.jsonl", model=TestChunk)
+
+results_load = []
+async for chunk in stream_loaded:
+    results_load.append(chunk)
+
+assert len(results_save) == len(results_load) == 3
+assert results_save[0].content == results_load[0].content
+
+os.remove("/tmp/test_stream.jsonl")
+```
+
+### Task 2.3: Accumulator Process
+**File**: fbp_process.py
+**Playground**: Cell 7
+**Estimate**: 30 min
+
+**Requirements**:
+- Create `Accumulator(Process)` class
+- Constructor: `__init__(accumulator=None, upstream=None)`
+- Default accumulator is list
+- Append each IP to accumulator
+- Property `result` returns accumulator
+
+**Test in Playground**:
+```python
+# %%
+# Cell 7: Accumulator as sink
+from promptview.prompt.fbp_process import Accumulator
+
+async def test_accumulator():
+    async def gen():
+        for i in range(5):
+            yield i
+
+    stream = Stream(gen())
+    acc = Accumulator(accumulator=[])
+
+    pipeline = stream | acc
+
+    async for _ in pipeline:
+        pass
+
+    assert acc.result == [0, 1, 2, 3, 4]
+
+await test_accumulator()
+```
+
+### Task 2.4: Pipe Composition Integration Test
+**File**: fbp_process.py
+**Playground**: Cell 8
+**Estimate**: 20 min
+
+**Test in Playground**:
+```python
+# %%
+# Cell 8: Full pipeline test
+async def test_full_pipeline():
+    async def source_gen():
+        for i in range(10):
+            yield i * 2
+
+    stream = Stream(source_gen())
+    acc = Accumulator()
+
+    pipeline = stream | acc
+
+    async for _ in pipeline:
+        pass
+
+    assert acc.result == [0, 2, 4, 6, 8, 10, 12, 14, 16, 18]
+
+await test_full_pipeline()
+```
+
+---
+
+## Phase 3: Observable Composite (StreamController)
+
+### Task 3.1: Context Integration - ContextVar
+**File**: context.py
+**Playground**: Cell 9
+**Estimate**: 30 min
+
+**Requirements**:
+- Add `contextvars.ContextVar` to context.py
+- Implement `Context.current()` class method
+- Set context in `__aenter__`, clear in `__aexit__`
+
+**Test in Playground**:
+```python
+# %%
+# Cell 9: Context with ContextVar
+from promptview.prompt.context import Context
+
+async def test_context_var():
+    ctx = Context()
+
+    assert Context.current() is None
+
+    async with ctx:
+        assert Context.current() is ctx
+
+    assert Context.current() is None
+
+await test_context_var()
+```
+
+### Task 3.2: Context - Execution Stack
+**File**: context.py
+**Playground**: Cell 10
+**Estimate**: 45 min
+
+**Requirements**:
+- Add `_execution_stack: list[Process]` to Context
+- Add `start_component(component, name, span_type, tags) -> SpanTree`
+- Add `complete_component() -> Process`
+- Properties: `current_component`, `current_span_tree`
+
+**Test in Playground**:
+```python
+# %%
+# Cell 10: Context execution stack
+from promptview.prompt.context import Context
+from promptview.prompt.fbp_process import Process
+
+async def test_execution_stack():
+    ctx = Context()
+
+    async with ctx:
+        proc1 = Process()
+        span1 = await ctx.start_component(proc1, "proc1", "component", [])
+
+        assert ctx.current_component is proc1
+        assert ctx.current_span_tree is span1
+
+        proc2 = Process()
+        span2 = await ctx.start_component(proc2, "proc2", "component", [])
+
+        assert ctx.current_component is proc2
+        assert len(ctx._execution_stack) == 2
+
+        await ctx.complete_component()
+        assert ctx.current_component is proc1
+
+await test_execution_stack()
+```
+
+### Task 3.3: StreamController - Basic Structure
+**File**: fbp_process.py
+**Playground**: Cell 11
+**Estimate**: 60 min
+
+**Requirements**:
+- Create `StreamController(Process)` class
+- Constructor: `__init__(gen_func, name, span_type, tags, ...)`
+- Properties: `ctx`, `span`, `span_id`
+- Implement `on_start()` to build subnetwork and register with context
+
+**Test in Playground**:
+```python
+# %%
+# Cell 11: StreamController basic
+from promptview.prompt.fbp_process import StreamController
+from promptview.prompt.context import Context
+
+async def my_stream_gen():
+    for i in range(3):
+        yield {"value": i}
+
+async def test_stream_controller():
+    ctx = Context()
+
+    async with ctx:
+        controller = StreamController(
+            gen_func=my_stream_gen,
+            name="test_stream",
+            span_type="stream",
+            tags=["test"]
+        )
+
+        results = []
+        async for ip in controller:
+            results.append(ip)
+
+        assert len(results) == 3
+        assert controller.span.name == "test_stream"
+        assert controller.span.status == "completed"
+
+await test_stream_controller()
+```
+
+### Task 3.4: StreamController - Event Emission
+**File**: fbp_process.py
+**Playground**: Cell 12
+**Estimate**: 45 min
+
+**Requirements**:
+- Implement event methods: `on_start_event`, `on_value_event`, `on_stop_event`, `on_error_event`
+- Events return `StreamEvent` objects
+- Events include span_id, path, payload
+
+**Test in Playground**:
+```python
+# %%
+# Cell 12: StreamController events
+from promptview.prompt.events import StreamEvent
+
+async def test_stream_events():
+    ctx = Context()
+
+    async with ctx:
+        controller = StreamController(
+            gen_func=my_stream_gen,
+            name="test_stream",
+            span_type="stream"
+        )
+
+        # Manually test event generation
+        await controller.on_start()
+
+        start_event = await controller.on_start_event()
+        assert isinstance(start_event, StreamEvent)
+        assert start_event.type == "stream_start"
+        assert start_event.name == "test_stream"
+
+await test_stream_events()
+```
+
+---
+
+## Phase 4: Dynamic Composite & Orchestration
+
+### Task 4.1: PipeController - Basic Structure
+**File**: fbp_process.py
+**Playground**: Cell 13
+**Estimate**: 60 min
+
+**Requirements**:
+- Create `PipeController(Process)` class
+- Similar to StreamController but for generators that yield other processes
+- Track `index` for each IP sent
+
+**Test in Playground**:
+```python
+# %%
+# Cell 13: PipeController basic
+from promptview.prompt.fbp_process import PipeController
+
+async def my_pipe():
+    stream1 = StreamController(my_stream_gen, "stream1", "stream")
+    yield stream1
+
+    stream2 = StreamController(my_stream_gen, "stream2", "stream")
+    yield stream2
+
+async def test_pipe_controller():
+    ctx = Context()
+
+    async with ctx:
+        pipe = PipeController(
+            gen_func=my_pipe,
+            name="test_pipe",
+            span_type="component"
+        )
+
+        children = []
+        async for child in pipe:
+            children.append(child)
+
+        assert len(children) == 2
+        assert isinstance(children[0], StreamController)
+
+await test_pipe_controller()
+```
+
+### Task 4.2: FlowRunner - Stack Management
+**File**: fbp_process.py
+**Playground**: Cell 14
+**Estimate**: 90 min
+
+**Requirements**:
+- Create `FlowRunner` class
+- Manage stack of processes
+- When process yields another process, push to stack
+- Emit events based on `event_level`
+
+**Test in Playground**:
+```python
+# %%
+# Cell 14: FlowRunner with nested processes
+from promptview.prompt.fbp_process import FlowRunner
+from promptview.prompt.flow_components import EventLogLevel
+
+async def test_flow_runner():
+    ctx = Context()
+
+    async with ctx:
+        pipe = PipeController(my_pipe, "test_pipe", "component")
+        runner = FlowRunner(pipe, event_level=EventLogLevel.chunk)
+
+        events = []
+        async for event in runner.stream_events():
+            events.append(event)
+
+        # Should have: pipe_start, stream1_start, stream1_deltas..., stream1_end,
+        #              stream2_start, stream2_deltas..., stream2_end, pipe_end
+        assert len(events) > 0
+        assert events[0].type == "span_start"  # pipe start
+
+await test_flow_runner()
+```
+
+---
+
+## Phase 5: Parser Integration
+
+### Task 5.1: Parser Process
+**File**: fbp_process.py
+**Playground**: Cell 15
+**Estimate**: 60 min
+
+**Requirements**:
+- Port `Parser` from flow_components.py
+- Inherit from `Process`
+- Maintain XML parsing state
+
+**Test in Playground**:
+```python
+# %%
+# Cell 15: Parser integration
+from promptview.block import Block, BlockChunk
+from promptview.prompt.fbp_process import Parser
+
+async def chunk_stream():
+    chunks = ["<response>", "<text>Hello", " world", "</text>", "</response>"]
+    for chunk in chunks:
+        yield BlockChunk(content=chunk)
+
+async def test_parser():
+    response_schema = Block(
+        text=str
+    )
+
+    stream = Stream(chunk_stream())
+    parser = Parser(response_schema)
+    acc = Accumulator()
+
+    pipeline = stream | parser | acc
+
+    async for _ in pipeline:
+        pass
+
+    # Check that parser built structured response
+    assert len(acc.result) > 0
+
+await test_parser()
+```
+
+---
+
+## Phase 6: Replay Foundation
+
+### Task 6.1: SpanTree I/O Logging
+**File**: fbp_process.py, span_tree.py
+**Playground**: Cell 16
+**Estimate**: 60 min
+
+**Requirements**:
+- Modify `Process.__anext__()` to log inputs to span_tree
+- Modify `Process.asend()` to log outputs to span_tree
+- Only log when `_span_tree` is set
+
+**Test in Playground**:
+```python
+# %%
+# Cell 16: SpanTree I/O logging
+async def test_span_io_logging():
+    ctx = Context()
+
+    async with ctx:
+        controller = StreamController(my_stream_gen, "test", "stream")
+
+        async for ip in controller:
+            pass
+
+        # Check that inputs/outputs were logged
+        assert len(controller._span_tree.outputs) > 0
+
+await test_span_io_logging()
+```
+
+### Task 6.2: Replay Mode - Process Base
+**File**: fbp_process.py
+**Playground**: Cell 17
+**Estimate**: 60 min
+
+**Requirements**:
+- Add `_replay_mode: bool` to Process
+- Add `_replay_inputs: list`, `_replay_index: int`
+- Modify `__anext__()` to use replay buffer when in replay mode
+- Add `from_span(span_tree)` class method
+
+**Test in Playground**:
+```python
+# %%
+# Cell 17: Process replay mode
+async def test_process_replay():
+    # First, execute normally and save
+    ctx = Context()
+
+    async with ctx:
+        controller = StreamController(my_stream_gen, "test", "stream")
+
+        original_results = []
+        async for ip in controller:
+            original_results.append(ip)
+
+        span_tree = controller._span_tree
+        await span_tree.save()
+
+    # Now replay from span
+    ctx2 = Context()
+
+    async with ctx2:
+        replayed_controller = await StreamController.from_span(span_tree)
+
+        replayed_results = []
+        async for ip in replayed_controller:
+            replayed_results.append(ip)
+
+        assert original_results == replayed_results
+
+await test_process_replay()
+```
+
+### Task 6.3: Full Replay Test
+**File**: fbp_process.py
+**Playground**: Cell 18
+**Estimate**: 45 min
+
+**Test in Playground**:
+```python
+# %%
+# Cell 18: Full pipeline replay
+async def test_full_replay():
+    # Execute complex pipeline
+    ctx = Context()
+
+    async with ctx:
+        pipe = PipeController(my_pipe, "main_pipe", "component")
+        runner = FlowRunner(pipe)
+
+        original_events = []
+        async for event in runner.stream_events():
+            original_events.append(event)
+
+        root_span = ctx._span_tree
+
+    # Replay entire pipeline
+    ctx2 = Context()
+
+    async with ctx2:
+        runner2 = await FlowRunner.from_span_tree(root_span, ctx2)
+
+        replayed_events = []
+        async for event in runner2.stream_events():
+            replayed_events.append(event)
+
+        assert len(original_events) == len(replayed_events)
+
+await test_full_replay()
+```
+
+---
+
+## Phase 7: Advanced Replay (Future)
+
+### Task 7.1: Partial Replay - Path Navigation
+### Task 7.2: Function Registry
+### Task 7.3: Resume from Arbitrary Point
+
+---
+
+## Summary
+
+**Total Estimated Time**: ~16 hours across 18 tasks
+
+**Testing Strategy**:
+- Each task has corresponding playground cell
+- Progressive integration (each phase builds on previous)
+- Interactive testing for rapid iteration
+
+**Success Metrics**:
+- All playground cells execute without errors
+- Can compose pipelines: `stream | parser | accumulator`
+- Can execute nested processes with proper span tracking
+- Can replay from saved SpanTree
+
+"""
+
+# Implementation starts here
+
+from typing import Any, AsyncGenerator, Type, TYPE_CHECKING
+import json
+import asyncio
+
+if TYPE_CHECKING:
+    from .span_tree import SpanTree
+    from pydantic import BaseModel
+
+
+class FlowException(Exception):
+    """Exception raised by FBP processes"""
+    pass
+
+
+class Process:
+    """
+    Base class for all FBP processes.
+
+    Processes receive information packets (IPs), transform them,
+    and send them downstream.
+
+    In LLM streaming context:
+    - IPs are BlockChunks, StreamEvents, or nested Controllers
+    - Processes maintain boundaries and context
+    - Connections are async generators (bounded buffers)
+
+    Example:
+        >>> async def gen():
+        ...     for i in range(3):
+        ...         yield i
+        >>>
+        >>> class MockUpstream:
+        ...     def __aiter__(self):
+        ...         return gen().__aiter__()
+        ...     async def __anext__(self):
+        ...         return await gen().__anext__()
+        >>>
+        >>> proc = Process(upstream=MockUpstream())
+        >>> results = []
+        >>> async for ip in proc:
+        ...     results.append(ip)
+        >>> print(results)  # [0, 1, 2]
+    """
+
+    def __init__(self, upstream: "Process | None" = None):
+        """
+        Initialize a process.
+
+        Args:
+            upstream: The upstream process (connection) to receive IPs from.
+                     None for source processes (like Stream).
+        """
+        self._upstream = upstream
+        self._did_start = False
+        self._did_yield = False
+        self._last_ip: Any = None
+
+    @property
+    def upstream(self):
+        """
+        The upstream connection to receive IPs from.
+
+        Raises:
+            FlowException: If no upstream is set (e.g., process not connected)
+        """
+        if self._upstream is None:
+            raise FlowException(
+                f"Process {self.__class__.__name__} has no upstream connection"
+            )
+        return self._upstream
+
+    async def on_start(self, value: Any = None):
+        """
+        Called when process starts (FBP process initialization).
+
+        Override this method to perform initialization tasks like:
+        - Opening files/connections
+        - Building subnetworks
+        - Registering with context
+
+        Args:
+            value: Optional initial value
+        """
+        pass
+
+    async def on_stop(self):
+        """
+        Called when process completes (FBP process termination).
+
+        Override this method to perform cleanup tasks like:
+        - Closing files/connections
+        - Saving state
+        - Unregistering from context
+        """
+        pass
+
+    async def on_error(self, error: Exception):
+        """
+        Called when process encounters an error.
+
+        Override this method to handle errors gracefully:
+        - Log errors
+        - Update span status
+        - Cleanup resources
+
+        Args:
+            error: The exception that occurred
+        """
+        pass
+
+    def __aiter__(self):
+        """Return self as async iterator."""
+        return self
+
+    async def __anext__(self):
+        """
+        Receive next IP from upstream.
+
+        This implements the core FBP flow:
+        1. On first call, initialize the process
+        2. Receive IP from upstream
+        3. Store the IP
+        4. Return the IP downstream
+
+        Returns:
+            The next information packet from upstream
+
+        Raises:
+            StopAsyncIteration: When upstream is exhausted
+        """
+        try:
+            # Initialize on first iteration
+            if not self._did_start:
+                await self.on_start()
+                self._did_start = True
+
+            # Receive IP from upstream
+            ip = await self.upstream.__anext__()
+            self._last_ip = ip
+
+            # Track that we've yielded at least once
+            if not self._did_yield:
+                self._did_yield = True
+
+            return ip
+
+        except StopAsyncIteration:
+            # Upstream exhausted - cleanup and propagate
+            await self.on_stop()
+            raise StopAsyncIteration
+
+        except Exception as e:
+            # Error occurred - handle and propagate
+            await self.on_error(e)
+            raise e
+
+    def __or__(self, downstream: "Process") -> "Process":
+        """
+        Pipe operator for process composition.
+
+        Connects this process to a downstream process, creating a pipeline.
+        This is the core FBP composition operator, similar to Unix pipes.
+
+        Example:
+            >>> stream | parser | accumulator
+
+        Args:
+            downstream: The process to connect downstream
+
+        Returns:
+            The downstream process (for chaining)
+        """
+        return self.connect(downstream)
+
+    def connect(self, downstream: "Process") -> "Process":
+        """
+        Establish connection to downstream process.
+
+        Sets this process as the upstream of the downstream process,
+        creating a data flow connection.
+
+        Args:
+            downstream: The process to connect downstream
+
+        Returns:
+            The downstream process (for chaining)
+        """
+        downstream._upstream = self
+        return downstream
+
+
+class Stream(Process):
+    """
+    Stream process - FBP source that wraps an async generator.
+
+    Stream is a SOURCE process in FBP terminology - it generates IPs
+    from an external source (async generator) rather than receiving
+    them from an upstream process.
+
+    Stream wraps a generator INSTANCE (not a function). The inputs that
+    created this generator should be logged by the controller that created it.
+    Stream itself has no inputs - it just yields what the generator produces.
+
+    Example:
+        >>> async def number_gen():
+        ...     for i in range(5):
+        ...         yield i
+        >>>
+        >>> stream = Stream(number_gen())
+        >>> results = []
+        >>> async for ip in stream:
+        ...     results.append(ip)
+        >>> print(results)  # [0, 1, 2, 3, 4]
+    """
+
+    def __init__(self, gen: AsyncGenerator, name: str = "stream"):
+        """
+        Initialize a Stream process.
+
+        Args:
+            gen: The async generator instance to wrap as a source
+            name: Name for this stream (used in logging/debugging)
+        """
+        # Create a wrapper that makes the generator behave like an upstream process
+        # This allows base Process.__anext__() to work correctly
+        class GeneratorWrapper:
+            """Wraps async generator to provide upstream interface"""
+            def __init__(self, generator):
+                self._gen = generator
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                return await self._gen.__anext__()
+
+        super().__init__(upstream=GeneratorWrapper(gen))
+        self._name = name
+        self._save_stream_dir: str | None = None
+
+    def save_stream(self, filepath: str):
+        """
+        Enable stream persistence - saves each IP to a JSONL file.
+
+        Args:
+            filepath: Path to JSONL file to save stream to
+        """
+        self._save_stream_dir = filepath
+
+    @classmethod
+    def load(cls, filepath: str, model: Type["BaseModel"] | None = None, delay: float = 0.0):
+        """
+        Load a stream from a saved JSONL file.
+
+        Args:
+            filepath: Path to JSONL file to load stream from
+            model: Optional Pydantic model to deserialize IPs into
+            delay: Optional delay between IPs (for simulating streaming)
+
+        Returns:
+            New Stream instance that replays from file
+        """
+        async def load_stream():
+            with open(filepath, "r") as f:
+                for line in f:
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+
+                    data = json.loads(line)
+
+                    if model:
+                        # Deserialize into Pydantic model
+                        ip = model.model_validate(data)
+                    else:
+                        # Return raw dict
+                        ip = data
+
+                    yield ip
+
+        return cls(load_stream(), name=f"stream_from_{filepath}")
+
+    async def __anext__(self):
+        """
+        Receive next IP from wrapped generator.
+
+        If persistence is enabled, writes IP to file before returning.
+        """
+        ip = await super().__anext__()
+
+        # Save to file if persistence enabled
+        if self._save_stream_dir:
+            with open(self._save_stream_dir, "a") as f:
+                # Handle Pydantic models
+                if hasattr(ip, "model_dump"):
+                    data = ip.model_dump()
+                else:
+                    data = ip
+
+                f.write(json.dumps(data) + "\n")
+
+        return ip
+
+
+class Accumulator(Process):
+    """
+    Accumulator process - FBP sink that collects all IPs.
+
+    Accumulator is a SINK process in FBP terminology - it consumes IPs
+    and stores them in a buffer rather than transforming and passing them on.
+
+    The accumulated result can be accessed via the `result` property.
+
+    Example:
+        >>> async def gen():
+        ...     for i in range(5):
+        ...         yield i
+        >>>
+        >>> stream = Stream(gen())
+        >>> acc = Accumulator()
+        >>> pipeline = stream | acc
+        >>>
+        >>> async for _ in pipeline:
+        ...     pass
+        >>>
+        >>> print(acc.result)  # [0, 1, 2, 3, 4]
+    """
+
+    def __init__(self, accumulator: list | None = None, upstream: Process | None = None):
+        """
+        Initialize an Accumulator process.
+
+        Args:
+            accumulator: The buffer to accumulate IPs into. Defaults to empty list.
+            upstream: The upstream process to receive IPs from
+        """
+        super().__init__(upstream)
+        self._accumulator = accumulator if accumulator is not None else []
+
+    @property
+    def result(self):
+        """
+        Get the accumulated result.
+
+        Returns:
+            The accumulator buffer containing all collected IPs
+        """
+        return self._accumulator
+
+    async def __anext__(self):
+        """
+        Receive next IP and add to accumulator.
+
+        Accumulator passes IPs through so they can be further processed
+        downstream, while also storing them in the buffer.
+
+        Returns:
+            The IP (passed through)
+
+        Raises:
+            StopAsyncIteration: When upstream is exhausted
+        """
+        ip = await super().__anext__()
+
+        # Accumulate the IP
+        self._accumulator.append(ip)
+
+        return ip
+

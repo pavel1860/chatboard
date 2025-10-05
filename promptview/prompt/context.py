@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, AsyncGenerator, Iterator, Type
 
 from pydantic import BaseModel
@@ -11,6 +12,10 @@ from dataclasses import dataclass
 from ..utils.function_utils import call_function
 if TYPE_CHECKING:
     from fastapi import Request
+    from .span_tree import SpanTree
+
+# Context variable for implicit context passing across async boundaries
+_context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
 
 
 
@@ -46,6 +51,8 @@ class Context(BaseModel):
     _auth: AuthModel | None = None
     _ctx_models: dict[str, Model] = {}
     _tasks: list[LoadBranch | LoadTurn | ForkTurn | StartTurn] = []
+    _span_tree: "SpanTree | None" = None
+    _execution_stack: list = []
     
     
     def __init__(
@@ -78,6 +85,90 @@ class Context(BaseModel):
         if self._request is not None:
             return self._request.state.request_id
         return None
+
+    @classmethod
+    def current(cls) -> "Context | None":
+        """
+        Get the current context from ContextVar.
+
+        Returns:
+            The current Context instance, or None if no context is active
+        """
+        return _context_var.get()
+
+    @property
+    def current_component(self):
+        """Get the current component on the execution stack."""
+        return self._execution_stack[-1] if self._execution_stack else None
+
+    @property
+    def current_span_tree(self) -> "SpanTree | None":
+        """Get the current span tree from the current component."""
+        if self.current_component and hasattr(self.current_component, '_span_tree'):
+            return self.current_component._span_tree
+        return None
+
+    async def start_span(
+        self,
+        component,
+        name: str,
+        span_type: str = "component",
+        tags: list[str] | None = None
+    ) -> "SpanTree":
+        """
+        Start a new span for a component and add to execution stack.
+
+        Args:
+            component: The process/component to start
+            name: Name for the span
+            span_type: Type of span (component, stream, etc.)
+            tags: Optional tags for the span
+
+        Returns:
+            SpanTree instance for this component
+        """
+        from .span_tree import SpanTree
+
+        tags = tags or []
+
+        # Create or get span tree
+        if not self._execution_stack:
+            # This is the root component - create root span tree
+            if self._span_tree is None:
+                self._span_tree = await SpanTree.init_new(
+                    name=name,
+                    span_type=span_type,
+                    tags=tags
+                )
+            span_tree = self._span_tree
+        else:
+            # This is a child component - create child span
+            parent_span = self.current_span_tree
+            if parent_span is None:
+                raise ValueError("Parent component has no span tree")
+
+            span_tree = await parent_span.add_child(
+                name=name,
+                span_type=span_type,
+                tags=tags
+            )
+
+        # Push component onto execution stack
+        self._execution_stack.append(component)
+
+        return span_tree
+
+    async def end_span(self):
+        """
+        End the current span and pop component from execution stack.
+
+        Returns:
+            The component that was popped
+        """
+        if not self._execution_stack:
+            raise ValueError("No component on execution stack to complete")
+
+        return self._execution_stack.pop()
 
     @classmethod
     async def from_request(cls, request: "Request"):
@@ -199,6 +290,9 @@ class Context(BaseModel):
                 
         
     async def __aenter__(self):
+        # Set this context as the current context
+        _context_var.set(self)
+
         if self._auth is not None:
             auth = self._auth.__enter__()
         branch = await self._handle_tasks()
@@ -223,6 +317,9 @@ class Context(BaseModel):
             model.__exit__(exc_type, exc_value, traceback)
         if self._auth is not None:
             self._auth.__exit__(exc_type, exc_value, traceback)
+
+        # Clear the context
+        _context_var.set(None)
               
             
             
