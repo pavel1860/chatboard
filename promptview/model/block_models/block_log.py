@@ -113,7 +113,7 @@ def load_block_dump(dumps: list[dict]):
         )
         block_lookup[dump["path"]] = blk
     
-        root_blk = block_lookup.pop("0")
+    root_blk = block_lookup.pop("0")
     for p, blk in block_lookup.items():
         path = [int(p_i) for p_i in p.split(".")]
         root_blk.insert(blk, path[1:])
@@ -248,7 +248,7 @@ class BlockLogQuery:
         #         offset=self.offset, 
         #         direction=self.direction
         #     ).select("*").include(BlockTree.query(alias="bt").include(BlockNode.query(alias="bn").include(BlockModel))).where(name=self.span_name)
-        return BlockTree.vquery(
+        return BlockTree.query(
             alias="bt", 
             limit=self.limit, 
             offset=self.offset, 
@@ -259,7 +259,7 @@ class BlockLogQuery:
         ).order_by("created_at")
         
     def _build_span_query(self):
-        return ExecutionSpan.vquery(
+        return ExecutionSpan.query(
             alias="es", 
             limit=self.limit, 
             offset=self.offset, 
