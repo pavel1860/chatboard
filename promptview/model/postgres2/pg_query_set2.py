@@ -119,12 +119,15 @@ class Relation:
     def get_source_and_field(self, field_name: str) -> tuple["RelationProtocol", RelField]:
         _f = field_name.split(".")
         if len(_f) == 1:
-            if len(self.sources) == 1:
-                source = self.sources[0]
-                field = self._get_field(source, _f[0])
-                return source, field
-            else:
-                raise ValueError(f"for multiple sources, field name must be in the format of 'source.field'")
+            # if len(self.sources) == 1:
+            #     source = self.sources[0]
+            #     field = self._get_field(source, _f[0])
+            #     return source, field
+            # else:
+            #     raise ValueError(f"for multiple sources, field name must be in the format of 'source.field'")
+            source = self.sources[0]
+            field = self._get_field(source, _f[0])
+            return source, field
         elif len(_f) == 2:
             source = self._get_source(_f[0])
             field = self._get_field(source, _f[1])
@@ -239,6 +242,7 @@ class QuerySet:
     def __init__(self, target: "RelationProtocol"):
         # self.source = source
         self.target: "RelationProtocol" = target
+        self.fields: dict[str, dict]
         
         
     # def select(self, *fields: str):
@@ -248,6 +252,18 @@ class QuerySet:
     def join(self, target: "RelationProtocol", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
         self.target = join(self.target, target, on, join_type, alias)
         return self
+    
+    # projection
+    def select(self, *fields: str):
+        self.fields = {}
+        for f in fields:
+            self.target.get(f)
+            self.fields[f] = {}        
+        return self
+    
+    def iter_fields(self):
+        for field in self.fields:
+            yield self.target.get(field)
     
     def __repr__(self):
         return f"{self.__class__.__name__}({self.target})"
