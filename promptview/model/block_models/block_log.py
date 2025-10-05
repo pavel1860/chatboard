@@ -113,7 +113,7 @@ def load_block_dump(dumps: list[dict]):
         )
         block_lookup[dump["path"]] = blk
     
-    root_blk = block_lookup.pop("0")
+        root_blk = block_lookup.pop("0")
     for p, blk in block_lookup.items():
         path = [int(p_i) for p_i in p.split(".")]
         root_blk.insert(blk, path[1:])
@@ -272,6 +272,9 @@ class BlockLogQuery:
             self.span_name = span
         return self
     
+    def status(self, statuses: list[TurnStatus]):
+        self.statuses = statuses
+        return self
     
     def last(self, limit: int):
         self.limit = limit
@@ -287,7 +290,8 @@ class BlockLogQuery:
         return self
     
     def print(self):
-        return self.query.print()
+        query = self._build_block_query()
+        return query.print()
         
 
 class BlockLog:
@@ -308,7 +312,7 @@ class BlockLog:
 
     
     @classmethod
-    async def add(cls, block: Block, branch_id: int | None = None, turn_id: int | None = None, span_id: uuid.UUID | None = None):
+    async def add(cls, block: Block, branch_id: int | None = None, turn_id: int | None = None, span_id: int | None = None):
         from ..versioning.models import Turn, Branch
         if branch_id is None:
             branch_id = Branch.current().id

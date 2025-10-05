@@ -1,11 +1,12 @@
 import asyncio
-from typing import TYPE_CHECKING, Iterator, Type
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, AsyncGenerator, Iterator, Type
 
 from pydantic import BaseModel
 from ..auth.user_manager2 import AuthModel
 from .model3 import Model
 from .postgres2.pg_query_set import PgSelectQuerySet
-from .versioning.models import Branch, Turn, TurnStatus, VersionedModel
+from .versioning.models import Branch, ExecutionSpan, SpanTypeEnum, Turn, TurnStatus, VersionedModel
 from dataclasses import dataclass
 from ..utils.function_utils import call_function
 if TYPE_CHECKING:
@@ -135,6 +136,24 @@ class Context(BaseModel):
     def fork(self, turn: Turn | None = None, turn_id: int | None = None) -> "Context":
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
         return self
+    
+    @asynccontextmanager
+    async def start_span(self, name: str, index: int, span_type: SpanTypeEnum = "component", tags: list[str] | None = None) -> AsyncGenerator["ExecutionSpan", None]:
+        span = await ExecutionSpan(name=name, span_type=span_type, tags=tags, index=index).save()
+        try:    
+            with span:
+                yield span
+            span.status = "completed"
+            await span.save()
+        except Exception as e:
+            span.status = "failed"
+            await span.save()
+            raise e
+        finally:
+            await span.save()
+
+        
+        
     
     # def fork(self, branch: Branch | None = None)
     
