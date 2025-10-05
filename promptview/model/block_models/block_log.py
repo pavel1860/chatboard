@@ -3,7 +3,9 @@ import hashlib
 import json
 import uuid
 from typing import Any, Dict, List, Literal, Optional
-from ...block import BaseBlock, Block, BlockChunk, BlockList, BlockSent
+
+
+from ...block import BaseBlock, Block, BlockChunk, BlockList, BlockSent, AttrBlock
 from ..versioning.models import Branch
 from ..sql.expressions import RawValue
 from ..sql.queries import Column
@@ -72,6 +74,12 @@ def load_sent_dump(dump: dict):
         )
     return sent
 
+def dump_attrs(attrs: dict[str, str | AttrBlock]):
+    return {k: v.model_dump() if isinstance(v, AttrBlock) else v for k, v in attrs.items()}
+
+def load_attrs(attrs: dict[str, str | dict]):
+    return {k: AttrBlock.from_dict(v) if isinstance(v, dict) else v for k, v in attrs.items()}
+
 def dump_block(blk: Block):
     dumps = []
     for blk in blk.traverse():
@@ -86,7 +94,7 @@ def dump_block(blk: Block):
         dump["path"] = ".".join(str(p) for p in [0] +blk.path)
         dump["tags"] = blk.tags
         dump["role"] = blk.role
-        dump["attrs"] = blk.attrs
+        dump["attrs"] = dump_attrs(blk.attrs)
         dumps.append(dump)
     return dumps
 
@@ -98,7 +106,7 @@ def load_block_dump(dumps: list[dict]):
             load_sent_dump(dump['block']["json_content"]['content']),
             role=dump["role"],
             styles=dump["styles"], 
-            attrs=dump["attrs"],
+            attrs=load_attrs(dump["attrs"]),
             tags=dump["tags"],
             prefix=load_sent_dump(dump['block']["json_content"]['prefix']) if dump['block']["json_content"]['prefix'] is not None else None,
             postfix=load_sent_dump(dump['block']["json_content"]['postfix']) if dump['block']["json_content"]['postfix'] is not None else None,
@@ -188,7 +196,7 @@ async def get_blocks(art_ids: list[str], dump_models: bool = True) -> dict[str, 
             BlockNode.query(alias="bn").select("*").include(
                 BlockModel.query(alias="bm").select("*")
             )
-        ).where(lambda b: b.artifact_id.isin(art_ids)).json()
+        ).where(lambda b: b.artifact_id.isin(art_ids)).order_by("-artifact_id").json()
     blocks_lookup = {}
     for tree in block_trees:
         # tree_id = tree["id"]

@@ -713,14 +713,18 @@ class ExecutionSpan(VersionedModel):
         kind, artifact_id = self._get_target_meta(target)
         if kind == "block":
             return await self.add_block_event(target, io_kind)
-        value = await self.add(SpanValue(
-            span_id=self.id,
-            kind=kind,
-            io_kind=io_kind,            
-            artifact_id=artifact_id,
-        ))
-        value.artifact = target
-        return value
+        try:
+            value = await self.add(SpanValue(
+                span_id=self.id,
+                kind=kind,
+                io_kind=io_kind,            
+                artifact_id=artifact_id,
+            ))
+            value.artifact = target
+            return value
+        except Exception as e:
+            print(f"Error logging value: {e}")
+            raise e
     
     async def add_block_event(self, block: "Block", io_kind: ValueIOKind= "output"):
         from ..block_models.block_log import insert_block

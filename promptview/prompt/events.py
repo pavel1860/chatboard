@@ -54,7 +54,16 @@ class StreamEvent:
             return self.payload.to_dict()
         else:
             return self.payload
-        
+    
+    def attrs_to_dict(self):
+        if self.attrs is None:
+            return None
+        if hasattr(self.attrs, "model_dump"):
+            return self.attrs.model_dump()
+        elif hasattr(self.attrs, "to_dict"):
+            return self.attrs.to_dict()
+        else:
+            return self.attrs
         
     @staticmethod
     def _json_default(obj):
@@ -80,13 +89,14 @@ class StreamEvent:
         raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
         
     def to_json(self):
-        payload = self.payload_to_dict()        
+        payload = self.payload_to_dict()   
+        attrs = self.attrs_to_dict()
         dump = {
             "type": self.type,
             "path": self.path,
             "name": self.name,
             "index": self.index,
-            "attrs": self.attrs,
+            "attrs": attrs,
             "depth": self.depth,
             "payload": payload,            
             "request_id": self.request_id,

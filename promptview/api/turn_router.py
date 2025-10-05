@@ -54,13 +54,13 @@ def create_turn_router(context_cls: Type[Context] | None = None):
             async def get_spans(art_ids: list[int]):
                 if not art_ids:
                     return {}
-                spans = await ExecutionSpan.query().where(lambda t: t.artifact_id.isin(art_ids)).include(SpanValue).json()
+                spans = await ExecutionSpan.query().where(lambda t: t.artifact_id.isin(art_ids)).include(SpanValue).order_by("-artifact_id").json()
                 return {s["artifact_id"]: s for s in spans}
 
             async def get_logs(art_ids: list[int]):
                 if not art_ids:
                     return {}
-                logs = await Log.query().where(lambda t: t.artifact_id.isin(art_ids)).json()
+                logs = await Log.query().where(lambda t: t.artifact_id.isin(art_ids)).order_by("-artifact_id").json()
                 return {l["artifact_id"]: l for l in logs}
 
 

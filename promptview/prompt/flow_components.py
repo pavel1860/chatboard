@@ -446,11 +446,12 @@ async def build_input_values(comp: "StreamController | PipeController", kwargs: 
                 continue
             if is_stream and key == "blocks":
                 for i, block in enumerate(value):
-                    value = await comp.span.log_value(block, io_kind="input")
-                    value_kwargs[f"block_{i}"] = value            
+                    span_value = await comp.span.log_value(block, io_kind="input")
+                    value_kwargs[f"block_{i}"] = span_value
+                continue            
                 
-            value = await comp.span.log_value(value, io_kind="input")
-            value_kwargs[key] = value
+            span_value = await comp.span.log_value(value, io_kind="input")
+            value_kwargs[key] = span_value
         return value_kwargs
     except Exception as e:
         print(f"Error building input values: {e}")
