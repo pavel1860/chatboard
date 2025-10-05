@@ -13,7 +13,7 @@ from promptview.model.fields import ModelField, KeyField, RelationField
 from promptview.model import Model, VersionedModel, ArtifactModel
 from promptview.model.relation_model import RelationModel
 from promptview.model.postgres2.pg_query_set import select
-from promptview.model.context import Context
+from promptview.prompt.context import Context
 from promptview.model.versioning.models import Branch, Turn, TurnStatus
 import datetime as dt
 

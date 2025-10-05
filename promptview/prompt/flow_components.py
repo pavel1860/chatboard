@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 
 
+from ..prompt.context import Context
+
 class EventLogLevel(Enum):
     chunk = 0
     span = 1
@@ -722,8 +724,8 @@ class StreamController(BaseFbpComponent):
     def __aiter__(self):
         return FlowRunner(self)
     
-    async def stream_events(self, event_level: EventLogLevel = EventLogLevel.chunk):
-        return FlowRunner(self, event_level).stream_events()
+    async def stream_events(self, event_level: EventLogLevel = EventLogLevel.chunk, ctx: Context | None = None):
+        return FlowRunner(self, event_level).stream_events(ctx=ctx)
     
 
 
@@ -1008,7 +1010,7 @@ class FlowRunner:
         self._error_to_raise = None
         self._last_gen = None
         self._event_level = event_level
-        
+        self._ctx = None
         
     @property
     def current(self):
@@ -1169,9 +1171,10 @@ class FlowRunner:
             raise StopAsyncIteration
 
     
-    def stream_events(self, event_level: EventLogLevel = EventLogLevel.chunk):
+    def stream_events(self, event_level: EventLogLevel = EventLogLevel.chunk, ctx: Context | None = None):
         self._event_level = event_level
         self._output_events = True
+        self._ctx = ctx
         return self
     
     

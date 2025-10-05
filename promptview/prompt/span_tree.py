@@ -1,6 +1,7 @@
 from codecs import lookup
 from typing import Any
-from ..model import Turn, Branch, ExecutionSpan, SpanValue, Artifact, ValueIOKind
+from ..model.versioning.models import Turn, Branch, ExecutionSpan, SpanValue, Artifact, ValueIOKind
+
 
 from collections import defaultdict
 

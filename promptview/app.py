@@ -10,7 +10,8 @@ from fastapi import Depends, FastAPI, Request
 from .api.tracing_router import router as tracing_router
 from .api.model_router import create_model_router
 from .auth.user_manager2 import AuthManager, AuthModel
-from .model import ArtifactModel, Model, NamespaceManager, Context
+from .model import ArtifactModel, Model, NamespaceManager
+from .prompt import Context
 from .context.model_context import CtxRequest, ModelCtx
 from .api.auth_router import create_auth_router
 from .api.artifact_log_api import router as artifact_log_router

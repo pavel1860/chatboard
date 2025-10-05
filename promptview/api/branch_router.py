@@ -1,7 +1,7 @@
 from typing import Type
 from ..model import Branch, Turn
 from .model_router import create_model_router
-from ..model.context import Context
+from ..prompt.context import Context
 from fastapi import Request, Depends, Query, Body
 from ..model.query_url_params import parse_query_params, QueryListType
 from .utils import query_filters

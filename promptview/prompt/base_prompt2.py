@@ -11,7 +11,7 @@ from ..context import ExecutionContext
 
 from ..block import BlockChunk
 from .depends import  DependsContainer, resolve_dependency
-from ..model.context import Context
+from .context import Context
 from ..utils.function_utils import filter_args_by_exclude
 
 

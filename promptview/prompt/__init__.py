@@ -6,6 +6,7 @@ from .depends import Depends
 from .flow_components import StreamController, PipeController
 from .decorators import stream, component
 from .span_tree import SpanTree
+from .context import Context
 
 
 
@@ -23,4 +24,5 @@ __all__ = [
     "stream",
     "component",
     "SpanTree",
+    "Context",
 ]

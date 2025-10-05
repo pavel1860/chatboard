@@ -9,7 +9,7 @@ from .utils import query_filters
 from ..model import Branch, TurnStatus
 from ..model.query_url_params import parse_query_params
 from ..utils.db_connections import PGConnectionManager
-from ..model.context import Context
+from ..prompt.context import Context
 from .model_router import create_model_router
 from fastapi import Request
 from typing import Type

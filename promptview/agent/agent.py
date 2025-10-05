@@ -1,7 +1,7 @@
 from typing import Literal, Set
 from fastapi.responses import StreamingResponse
 
-from ..model.context import Context
+from ..prompt.context import Context
 from ..prompt.flow_components import EventLogLevel
 from ..block.util import StreamEvent
 from ..block import Block

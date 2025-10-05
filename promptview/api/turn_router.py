@@ -1,7 +1,7 @@
 from typing import AsyncContextManager, Type, List
 from fastapi import Depends, Request
 from .model_router import create_model_router
-from ..model.context import Context
+from ..prompt.context import Context
 from ..model.query_url_params import parse_query_params, QueryListType
 from ..model import TurnStatus
 from .utils import query_filters
