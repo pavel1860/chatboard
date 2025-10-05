@@ -262,6 +262,32 @@ class Turn(Model):
         return True
     
     
+    @classmethod
+    def query(
+        cls: Type[Self], 
+        fields: list[str] | None = None, 
+        alias: str | None = None, 
+        use_ctx: bool = True,
+        branch: Branch | int | None = None,
+        to_select: bool = True,
+        **kwargs
+    ) -> "PgSelectQuerySet[Self]":
+        from ..postgres2.pg_query_set import PgSelectQuerySet
+        query = PgSelectQuerySet(cls, alias=alias)           
+            # .where(lambda t: (t.index <= branch_cte.get_field("start_turn_index")))
+        branch_id = Branch.resolve_target_id_or_none(branch)
+        if branch_id is not None:
+            branch_cte = Branch.recursive_query(branch_id)
+            col = branch_cte.get_field("start_turn_index")
+            query = (
+                query 
+                .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))
+                .where(lambda t: (t.index <= RawValue[int]("bh.start_turn_index - 1")))
+            )
+        if to_select:
+            query = query.select(*fields if fields else "*")
+        return query
+        # return cls.query_extra(query, **kwargs)
 
     
     @classmethod
@@ -428,6 +454,45 @@ class VersionedModel(Model):
         if turn is None:
             turn = Turn.current()
         return turn.id if isinstance(turn, Turn) else turn
+    
+    @classmethod
+    def query(
+        cls: Type[Self], 
+        fields: list[str] | None = None, 
+        alias: str | None = None, 
+        use_ctx: bool = True,
+        branch: Branch | int | None = None,
+        turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+        limit: int | None = None, 
+        offset: int | None = None, 
+        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+        direction: Literal["asc", "desc"] = "desc",
+        **kwargs
+    ) -> "PgSelectQuerySet[Self]":
+        from ..postgres2.pg_query_set import PgSelectQuerySet
+        
+        if turn_cte is None:
+            turn_cte = Turn.query(branch=branch, to_select=True)
+            if statuses:
+                turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
+            if limit:
+                turn_cte = turn_cte.limit(limit)
+                turn_cte = turn_cte.order_by(f"-index" if direction == "desc" else "index")
+            if offset:
+                turn_cte = turn_cte.offset(offset)
+        
+        art_cte = Artifact.query().join(turn_cte, on=("turn_id", "id")).use_cte(turn_cte, name="committed_turns", alias="ct")
+        return (
+            PgSelectQuerySet(cls, alias=alias) \
+            .use_cte(
+                art_cte,
+                name="artifact_cte",
+                alias="ac",
+            )
+            .select(*fields if fields else "*")
+        )
+        
+        
     
     @classmethod
     def vquery(
@@ -661,7 +726,7 @@ class SpanValue(Model):
     # index: int = ModelField()
     span_id: int = ModelField(foreign_key=True)
     artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
-    artifact: "Artifact | None" = RelationField("Artifact", primary_key="artifact_id", foreign_key="id")
+    artifact: "Artifact | None" = RelationField( primary_key="artifact_id", foreign_key="id")
     
     
 
@@ -670,6 +735,7 @@ class ExecutionSpan(VersionedModel):
     _artifact_kind: ArtifactKind = "span"
     id: int = KeyField(primary_key=True)
     name: str = ModelField()  # Function/component name
+    path: str = ModelField(db_type="LTREE")
     span_type: SpanTypeEnum = ModelField()
     parent_span_id: int | None = ModelField(foreign_key=True, self_ref=True)
     start_time: dt.datetime = ModelField(default_factory=dt.datetime.now)
@@ -678,7 +744,6 @@ class ExecutionSpan(VersionedModel):
     depth: int = ModelField(default=0)  # Nesting level
     metadata: dict[str, Any] = ModelField(default={})
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
-    index: int = ModelField()
     
     # Relations
     values: List["SpanValue"] = RelationField(foreign_key="span_id")

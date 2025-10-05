@@ -142,7 +142,7 @@ class Agent():
 
     async def run_debug(
         self,
-        message: str,                
+        message: Block | str,                
         auth: AuthModel | None = None,
         branch_id: int | None = None,         
         auto_commit: bool = True,
@@ -158,3 +158,23 @@ class Agent():
                 else:
                     print(event)
                 yield event
+
+    async def run_debug2(
+        self,
+        message: str | Block,                
+        auth: AuthModel | None = None,
+        branch_id: int | None = None,         
+        auto_commit: bool = True,
+        level: Literal["chunk", "span", "turn"] = "chunk",      
+        **kwargs: dict,
+    ):
+        context = await Context.from_kwargs(**kwargs, auth=auth)
+        message = Block(message, role="user") if isinstance(message, str) else message        
+        agent_gen = self.stream_agent_with_context(context, message, serialize=True)
+        async for event in agent_gen:
+            print("--------------------------------")
+            if isinstance(event, Block):
+                event.print()
+            else:
+                print(event)
+            yield event
