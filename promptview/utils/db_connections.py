@@ -191,7 +191,7 @@ class PGConnectionManager:
             if cls._pool is not None:
                 return
             import os
-            url = url or os.environ.get("POSTGRES_URL", "postgresql://snack:Aa123456@localhost:5432/promptview_test")
+            url = url or os.environ.get("POSTGRES_URL", "postgresql://ziggi:Aa123456@localhost:5432/promptview_test")
             min_size = int(os.environ.get("POSTGRES_POOL_MIN_SIZE", "1"))
             max_size = int(os.environ.get("POSTGRES_POOL_MAX_SIZE", "5"))
             max_inactive_lifetime = float(os.environ.get("POSTGRES_MAX_INACTIVE_LIFETIME", "30.0"))
@@ -325,7 +325,7 @@ class SyncPGConnectionManager:
         import psycopg2
         from psycopg2 import pool
         if cls._pool is None:
-            url = url or os.environ.get("POSTGRES_URL", "postgresql://snack:Aa123456@localhost:5432/promptview_test")
+            url = url or os.environ.get("POSTGRES_URL", "postgresql://ziggi:Aa123456@localhost:5432/promptview_test")
             cls._pool = pool.SimpleConnectionPool(
                 minconn=5,
                 maxconn=20,

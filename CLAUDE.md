@@ -43,6 +43,17 @@ those are the tasks that the User may ask you to do and you should know how to d
 ## User Playground Script
 when you are asked to create a playground script for a feature or a component you should 
 create a jupyter notebookd file (.ipynb) inside the root folder @research directory and write the evaluations and test there.
+## commands
+to run the notebook use the following bash command:
+
+`source .venv/bin/activate && set -a && source .env && set +a && PYTHONPATH=$(pwd) jupyter nbconvert --to notebook --execute [path to notebook] --stdout`
+
+* make sure to activate virtual environment
+* load .env file
+* add the root directory to the python path
+* run the notebook
+
+
 ### Rules
 1. there is no need to wrap the tests in functions, just write the logic plainly in the notebook cells.
 2. jupyter notebook .ipynb file is just a json file, you can write directly into it.
@@ -53,7 +64,7 @@ create a jupyter notebookd file (.ipynb) inside the root folder @research direct
 look at @research/example_playground.ipynb for an example how this should be formated
 
 
-## Unit / Integration tests
+## Unit / Integration tests building
 when asked to create unit or integration tests you should create them at @__tests__ folder at the root.
 the user may ask you to convert the playground script into test file.
 use pytest package to create those tests.
