@@ -6,6 +6,7 @@ import contextvars
 from typing import TYPE_CHECKING, AsyncGenerator, Callable, List, Literal, Type, TypeVar, Self, Any
 
 from promptview.model.base.types import ArtifactKind
+from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type
 
 
 
@@ -558,6 +559,18 @@ class VersionedModel(Model):
 
 
 
+
+class Parameter(VersionedModel):
+    id: int = KeyField(primary_key=True)
+    data: dict = ModelField()
+    kind: str = ModelField()
+    
+    @property
+    def value(self) -> SerializableType:
+        return deserialize_value(self.data["value"], self.kind)
+        
+    
+
 class BlockModel(Model):
     _namespace_name: str = "blocks"
     id: str = KeyField(primary_key=True)
@@ -747,7 +760,7 @@ class SpanValue(Model):
     span_id: int = ModelField(foreign_key=True)
     artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
     artifact: "Artifact | None" = RelationField( primary_key="artifact_id", foreign_key="id")
-    
+    alias: str | None = ModelField(None)
     
 
 class ExecutionSpan(VersionedModel):
@@ -792,16 +805,27 @@ class ExecutionSpan(VersionedModel):
             return "model", target.artifact_id
         else:
             return "literal", None
+        
+    def _build_literal(self, value: SerializableType) -> Parameter:
+        if isinstance(value, Parameter):
+            return value
+        else:            
+            return Parameter(data={"value": serialize_value(value)}, kind=type_to_str(type(value)))
+            
 
     
-    async def log_value(self, target: Any, io_kind: ValueIOKind= "output"):
+    async def log_value(self, target: Any, alias: str | None = None, io_kind: ValueIOKind= "output"):
         kind, artifact_id = self._get_target_meta(target)
         if kind == "block":
             return await self.add_block_event(target, io_kind)
+        elif kind == "literal":
+            parm = await self._build_literal(target).save()
+            artifact_id = parm.artifact.id            
         try:
             value = await self.add(SpanValue(
                 span_id=self.id,
                 kind=kind,
+                alias=alias,
                 io_kind=io_kind,            
                 artifact_id=artifact_id,
             ))

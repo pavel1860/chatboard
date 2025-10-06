@@ -128,6 +128,7 @@ class SpanTree:
         spans = await spans_query
         return cls.load_span_list(spans)
     
+    
     async def log_value(self, value: Any, io_kind: ValueIOKind = "input"):
         """
         Log a value to the current span and add it to the values list

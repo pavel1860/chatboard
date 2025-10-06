@@ -873,7 +873,7 @@ await test_full_replay()
 
 # Implementation starts here
 
-from typing import Any, AsyncGenerator, Type, TYPE_CHECKING
+from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
 import json
 import asyncio
 
@@ -1240,4 +1240,182 @@ class Accumulator(Process):
         self._accumulator.append(ip)
 
         return ip
+
+
+# ============================================================================
+# Phase 3: Observable Composite - StreamController
+# ============================================================================
+
+
+class StreamController(Process):
+    """
+    StreamController wraps a generator function and manages its execution span.
+
+    Unlike Stream which wraps a generator instance, StreamController wraps
+    the generator FUNCTION. This allows logging the function's kwargs as inputs
+    and enables dependency injection from Context.
+
+    Uses the existing dependency injection system from injector.py to resolve
+    function arguments based on type annotations and Context state.
+
+    Example:
+        >>> async def my_gen(count: int):
+        ...     for i in range(count):
+        ...         yield i
+        >>>
+        >>> ctx = Context()
+        >>> async with ctx:
+        ...     controller = StreamController(
+        ...         gen_func=my_gen,
+        ...         name="counter",
+        ...         span_type="stream",
+        ...         kwargs={"count": 5}
+        ...     )
+        ...     async for value in controller:
+        ...         print(value)
+    """
+
+    def __init__(
+        self,
+        gen_func: Callable[..., AsyncGenerator],
+        name: str,
+        span_type: str = "stream",
+        tags: list[str] | None = None,
+        args: tuple = (),
+        kwargs: dict[str, Any] | None = None,
+        upstream: Process | None = None
+    ):
+        """
+        Initialize StreamController.
+
+        Args:
+            gen_func: The generator function to wrap (NOT an instance)
+            name: Name for the span
+            span_type: Type of span (typically "stream")
+            tags: Optional tags for the span
+            args: Positional arguments to pass to gen_func
+            kwargs: Keyword arguments to pass to gen_func (dependencies auto-resolved)
+            upstream: Optional upstream process (usually None for StreamController)
+        """
+        super().__init__(upstream)
+        self._gen_func = gen_func
+        self._name = name
+        self._span_type = span_type
+        self._tags = tags or []
+        self._args = args
+        self._kwargs = kwargs or {}
+        self._span_tree: "SpanTree | None" = None
+        self._stream: Process | None = None
+        self.resolved_kwargs: dict[str, Any] = {}
+
+    @property
+    def ctx(self):
+        """Get current context."""
+        from .context import Context
+        return Context.current()
+
+    @property
+    def span(self):
+        """Get the execution span."""
+        return self._span_tree.root if self._span_tree else None
+
+    @property
+    def span_id(self):
+        """Get the span ID."""
+        return self._span_tree.id if self._span_tree else None
+
+    async def on_start(self):
+        """
+        Build subnetwork and register with context.
+
+        Called automatically on first __anext__() call.
+        Creates span, resolves dependencies, logs kwargs as inputs, and builds the internal stream.
+        """
+        if self.ctx is None:
+            raise ValueError("StreamController requires Context. Use 'async with Context():'")
+
+        # Create span and register with context
+        self._span_tree = await self.ctx.start_span(
+            component=self,
+            name=self._name,
+            span_type=self._span_type,
+            tags=self._tags
+        )
+
+        # Resolve dependencies using injector.py
+        from .injector import resolve_dependencies_kwargs
+        bound, kwargs = await resolve_dependencies_kwargs(
+            self._gen_func,
+            args=self._args,
+            kwargs=self._kwargs
+        )
+        self.resolved_kwargs = kwargs
+
+        # Log resolved kwargs as inputs (similar to flow_components.py build_input_values)
+        for key, value in kwargs.items():
+            if value is not None:
+                await self._span_tree.log_value(value, io_kind="input")
+
+        # Call generator function with resolved kwargs
+        gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+
+        # Wrap in Stream process
+        self._stream = Stream(gen_instance, name=f"{self._name}_stream")
+
+    async def on_stop(self):
+        """
+        Mark span as completed when stream exhausts.
+        """
+        if self.span:
+            self.span.status = "completed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+    async def on_error(self, error: Exception):
+        """
+        Mark span as failed on error.
+        """
+        if self.span:
+            self.span.status = "failed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+    async def __anext__(self):
+        """
+        Delegate to internal stream process.
+
+        The base Process.__anext__() will call on_start() automatically
+        on first iteration, then delegate to self._stream.
+        """
+        if not self._did_start:
+            await self.on_start()
+            self._did_start = True
+
+        try:
+            # Get next IP from stream
+            ip = await self._stream.__anext__()
+            self._last_ip = ip
+
+            # Log output
+            if self._span_tree:
+                await self._span_tree.log_value(ip, io_kind="output")
+
+            if not self._did_yield:
+                self._did_yield = True
+
+            return ip
+        except StopAsyncIteration:
+            await self.on_stop()
+            raise StopAsyncIteration
+        except Exception as e:
+            await self.on_error(e)
+            raise e
 
