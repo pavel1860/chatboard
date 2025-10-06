@@ -42,7 +42,12 @@ class ForkBranch:
 class StartTurn:
     branch_id: int | None = None
     auto_commit: bool = True
-    
+
+
+class ContextError(Exception):
+    pass
+
+
 
 class Context(BaseModel):
     branch_id: int | None = None
@@ -153,6 +158,9 @@ class Context(BaseModel):
                 tags=tags
             )
 
+        # Attach span_tree to component
+        component._span_tree = span_tree
+
         # Push component onto execution stack
         self._execution_stack.append(component)
 
@@ -227,33 +235,15 @@ class Context(BaseModel):
     def fork(self, turn: Turn | None = None, turn_id: int | None = None) -> "Context":
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
         return self
-    
-    @asynccontextmanager
-    async def start_span(self, name: str, index: int, span_type: SpanTypeEnum = "component", tags: list[str] | None = None) -> AsyncGenerator["ExecutionSpan", None]:
-        span = await ExecutionSpan(name=name, span_type=span_type, tags=tags, index=index).save()
-        try:    
-            with span:
-                yield span
-            span.status = "completed"
-            await span.save()
-        except Exception as e:
-            span.status = "failed"
-            await span.save()
-            raise e
-        finally:
-            await span.save()
 
-        
-        
-    
     # def fork(self, branch: Branch | None = None)
     
-    async def _handle_tasks(self) -> Branch:
+    async def _handle_tasks(self) -> Branch | None:
         for task in self._tasks:
             if isinstance(task, LoadBranch):
                 self._branch = await Branch.get(task.branch_id)
             elif isinstance(task, LoadTurn):
-                self._turn = await Turn.get(task.turn_id)                
+                self._turn = await Turn.get(task.turn_id)
             elif isinstance(task, ForkTurn):
                 if task.turn is not None:
                     branch = await self._get_branch()
@@ -269,14 +259,15 @@ class Context(BaseModel):
             elif isinstance(task, StartTurn):
                 branch = await self._get_branch()
                 self._turn = await branch.create_turn(auto_commit=task.auto_commit)
-            
 
-        if self._branch is None:
+
+        if self._branch is None and len(self._tasks) > 0:
+            # Only load branch if there were tasks that require it
             branch = await self._get_branch()
         # if self.turn is None:
             # raise ValueError("Turn not found")
-                
-        return self.branch
+
+        return self._branch
     
     def get_models(self):
         v_models = []
@@ -299,7 +290,9 @@ class Context(BaseModel):
         v_models, models = self.get_models()
         for model in models:
             model.__enter__()
-        branch.__enter__()
+        # Only enter branch context if we have a branch
+        if branch is not None:
+            branch.__enter__()
         if self._turn is not None:
             await self._turn.__aenter__()
         for model in v_models:
@@ -312,7 +305,9 @@ class Context(BaseModel):
             model.__exit__(exc_type, exc_value, traceback)
         if self._turn is not None:
             await self._turn.__aexit__(exc_type, exc_value, traceback)
-        self.branch.__exit__(exc_type, exc_value, traceback)
+        # Only exit branch context if we have a branch
+        if self._branch is not None:
+            self._branch.__exit__(exc_type, exc_value, traceback)
         for model in reversed(models):
             model.__exit__(exc_type, exc_value, traceback)
         if self._auth is not None:

@@ -380,7 +380,6 @@ class Artifact(Model):
         )
         
 
-        
 
 
 class VersionedModel(Model):
@@ -391,10 +390,41 @@ class VersionedModel(Model):
     artifact: "Artifact | None" = RelationField(primary_key="artifact_id", foreign_key="id")
     
     
-    def _build_insert_query(self, branch: Branch | int | None = None, turn: Turn | int | None = None, version: int = 1):
-        ns = self.get_namespace()
+    def _build_insert_query(
+        self, 
+        branch: Branch | int | None = None, turn: Turn | int | None = None, version: int = 1):
+        # Import here to avoid circular dependency        
+        from ...prompt.context import Context, ContextError
+        ctx = Context.current()
+        if ctx is None:
+            raise ContextError("Context not found")
+        
         branch_id = Branch.resolve_target_id(branch)
         turn_id = Turn.resolve_target_id(turn)
+        
+
+        # Resolve branch_id: explicit param > Context.branch > Branch.current()
+        # if branch is not None:
+        #     branch_id = Branch.resolve_target_id(branch)
+        # elif ctx is not None and ctx._branch is not None:
+        #     branch_id = ctx._branch.id
+        # else:
+        #     branch_id = Branch.resolve_target_id(branch)  # Will try Branch.current()
+
+        # # Resolve turn_id: explicit param > Context.turn > Turn.current()
+        # if turn is not None:
+        #     turn_id = Turn.resolve_target_id(turn)
+        # elif ctx is not None and ctx._turn is not None:
+        #     turn_id = ctx._turn.id
+        # else:
+        #     turn_id = Turn.resolve_target_id(turn)  # Will try Turn.current()
+
+        # If we have Context but no branch/turn, return None to signal in-memory mode
+        # if ctx is not None and (branch_id is None or turn_id is None):
+        #     return None
+
+        # If we still don't have branch/turn, this will fail (expected for non-Context usage)
+        ns = self.get_namespace()
         art_query = Artifact(
             kind=self._artifact_kind,
             model_name=self.get_namespace_name(),
@@ -408,34 +438,24 @@ class VersionedModel(Model):
 
     async def save(self, *, branch: Branch | int | None = None, turn: Turn | int | None = None):
         ns = self.get_namespace()
-        # if not self._should_save_to_db(branch, turn):
-        #     print(f"WARNING: {self.__class__.__name__} is not saved to database")
-        #     if not ns.has_primary_key(self):
-        #         ns.set_primary_key(self, ns.generate_fake_key())
-        #     return self
-        # return await super().save()
-        
+
         pk_value = self.primary_id
         self._load_context_vars()
         if pk_value is None:
             result = await self._build_insert_query(branch, turn)
-            # branch_id = Branch.resolve_target_id(branch)
-            # turn_id = Turn.resolve_target_id(turn)
-            # art_query = Artifact(
-            #     kind=self._artifact_kind,
-            #     model_name=self.get_namespace_name(),
-            #     branch_id=branch_id,
-            #     turn_id=turn_id
-            # ).insert()
-            # dump = self.model_dump()
-            # dump["artifact_id"] = art_query.col("id")
-            # result = await ns.insert(dump).select("*").one().json()                        
-            # result = await ns.insert(self.model_dump()).select("*").one().json()
+
+            # If result is None, we're in in-memory mode (Context exists but no branch/turn)
+            if result is None:
+                # Generate fake ID for in-memory execution
+                if not hasattr(self, 'id') or self.id is None:
+                    self.id = -1 * (id(self) % 1000000)  # Negative ID to distinguish from DB records
+                return self
         else:
             result = await ns.update(pk_value, self.model_dump()).select("*").one().json()
+
         for key, value in result.items():
             setattr(self, key, value)
-            
+
         if self.artifact is None:
             await self.include("artifact")
         return self
@@ -746,7 +766,7 @@ class ExecutionSpan(VersionedModel):
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
     
     # Relations
-    values: List["SpanValue"] = RelationField(foreign_key="span_id")
+    values: List["SpanValue"] = RelationField([], foreign_key="span_id")
     # events: List[Event] = RelationField(foreign_key="execution_span_id")
     block_trees: List[BlockTree] = RelationField(foreign_key="span_id")
     

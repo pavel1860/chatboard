@@ -44,7 +44,7 @@ class SpanTree:
     
     @classmethod
     async def init_new(cls, name: str, span_type: str = "component", tags: list[str] = [], index: int = 0):
-        span = await ExecutionSpan(name=name, span_type=span_type, tags=tags).save()
+        span = await ExecutionSpan(name=name, span_type=span_type, tags=tags, path="0").save()
         return cls(span)
 
     @property
@@ -132,6 +132,7 @@ class SpanTree:
         """
         Log a value to the current span and add it to the values list
         """
+        value = value.root if isinstance(value, SpanTree) else value
         value = await self.root.log_value(value, io_kind=io_kind)
         self.values.append(value)
         return value
@@ -141,7 +142,7 @@ class SpanTree:
         """
         Add a child span to the current span and log the span as an output value
         """
-        span_tree = SpanTree(name, span_type, tags, index=len(self.children), parent=self)
+        span_tree = await SpanTree(name, span_type, tags, index=len(self.children), parent=self).save()
         await self.log_value(span_tree, io_kind="output")
         await span_tree.save()        
         return span_tree

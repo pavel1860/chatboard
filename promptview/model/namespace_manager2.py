@@ -74,7 +74,13 @@ class NamespaceManager:
         end_time = time.time()
         print(f"initialize_all took {end_time - start_time} seconds")
                 
-                
+    @classmethod
+    async def initialize_clean(cls):
+        """ 
+        Initialize the namespace manager with a clean database.
+        """
+        cls.drop_all_tables()
+        await cls.initialize_all()
         
 
     
