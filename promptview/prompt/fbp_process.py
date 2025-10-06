@@ -1808,3 +1808,222 @@ class PipeController(Process):
             current = current.parent if hasattr(current, 'parent') else None
         return path
 
+
+
+# ============================================================================
+# FlowRunner - Orchestrates nested process execution
+# ============================================================================
+
+
+class FlowRunner:
+    """
+    FlowRunner orchestrates execution of nested FBP processes.
+
+    Manages a stack of processes and handles:
+    - Pushing child processes to stack when yielded by PipeController
+    - Emitting events based on event_level
+    - Propagating errors through the stack
+    - Coordinating lifecycle hooks
+
+    Example:
+        >>> pipe = PipeController(my_pipe, "main", "component")
+        >>> runner = FlowRunner(pipe, event_level=EventLogLevel.chunk)
+        >>>
+        >>> async for event in runner.stream_events():
+        ...     print(f"Event: {event.type} - {event.name}")
+    """
+
+    def __init__(self, root_process: Process, event_level=None):
+        """
+        Initialize FlowRunner.
+
+        Args:
+            root_process: The root process to execute (usually PipeController)
+            event_level: Level of events to emit (chunk, span, turn)
+        """
+        self.stack: list[Process] = [root_process]
+        self.last_value: Any = None
+        self._output_events = False
+        self._error_to_raise: Exception | None = None
+        self._last_process: Process | None = None
+        self._event_level = event_level
+
+    @property
+    def current(self) -> Process:
+        """Get current process from stack."""
+        if not self.stack:
+            raise StopAsyncIteration
+        return self.stack[-1]
+
+    @property
+    def should_output_events(self) -> bool:
+        """Check if events should be emitted."""
+        return self._output_events
+
+    def push(self, process: Process):
+        """Push process onto stack."""
+        self.stack.append(process)
+
+    def pop(self) -> Process:
+        """Pop process from stack."""
+        process = self.stack.pop()
+        self._last_process = process
+        return process
+
+    def __aiter__(self):
+        """Make FlowRunner async iterable."""
+        return self
+
+    async def __anext__(self):
+        """
+        Execute next step in process network.
+
+        Returns:
+            StreamEvent if emitting events, otherwise the value from current process
+        """
+        while self.stack:
+            try:
+                process = self.current
+
+                # Handle error propagation
+                if self._error_to_raise:
+                    error = self._error_to_raise
+                    self._error_to_raise = None
+                    raise error
+
+                # Check if process is starting - emit start event before first value
+                if not process._did_start:
+                    # Call __anext__() to start the process and get first value
+                    value = await process.__anext__()
+                    self.last_value = value
+
+                    # Now emit start event if needed
+                    if self.should_output_events:
+                        if event := await self.try_build_start_event(process, None):
+                            # Store value for next iteration
+                            if isinstance(value, (StreamController, PipeController)):
+                                # Don't push yet, will push in next iteration
+                                pass
+                            return event
+
+                    # Continue to process the value below (fall through)
+                else:
+                    # Normal iteration - get next value
+                    value = await process.__anext__()
+                    self.last_value = value
+
+                # If value is a Process (from PipeController), push to stack
+                if isinstance(value, (StreamController, PipeController)):
+                    self.push(value)
+                    # Emit event for child process if needed
+                    if self.should_output_events:
+                        if event := await self.try_build_value_event(process, value):
+                            return event
+                    continue
+
+                # Emit value event if needed
+                if self.should_output_events:
+                    if event := await self.try_build_value_event(process, value):
+                        return event
+
+                # If not emitting events, return the value
+                if not self.should_output_events:
+                    return value
+
+            except StopAsyncIteration:
+                # Process exhausted, pop from stack
+                process = self.pop()
+
+                # Emit stop event if needed
+                if self.should_output_events:
+                    if event := await self.try_build_stop_event(process, self.last_value):
+                        return event
+
+            except Exception as e:
+                # Error occurred, pop from stack
+                process = self.pop()
+
+                # Emit error event if needed
+                if self.should_output_events:
+                    event = await self.try_build_error_event(process, e)
+                    if not self.stack:
+                        raise e
+                    self._error_to_raise = e
+                    return event
+                else:
+                    raise e
+
+        raise StopAsyncIteration
+
+    async def try_build_start_event(self, process: Process, value: Any):
+        """Try to build start event based on event_level."""
+        if not hasattr(process, 'on_start_event'):
+            return None
+
+        event = await process.on_start_event(value)
+        if event is None:
+            return None
+
+        from .flow_components import EventLogLevel
+
+        if self._event_level == EventLogLevel.chunk:
+            return event
+        elif self._event_level == EventLogLevel.span:
+            return event
+        elif self._event_level == EventLogLevel.turn:
+            return None
+
+        return None
+
+    async def try_build_value_event(self, process: Process, value: Any):
+        """Try to build value event based on event_level."""
+        if not hasattr(process, 'on_value_event'):
+            return None
+
+        event = await process.on_value_event(value)
+        if event is None:
+            return None
+
+        from .flow_components import EventLogLevel
+
+        if self._event_level == EventLogLevel.chunk:
+            return event
+        elif self._event_level == EventLogLevel.span:
+            if isinstance(value, (StreamController, PipeController)):
+                return event
+            return None
+
+        return None
+
+    async def try_build_stop_event(self, process: Process, value: Any):
+        """Try to build stop event based on event_level."""
+        if not hasattr(process, 'on_stop_event'):
+            return None
+
+        event = await process.on_stop_event(value)
+        if event is None:
+            return None
+
+        from .flow_components import EventLogLevel
+
+        if self._event_level == EventLogLevel.chunk:
+            return event
+        elif self._event_level == EventLogLevel.span:
+            return event
+
+        return None
+
+    async def try_build_error_event(self, process: Process, error: Exception):
+        """Try to build error event based on event_level."""
+        if not hasattr(process, 'on_error_event'):
+            return None
+
+        event = await process.on_error_event(error)
+        return event if self._event_level else None
+
+    def stream_events(self, event_level=None):
+        """Enable event emission mode."""
+        if event_level is not None:
+            self._event_level = event_level
+        self._output_events = True
+        return self
