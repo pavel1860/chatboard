@@ -929,6 +929,7 @@ class Process:
         self._did_start = False
         self._did_yield = False
         self._last_ip: Any = None
+        self._span_tree: "SpanTree | None" = None
 
     @property
     def upstream(self):
@@ -943,6 +944,8 @@ class Process:
                 f"Process {self.__class__.__name__} has no upstream connection"
             )
         return self._upstream
+    
+    def __call__(self, _=None): return self
 
     async def on_start(self, value: Any = None):
         """
@@ -995,7 +998,8 @@ class Process:
         1. On first call, initialize the process
         2. Receive IP from upstream
         3. Store the IP
-        4. Return the IP downstream
+        4. Log the IP as input (for observability)
+        5. Return the IP downstream
 
         Returns:
             The next information packet from upstream
@@ -1013,6 +1017,10 @@ class Process:
             ip = await self.upstream.__anext__()
             self._last_ip = ip
 
+            # Log input to span tree for observability
+            if self._span_tree:
+                await self._span_tree.log_value(ip, io_kind="input")
+
             # Track that we've yielded at least once
             if not self._did_yield:
                 self._did_yield = True
@@ -1028,6 +1036,32 @@ class Process:
             # Error occurred - handle and propagate
             await self.on_error(e)
             raise e
+
+    async def asend(self, value: Any = None):
+        """
+        Send a value into the process.
+
+        This enables replay mode where saved outputs can be sent back into
+        the process network. Also logs the sent value as output for observability.
+
+        Args:
+            value: The value to send into the process
+
+        Returns:
+            The next information packet from upstream
+
+        Raises:
+            StopAsyncIteration: When upstream is exhausted
+        """
+        # Log output to span tree for observability
+        if self._span_tree and value is not None:
+            await self._span_tree.log_value(value, io_kind="output")
+
+        # If upstream supports asend, use it; otherwise just call __anext__
+        if hasattr(self._upstream, 'asend'):
+            return await self._upstream.asend(value)
+        else:
+            return await self.__anext__()
 
     def __or__(self, downstream: "Process") -> "Process":
         """
@@ -1519,6 +1553,29 @@ class StreamController(Process):
             current = current.parent if hasattr(current, 'parent') else None
         return path
 
+    def stream(self, event_level=None):
+        """
+        Return a FlowRunner that streams events from this controller.
+
+        This enables event streaming directly from decorated functions:
+            @stream()
+            async def my_stream():
+                yield "hello"
+
+            async for event in my_stream().stream():
+                print(event)
+
+        Args:
+            event_level: EventLogLevel.chunk, .span, or .turn
+
+        Returns:
+            FlowRunner configured to emit events
+        """
+        from .flow_components import EventLogLevel
+        if event_level is None:
+            event_level = EventLogLevel.chunk
+        return FlowRunner(self, event_level=event_level).stream_events()
+
 
 # ============================================================================
 # Phase 4: Dynamic Composite - PipeController
@@ -1807,6 +1864,29 @@ class PipeController(Process):
                 path.insert(0, current.index)
             current = current.parent if hasattr(current, 'parent') else None
         return path
+
+    def stream(self, event_level=None):
+        """
+        Return a FlowRunner that streams events from this controller.
+
+        This enables event streaming directly from decorated functions:
+            @component()
+            async def my_component():
+                yield my_stream()
+
+            async for event in my_component().stream():
+                print(event)
+
+        Args:
+            event_level: EventLogLevel.chunk, .span, or .turn
+
+        Returns:
+            FlowRunner configured to emit events
+        """
+        from .flow_components import EventLogLevel
+        if event_level is None:
+            event_level = EventLogLevel.chunk
+        return FlowRunner(self, event_level=event_level).stream_events()
 
 
 

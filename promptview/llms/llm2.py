@@ -4,7 +4,8 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Type, Typ
 from pydantic import BaseModel, Field
 
 from ..block import BlockChunk, Block, BlockList
-from ..prompt.flow_components import StreamController
+# from ..prompt.flow_components import StreamController
+from ..prompt.fbp_process import StreamController
 
 
 

@@ -3,7 +3,8 @@ import inspect
 from typing import Any, AsyncGenerator, Callable, Iterable, Literal, ParamSpec, Protocol, Union, AsyncIterator, Optional, Generic
 from typing_extensions import TypeVar
 
-from ..prompt.flow_components import PipeController, StreamController
+# from ..prompt.flow_components import PipeController, StreamController
+from ..prompt.fbp_process import PipeController, StreamController
 
 
 
