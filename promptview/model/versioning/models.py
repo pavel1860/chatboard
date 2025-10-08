@@ -28,7 +28,7 @@ _curr_turn = contextvars.ContextVar("curr_turn", default=None)
 
 
 SpanTypeEnum = Literal["component", "stream", "llm"]
-ArtifactKindEnum = Literal["block", "span", "log", "model", "literal"]
+ArtifactKindEnum = Literal["block", "span", "log", "model", "parameter"]
 
 class TurnStatus(enum.StrEnum):
     """Status of a turn in the version history."""
@@ -561,6 +561,7 @@ class VersionedModel(Model):
 
 
 class Parameter(VersionedModel):
+    _artifact_kind: ArtifactKind = "parameter"
     id: int = KeyField(primary_key=True)
     data: dict = ModelField()
     kind: str = ModelField()
@@ -804,9 +805,9 @@ class ExecutionSpan(VersionedModel):
         elif isinstance(target, VersionedModel):
             return "model", target.artifact_id
         else:
-            return "literal", None
+            return "parameter", None
         
-    def _build_literal(self, value: SerializableType) -> Parameter:
+    def _build_parameter(self, value: SerializableType) -> Parameter:
         if isinstance(value, Parameter):
             return value
         else:            
@@ -818,8 +819,8 @@ class ExecutionSpan(VersionedModel):
         kind, artifact_id = self._get_target_meta(target)
         if kind == "block":
             return await self.add_block_event(target, io_kind)
-        elif kind == "literal":
-            parm = await self._build_literal(target).save()
+        elif kind == "parameter":
+            parm = await self._build_parameter(target).save()
             artifact_id = parm.artifact.id            
         try:
             value = await self.add(SpanValue(

@@ -9,6 +9,32 @@ from collections import defaultdict
 # spans = await ExecutionSpan.query()
 # spans[0].artifact
 
+class Value:
+    
+    def __init__(self, span_value: SpanValue, value: Any):
+        self.span_value = span_value
+        self._value = value
+        self._is_parameter = span_value.artifact.kind == "parameter"
+        
+    @property
+    def value(self):
+        if self._is_parameter:
+            return self._value.value
+        return self._value
+        
+    @property
+    def id(self):
+        return self.span_value.id
+    
+    @property
+    def io_kind(self):
+        return self.span_value.io_kind
+    
+    @property
+    def artifact_id(self):
+        return self.span_value.artifact_id
+
+
 class SpanTree:
         
     # def __init__(self, span: ExecutionSpan, index: int = 0, children: list[ExecutionSpan] | None = None, parent: "SpanTree | None" = None):
@@ -19,7 +45,8 @@ class SpanTree:
         tags: list[str] = [], 
         index: int = 0, 
         children: list[ExecutionSpan] | None = None, 
-        parent: "SpanTree | None" = None
+        parent: "SpanTree | None" = None,
+        values: list[Value] | None = None
     ):    
         """
         Initialize a span tree
@@ -33,6 +60,7 @@ class SpanTree:
             self.root = ExecutionSpan(name=target, span_type=span_type, tags=tags, path=path, parent_span_id=parent.id if parent else None)
         self._lookup = {}
         self.children = children or []
+        self._values = values or []
 
         
     async def save(self):
@@ -54,7 +82,7 @@ class SpanTree:
     @property
     def path(self) -> list[int]:
         if self.parent is None:
-            return []
+            return [self.index]
         if self.index is None:
             return self.parent.path
         return self.parent.path + [self.index]
@@ -65,7 +93,7 @@ class SpanTree:
     
     @property
     def values(self):
-        return self.root.values
+        return self._values
     
     @property
     def inputs(self):
@@ -87,9 +115,16 @@ class SpanTree:
         yield self
         for child in self.children:
             yield from child.traverse()
+            
+    def get(self, path: list[int]):
+        if len(path) == 0:
+            return self
+        if len(path) == 1:
+            return self.children[path[0]]
+        return self.children[path[0]].get(path[1:])
         
     @classmethod
-    def load_span_list(cls, span_list: list[ExecutionSpan]):
+    def load_span_list(cls, span_list: list[ExecutionSpan], value_dict: dict[str, dict[int, Any]]):
         lookup = defaultdict(list)
         root = None
         for span in span_list:
@@ -100,15 +135,25 @@ class SpanTree:
         else:
             if root is None:
                 raise ValueError("No root span found")
-        def populate_children(span: SpanTree, lookup: dict[int, list[ExecutionSpan]]):
+            
+        
+        def populate_children(span: SpanTree):
             children = lookup.get(span.id)
+            # values = [value_dict.get(v.artifact.model_name).get(v.artifact_id) for v in span.root.values]
+            # span._values = [Value(v, values[i]) for i, v in enumerate(span.values)]
+            span._values = [
+                Value(
+                    v, 
+                    value_dict.get(v.artifact.model_name).get(v.artifact_id)) 
+                for v in span.root.values
+            ]
             if children is None:
                 return span
             span.children = [SpanTree(c, index=i, parent=span) for i, c in enumerate(children)]
             for child in span.children:
-                populate_children(child, lookup)
+                populate_children(child)
             return span
-        return populate_children(SpanTree(root), lookup)
+        return populate_children(SpanTree(root))
     
         
     @classmethod
@@ -126,7 +171,23 @@ class SpanTree:
             target_span = await ExecutionSpan.query().where(id=span_id).one()
             spans_query = spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
         spans = await spans_query
-        return cls.load_span_list(spans)
+        values = await cls.instantiate_values(spans)
+        return cls.load_span_list(spans, values)
+    
+    @classmethod
+    async def instantiate_values(cls, spans):
+        from ..model import NamespaceManager
+        model_ids = defaultdict(list)
+        for s in spans:
+            for v in s.values:
+                model_ids[v.artifact.model_name].append(v.artifact.id)
+
+        value_dict = {}
+        for k in model_ids:
+            ns = NamespaceManager.get_namespace(k)
+            models = await ns._model_cls.query().where(lambda m: m.artifact_id.isin(model_ids[k]))
+            value_dict[k] = {m.artifact_id: m for m in models}
+        return value_dict
     
     
     async def log_value(self, value: Any, io_kind: ValueIOKind = "input"):
@@ -135,7 +196,6 @@ class SpanTree:
         """
         value = value.root if isinstance(value, SpanTree) else value
         value = await self.root.log_value(value, io_kind=io_kind)
-        self.values.append(value)
         return value
     
     
@@ -144,13 +204,14 @@ class SpanTree:
         Add a child span to the current span and log the span as an output value
         """
         span_tree = await SpanTree(name, span_type, tags, index=len(self.children), parent=self).save()
+        self.children.append(span_tree)  # Add to children list
         await self.log_value(span_tree, io_kind="output")
-        await span_tree.save()        
+        await span_tree.save()
         return span_tree
     
     def print_tree(self):
         for s in self.traverse():
-            print(s.id, s.name)
+            print(s.id, s.path, s.name)
             for v in s.inputs:
                 print("  ", v.id, v.io_kind, v.artifact_id)
             for v in s.outputs:
