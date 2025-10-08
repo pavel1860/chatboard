@@ -2,6 +2,7 @@ import sys
 from typing import TYPE_CHECKING, Any, Dict, ForwardRef, Type, Optional, get_args, get_origin, List, Union
 
 from promptview.model.base.types import VersioningStrategy
+from promptview.utils.db_connections import PGConnectionManager
 from .postgres2.pg_namespace import PgNamespace
 from .qdrant2.qdrant_namespace import QdrantNamespace
 from .util import resolve_annotation
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 _extensions_registry = set()
 
 class NamespaceManager:
+    _initialized = False
     _registry: Dict[tuple[str, str], Any] = {}
     _model_to_namespace: Dict[Type, Any] = {}
 
@@ -56,6 +58,9 @@ class NamespaceManager:
 
     @classmethod
     async def initialize_all(cls):
+        if cls._initialized:
+            print("NamespaceManager already initialized")
+            return        
         start_time = time.time()
         from .versioning.models import Branch
         await PgNamespace.install_extensions()
@@ -66,19 +71,23 @@ class NamespaceManager:
         for ns in cls._registry.values():
             if hasattr(ns, "create_namespace"):
                 await ns.create_namespace()
-
+        print("Created all namespaces")
         # 2️⃣ Then add all foreign keys
         for ns in cls._registry.values():
             if hasattr(ns, "add_foreign_keys"):
                 await ns.add_foreign_keys()
+        print("Added all foreign keys")
         end_time = time.time()
         print(f"initialize_all took {end_time - start_time} seconds")
+        cls._initialized = True
                 
     @classmethod
     async def initialize_clean(cls):
         """ 
         Initialize the namespace manager with a clean database.
-        """
+        """        
+        cls._initialized = False
+        await PGConnectionManager.close()
         cls.drop_all_tables()
         await cls.initialize_all()
         

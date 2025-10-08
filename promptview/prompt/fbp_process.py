@@ -1277,11 +1277,259 @@ class Accumulator(Process):
 
 
 # ============================================================================
+# Phase 3: Observable Process - Base class for span-tracked, event-emitting processes
+# ============================================================================
+
+
+class ObservableProcess(Process):
+    """
+    Base class for processes that emit events and track execution spans.
+
+    ObservableProcess extends Process with:
+    - Context integration (span tracking)
+    - Event emission (start, value, stop, error events)
+    - Execution path tracking (parent/child relationships)
+    - Dependency injection support
+    - Event streaming via FlowRunner
+
+    This is the base class for StreamController and PipeController.
+    """
+
+    def __init__(
+        self,
+        gen_func: Callable[..., AsyncGenerator],
+        name: str,
+        span_type: str = "component",
+        tags: list[str] | None = None,
+        args: tuple = (),
+        kwargs: dict[str, Any] | None = None,
+        upstream: Process | None = None
+    ):
+        """
+        Initialize ObservableProcess.
+
+        Args:
+            gen_func: The generator function to wrap
+            name: Name for the span
+            span_type: Type of span (e.g., "stream", "component")
+            tags: Optional tags for the span
+            args: Positional arguments to pass to gen_func
+            kwargs: Keyword arguments to pass to gen_func (dependencies auto-resolved)
+            upstream: Optional upstream process
+        """
+        super().__init__(upstream)
+        self._gen_func = gen_func
+        self._name = name
+        self._span_type = span_type
+        self._tags = tags or []
+        self._args = args
+        self._kwargs = kwargs or {}
+        self._span_tree: "SpanTree | None" = None
+        self.resolved_kwargs: dict[str, Any] = {}
+        self.index: int = 0  # Set by parent PipeController
+        self.parent: "ObservableProcess | None" = None  # Set by parent PipeController
+
+    @property
+    def ctx(self):
+        """Get current context."""
+        from .context import Context
+        return Context.current()
+
+    @property
+    def span(self):
+        """Get the execution span."""
+        return self._span_tree.root if self._span_tree else None
+
+    @property
+    def span_id(self):
+        """Get the span ID."""
+        return self._span_tree.id if self._span_tree else None
+
+    async def _resolve_dependencies(self):
+        """
+        Resolve dependencies using injector.py and log as inputs.
+
+        Returns:
+            Tuple of (bound_arguments, resolved_kwargs)
+        """
+        from .injector import resolve_dependencies_kwargs
+        bound, kwargs = await resolve_dependencies_kwargs(
+            self._gen_func,
+            args=self._args,
+            kwargs=self._kwargs
+        )
+        self.resolved_kwargs = kwargs
+
+        # Log resolved kwargs as inputs
+        if self._span_tree:
+            for key, value in kwargs.items():
+                if value is not None:
+                    await self._span_tree.log_value(value, io_kind="input")
+
+        return bound, kwargs
+
+    async def on_stop(self):
+        """
+        Mark span as completed when process exhausts.
+        """
+        if self.span:
+            self.span.status = "completed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+    async def on_error(self, error: Exception):
+        """
+        Mark span as failed on error.
+        """
+        if self.span:
+            self.span.status = "failed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+    # Event emission methods
+
+    async def on_start_event(self, payload: Any = None, attrs: dict[str, Any] | None = None):
+        """
+        Generate start event.
+
+        Returns:
+            StreamEvent with type="stream_start" or "span_start"
+        """
+        from .events import StreamEvent
+
+        # Build attrs from resolved_kwargs (excluding Context and other non-serializable items)
+        value_attrs = {}
+        for key, value in self.resolved_kwargs.items():
+            if value is not None and not key.startswith('_'):
+                # Skip Context instances
+                if self.ctx and isinstance(value, type(self.ctx)):
+                    continue
+                value_attrs[key] = value
+
+        event_type = "stream_start" if self._span_type == "stream" else "span_start"
+
+        return StreamEvent(
+            type=event_type,
+            name=self._name,
+            attrs=value_attrs,
+            payload=self.span,
+            span_id=str(self.span_id) if self.span_id else None,
+            path=self.get_execution_path(),
+        )
+
+    async def on_value_event(self, payload: Any = None):
+        """
+        Generate value event.
+
+        Returns:
+            StreamEvent with type="stream_delta" or "span_event"
+        """
+        from .events import StreamEvent
+
+        event_type = "stream_delta" if self._span_type == "stream" else "span_event"
+
+        return StreamEvent(
+            type=event_type,
+            name=self._name,
+            payload=payload,
+            span_id=str(self.span_id) if self.span_id else None,
+            path=self.get_execution_path(),
+        )
+
+    async def on_stop_event(self, payload: Any = None):
+        """
+        Generate stop event.
+
+        Returns:
+            StreamEvent with type="stream_end" or "span_end"
+        """
+        from .events import StreamEvent
+
+        event_type = "stream_end" if self._span_type == "stream" else "span_end"
+
+        return StreamEvent(
+            type=event_type,
+            name=self._name,
+            span_id=str(self.span_id) if self.span_id else None,
+            path=self.get_execution_path(),
+        )
+
+    async def on_error_event(self, error: Exception):
+        """
+        Generate error event.
+
+        Args:
+            error: The exception that occurred
+
+        Returns:
+            StreamEvent with type="stream_error" or "span_error"
+        """
+        from .events import StreamEvent
+
+        event_type = "stream_error" if self._span_type == "stream" else "span_error"
+
+        return StreamEvent(
+            type=event_type,
+            name=self._name,
+            payload=error,
+            error=str(error),
+            span_id=str(self.span_id) if self.span_id else None,
+            path=self.get_execution_path(),
+        )
+
+    def get_execution_path(self) -> list[int]:
+        """
+        Build execution path from root to this component.
+
+        Returns:
+            list[int]: Path of indices from root
+        """
+        path = []
+        current = self
+        while current:
+            if hasattr(current, 'index'):
+                path.insert(0, current.index)
+            current = current.parent if hasattr(current, 'parent') else None
+        return path
+
+    def stream(self, event_level=None):
+        """
+        Return a FlowRunner that streams events from this process.
+
+        This enables event streaming directly from decorated functions:
+            @stream()
+            async def my_stream():
+                yield "hello"
+
+            async for event in my_stream().stream():
+                print(event)
+
+        Args:
+            event_level: EventLogLevel.chunk, .span, or .turn
+
+        Returns:
+            FlowRunner configured to emit events
+        """
+        from .flow_components import EventLogLevel
+        if event_level is None:
+            event_level = EventLogLevel.chunk
+        return FlowRunner(self, event_level=event_level).stream_events()
+
+
+# ============================================================================
 # Phase 3: Observable Composite - StreamController
 # ============================================================================
 
 
-class StreamController(Process):
+class StreamController(ObservableProcess):
     """
     StreamController wraps a generator function and manages its execution span.
 
@@ -1331,34 +1579,8 @@ class StreamController(Process):
             kwargs: Keyword arguments to pass to gen_func (dependencies auto-resolved)
             upstream: Optional upstream process (usually None for StreamController)
         """
-        super().__init__(upstream)
-        self._gen_func = gen_func
-        self._name = name
-        self._span_type = span_type
-        self._tags = tags or []
-        self._args = args
-        self._kwargs = kwargs or {}
-        self._span_tree: "SpanTree | None" = None
+        super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._stream: Process | None = None
-        self.resolved_kwargs: dict[str, Any] = {}
-        self.index: int = 0  # Set by parent PipeController
-        self.parent: "PipeController | None" = None  # Set by parent PipeController
-
-    @property
-    def ctx(self):
-        """Get current context."""
-        from .context import Context
-        return Context.current()
-
-    @property
-    def span(self):
-        """Get the execution span."""
-        return self._span_tree.root if self._span_tree else None
-
-    @property
-    def span_id(self):
-        """Get the span ID."""
-        return self._span_tree.id if self._span_tree else None
 
     async def on_start(self):
         """
@@ -1378,51 +1600,14 @@ class StreamController(Process):
             tags=self._tags
         )
 
-        # Resolve dependencies using injector.py
-        from .injector import resolve_dependencies_kwargs
-        bound, kwargs = await resolve_dependencies_kwargs(
-            self._gen_func,
-            args=self._args,
-            kwargs=self._kwargs
-        )
-        self.resolved_kwargs = kwargs
-
-        # Log resolved kwargs as inputs (similar to flow_components.py build_input_values)
-        for key, value in kwargs.items():
-            if value is not None:
-                await self._span_tree.log_value(value, io_kind="input")
+        # Resolve dependencies and log inputs
+        bound, kwargs = await self._resolve_dependencies()
 
         # Call generator function with resolved kwargs
         gen_instance = self._gen_func(*bound.args, **bound.kwargs)
 
         # Wrap in Stream process
         self._stream = Stream(gen_instance, name=f"{self._name}_stream")
-
-    async def on_stop(self):
-        """
-        Mark span as completed when stream exhausts.
-        """
-        if self.span:
-            self.span.status = "completed"
-            self.span.end_time = __import__('datetime').datetime.now()
-            await self.span.save()
-
-        # Pop from context execution stack
-        if self.ctx:
-            await self.ctx.end_span()
-
-    async def on_error(self, error: Exception):
-        """
-        Mark span as failed on error.
-        """
-        if self.span:
-            self.span.status = "failed"
-            self.span.end_time = __import__('datetime').datetime.now()
-            await self.span.save()
-
-        # Pop from context execution stack
-        if self.ctx:
-            await self.ctx.end_span()
 
     async def __anext__(self):
         """
@@ -1455,134 +1640,13 @@ class StreamController(Process):
             await self.on_error(e)
             raise e
 
-    # Event emission methods
-
-    async def on_start_event(self, payload: Any = None, attrs: dict[str, Any] | None = None):
-        """
-        Generate stream_start event.
-
-        Returns:
-            StreamEvent with type="stream_start"
-        """
-        from .events import StreamEvent
-
-        # Build attrs from resolved_kwargs (excluding Context and other non-serializable items)
-        value_attrs = {}
-        for key, value in self.resolved_kwargs.items():
-            if value is not None and not key.startswith('_'):
-                # Skip Context instances
-                if self.ctx and isinstance(value, type(self.ctx)):
-                    continue
-                value_attrs[key] = value
-
-        return StreamEvent(
-            type="stream_start",
-            name=self._name,
-            attrs=value_attrs,
-            payload=self.span,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path() if hasattr(self, 'get_execution_path') else None,
-        )
-
-    async def on_value_event(self, payload: Any = None):
-        """
-        Generate stream_delta event for each value.
-
-        Returns:
-            StreamEvent with type="stream_delta"
-        """
-        from .events import StreamEvent
-
-        return StreamEvent(
-            type="stream_delta",
-            name=self._name,
-            payload=payload,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path() if hasattr(self, 'get_execution_path') else None,
-        )
-
-    async def on_stop_event(self, payload: Any = None):
-        """
-        Generate stream_end event when stream completes.
-
-        Returns:
-            StreamEvent with type="stream_end"
-        """
-        from .events import StreamEvent
-
-        return StreamEvent(
-            type="stream_end",
-            name=self._name,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path() if hasattr(self, 'get_execution_path') else None,
-        )
-
-    async def on_error_event(self, error: Exception):
-        """
-        Generate stream_error event on exception.
-
-        Args:
-            error: The exception that occurred
-
-        Returns:
-            StreamEvent with type="stream_error"
-        """
-        from .events import StreamEvent
-
-        return StreamEvent(
-            type="stream_error",
-            name=self._name,
-            payload=error,
-            error=str(error),
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path() if hasattr(self, 'get_execution_path') else None,
-        )
-
-    def get_execution_path(self) -> list[int]:
-        """
-        Build execution path from root to this component.
-
-        Returns:
-            list[int]: Path of indices from root
-        """
-        path = []
-        current = self
-        while current:
-            if hasattr(current, 'index'):
-                path.insert(0, current.index)
-            current = current.parent if hasattr(current, 'parent') else None
-        return path
-
-    def stream(self, event_level=None):
-        """
-        Return a FlowRunner that streams events from this controller.
-
-        This enables event streaming directly from decorated functions:
-            @stream()
-            async def my_stream():
-                yield "hello"
-
-            async for event in my_stream().stream():
-                print(event)
-
-        Args:
-            event_level: EventLogLevel.chunk, .span, or .turn
-
-        Returns:
-            FlowRunner configured to emit events
-        """
-        from .flow_components import EventLogLevel
-        if event_level is None:
-            event_level = EventLogLevel.chunk
-        return FlowRunner(self, event_level=event_level).stream_events()
-
 
 # ============================================================================
 # Phase 4: Dynamic Composite - PipeController
 # ============================================================================
 
 
-class PipeController(Process):
+class PipeController(ObservableProcess):
     """
     PipeController wraps a generator function that yields other processes.
 
@@ -1638,34 +1702,8 @@ class PipeController(Process):
             kwargs: Keyword arguments to pass to gen_func (dependencies auto-resolved)
             upstream: Optional upstream process (usually None for PipeController)
         """
-        super().__init__(upstream)
-        self._gen_func = gen_func
-        self._name = name
-        self._span_type = span_type
-        self._tags = tags or []
-        self._args = args
-        self._kwargs = kwargs or {}
-        self._span_tree: "SpanTree | None" = None
+        super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
-        self.resolved_kwargs: dict[str, Any] = {}
-        self.index: int = 0  # Track how many children have been yielded
-        self.parent: "PipeController | None" = None  # For nested PipeControllers
-
-    @property
-    def ctx(self):
-        """Get current context."""
-        from .context import Context
-        return Context.current()
-
-    @property
-    def span(self):
-        """Get the execution span."""
-        return self._span_tree.root if self._span_tree else None
-
-    @property
-    def span_id(self):
-        """Get the span ID."""
-        return self._span_tree.id if self._span_tree else None
 
     async def on_start(self):
         """
@@ -1685,48 +1723,11 @@ class PipeController(Process):
             tags=self._tags
         )
 
-        # Resolve dependencies using injector.py
-        from .injector import resolve_dependencies_kwargs
-        bound, kwargs = await resolve_dependencies_kwargs(
-            self._gen_func,
-            args=self._args,
-            kwargs=self._kwargs
-        )
-        self.resolved_kwargs = kwargs
-
-        # Log resolved kwargs as inputs
-        for key, value in kwargs.items():
-            if value is not None:
-                await self._span_tree.log_value(value, io_kind="input")
+        # Resolve dependencies and log inputs
+        bound, kwargs = await self._resolve_dependencies()
 
         # Call generator function with resolved kwargs
         self._gen = self._gen_func(*bound.args, **bound.kwargs)
-
-    async def on_stop(self):
-        """
-        Mark span as completed when pipe exhausts.
-        """
-        if self.span:
-            self.span.status = "completed"
-            self.span.end_time = __import__('datetime').datetime.now()
-            await self.span.save()
-
-        # Pop from context execution stack
-        if self.ctx:
-            await self.ctx.end_span()
-
-    async def on_error(self, error: Exception):
-        """
-        Mark span as failed on error.
-        """
-        if self.span:
-            self.span.status = "failed"
-            self.span.end_time = __import__('datetime').datetime.now()
-            await self.span.save()
-
-        # Pop from context execution stack
-        if self.ctx:
-            await self.ctx.end_span()
 
     async def __anext__(self):
         """
@@ -1766,127 +1767,6 @@ class PipeController(Process):
         except Exception as e:
             await self.on_error(e)
             raise e
-
-    # Event emission methods
-
-    async def on_start_event(self, payload: Any = None, attrs: dict[str, Any] | None = None):
-        """
-        Generate span_start event.
-
-        Returns:
-            StreamEvent with type="span_start"
-        """
-        from .events import StreamEvent
-
-        # Build attrs from resolved_kwargs
-        value_attrs = {}
-        for key, value in self.resolved_kwargs.items():
-            if value is not None and not key.startswith('_'):
-                # Skip Context instances
-                if self.ctx and isinstance(value, type(self.ctx)):
-                    continue
-                value_attrs[key] = value
-
-        return StreamEvent(
-            type="span_start",
-            name=self._name,
-            attrs=value_attrs,
-            payload=self.span,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path(),
-        )
-
-    async def on_value_event(self, payload: Any = None):
-        """
-        Generate span_event when child process is yielded.
-
-        Returns:
-            StreamEvent with type="span_event"
-        """
-        from .events import StreamEvent
-
-        return StreamEvent(
-            type="span_event",
-            name=self._name,
-            payload=payload,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path(),
-        )
-
-    async def on_stop_event(self, payload: Any = None):
-        """
-        Generate span_end event when pipe completes.
-
-        Returns:
-            StreamEvent with type="span_end"
-        """
-        from .events import StreamEvent
-
-        return StreamEvent(
-            type="span_end",
-            name=self._name,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path(),
-        )
-
-    async def on_error_event(self, error: Exception):
-        """
-        Generate span_error event on exception.
-
-        Args:
-            error: The exception that occurred
-
-        Returns:
-            StreamEvent with type="span_error"
-        """
-        from .events import StreamEvent
-
-        return StreamEvent(
-            type="span_error",
-            name=self._name,
-            payload=error,
-            error=str(error),
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path(),
-        )
-
-    def get_execution_path(self) -> list[int]:
-        """
-        Build execution path from root to this component.
-
-        Returns:
-            list[int]: Path of indices from root
-        """
-        path = []
-        current = self
-        while current:
-            if hasattr(current, 'index'):
-                path.insert(0, current.index)
-            current = current.parent if hasattr(current, 'parent') else None
-        return path
-
-    def stream(self, event_level=None):
-        """
-        Return a FlowRunner that streams events from this controller.
-
-        This enables event streaming directly from decorated functions:
-            @component()
-            async def my_component():
-                yield my_stream()
-
-            async for event in my_component().stream():
-                print(event)
-
-        Args:
-            event_level: EventLogLevel.chunk, .span, or .turn
-
-        Returns:
-            FlowRunner configured to emit events
-        """
-        from .flow_components import EventLogLevel
-        if event_level is None:
-            event_level = EventLogLevel.chunk
-        return FlowRunner(self, event_level=event_level).stream_events()
 
 
 
