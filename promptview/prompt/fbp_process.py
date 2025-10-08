@@ -1807,6 +1807,7 @@ class FlowRunner:
         self._error_to_raise: Exception | None = None
         self._last_process: Process | None = None
         self._event_level = event_level
+        self._pending_child: Process | None = None  # Child process waiting to be pushed
 
     @property
     def current(self) -> Process:
@@ -1843,6 +1844,14 @@ class FlowRunner:
         """
         while self.stack:
             try:
+                # First, check if we have a pending child to push
+                if self._pending_child is not None:
+                    child = self._pending_child
+                    self._pending_child = None
+                    self.push(child)
+                    # Continue to start the child process
+                    continue
+
                 process = self.current
 
                 # Handle error propagation
@@ -1860,10 +1869,9 @@ class FlowRunner:
                     # Now emit start event if needed
                     if self.should_output_events:
                         if event := await self.try_build_start_event(process, None):
-                            # Store value for next iteration
+                            # If value is a child process, save it to push in next iteration
                             if isinstance(value, (StreamController, PipeController)):
-                                # Don't push yet, will push in next iteration
-                                pass
+                                self._pending_child = value
                             return event
 
                     # Continue to process the value below (fall through)
