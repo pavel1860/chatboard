@@ -58,6 +58,8 @@ class Context(BaseModel):
     _tasks: list[LoadBranch | LoadTurn | ForkTurn | StartTurn] = []
     _span_tree: "SpanTree | None" = None
     _execution_stack: list = []
+    _replay_span_tree: "SpanTree | None" = None  # Span tree to replay from
+    _execution_path: list[int] = []  # Current execution path like [0, 1, 2]
     
     
     def __init__(
@@ -113,6 +115,68 @@ class Context(BaseModel):
             return self.current_component._span_tree
         return None
 
+    def _get_current_execution_path(self) -> list[int]:
+        """
+        Get the execution path for the NEXT component about to be created.
+
+        This is used for replay span lookup. The path represents where the
+        new component will be in the tree:
+        - Root component: [0]
+        - First child of root: [0, 0]
+        - Second child of root: [0, 1]
+
+        Returns:
+            List of indices representing the next component's position
+        """
+        if not self._execution_stack:
+            # Creating root component
+            return [0]
+
+        # Creating child component - build path from parent's path + child index
+        parent = self._execution_stack[-1]
+        if not hasattr(parent, '_child_count'):
+            parent._child_count = 0
+
+        # Parent's current path + next child index
+        parent_path = self._execution_path.copy()
+        child_index = parent._child_count
+
+        return parent_path + [child_index]
+
+    def _get_replay_span_at_path(self, path: list[int]) -> "SpanTree | None":
+        """
+        Look up a span in the replay tree at the given path.
+
+        Path format matches SpanTree.path:
+        - Root: [0]
+        - First child: [0, 0]
+        - Second child: [0, 1]
+
+        Args:
+            path: Execution path like [0], [0, 0], [0, 1]
+
+        Returns:
+            SpanTree at that path, or None if not found
+        """
+        if not self._replay_span_tree:
+            return None
+
+        # Check if looking for root
+        if path == [0]:
+            return self._replay_span_tree
+
+        # Navigate down the tree using path indices
+        # Start at root (path[0] = 0), then navigate children
+        current = self._replay_span_tree
+
+        # Skip first index (root is [0]), navigate using remaining indices
+        for index in path[1:]:
+            if not current.children or index >= len(current.children):
+                return None
+            current = current.children[index]
+
+        return current
+
     async def start_span(
         self,
         component,
@@ -123,6 +187,10 @@ class Context(BaseModel):
         """
         Start a new span for a component and add to execution stack.
 
+        In replay mode, checks if a span exists in the replay tree at the current
+        execution path. If found and names match, uses the existing span (which
+        contains saved outputs). Otherwise creates a new span.
+
         Args:
             component: The process/component to start
             name: Name for the span
@@ -130,15 +198,31 @@ class Context(BaseModel):
             tags: Optional tags for the span
 
         Returns:
-            SpanTree instance for this component
+            SpanTree instance for this component (either from replay or newly created)
         """
         from .span_tree import SpanTree
 
         tags = tags or []
 
-        # Create or get span tree
-        if not self._execution_stack:
-            # This is the root component - create root span tree
+        # Check if we should use a span from replay tree
+        replay_span = None
+        if self._replay_span_tree:
+            # Get current execution path
+            current_path = self._get_current_execution_path()
+
+            # Look up span at this path in replay tree
+            replay_span = self._get_replay_span_at_path(current_path)
+
+            # Verify span name matches (safety check)
+            if replay_span and replay_span.name != name:
+                replay_span = None  # Name mismatch, don't use replay span
+
+        # Use replay span if available, otherwise create new span
+        if replay_span:
+            # Replay mode: use existing span with saved outputs
+            span_tree = replay_span
+        elif not self._execution_stack:
+            # Root component - create root span tree
             if self._span_tree is None:
                 self._span_tree = await SpanTree.init_new(
                     name=name,
@@ -147,7 +231,7 @@ class Context(BaseModel):
                 )
             span_tree = self._span_tree
         else:
-            # This is a child component - create child span
+            # Child component - create child span
             parent_span = self.current_span_tree
             if parent_span is None:
                 raise ValueError("Parent component has no span tree")
@@ -161,8 +245,27 @@ class Context(BaseModel):
         # Attach span_tree to component
         component._span_tree = span_tree
 
-        # Push component onto execution stack
+        # Push component onto execution stack and update path
         self._execution_stack.append(component)
+
+        # Update execution path to match SpanTree path format
+        # Root: [0], First child: [0, 0], Second child: [0, 1], etc.
+        if len(self._execution_stack) == 1:
+            # Root component - path is [0]
+            self._execution_path = [0]
+            component._child_count = 0
+        else:
+            # Child component - append child index to parent's path
+            parent = self._execution_stack[-2]
+            if not hasattr(parent, '_child_count'):
+                parent._child_count = 0
+
+            # Build path: parent's path + child index
+            parent_path = self._execution_path[:-1] if len(self._execution_path) > 0 else [0]
+            child_index = parent._child_count
+            self._execution_path = parent_path + [child_index]
+
+            parent._child_count += 1
 
         return span_tree
 
@@ -170,13 +273,21 @@ class Context(BaseModel):
         """
         End the current span and pop component from execution stack.
 
+        Also updates the execution path to reflect the new stack depth.
+
         Returns:
             The component that was popped
         """
         if not self._execution_stack:
             raise ValueError("No component on execution stack to complete")
 
-        return self._execution_stack.pop()
+        component = self._execution_stack.pop()
+
+        # Update execution path: pop last element when leaving a child
+        if self._execution_path:
+            self._execution_path.pop()
+
+        return component
 
     @classmethod
     async def from_request(cls, request: "Request"):
@@ -234,6 +345,32 @@ class Context(BaseModel):
     
     def fork(self, turn: Turn | None = None, turn_id: int | None = None) -> "Context":
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
+        return self
+
+    async def load_replay(self, turn_id: int, span_id: int | None = None) -> "Context":
+        """
+        Load a span tree for replay mode.
+
+        When a span tree is loaded, Context will use it to provide saved spans
+        during execution instead of creating new ones. This enables replay of
+        previous executions.
+
+        Args:
+            turn_id: The turn ID to load spans from
+            span_id: Optional specific span to start from (default: root span)
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            ctx = Context()
+            async with ctx.load_replay(turn_id=42).fork().start_turn():
+                # Execution will replay from turn 42's spans
+                async for event in my_component().stream():
+                    print(event)
+        """
+        from .span_tree import SpanTree
+        self._replay_span_tree = await SpanTree.from_turn(turn_id, span_id)
         return self
 
     # def fork(self, branch: Branch | None = None)

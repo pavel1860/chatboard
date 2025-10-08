@@ -1591,6 +1591,9 @@ class StreamController(ObservableProcess):
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._stream: Process | None = None
         self._accumulator: Accumulator | None = None
+        self._replay_inputs: list | None = None  # Saved inputs for replay mode
+        self._replay_outputs: list | None = None  # Saved outputs for replay mode
+        self._replay_index: int = 0  # Current position in replay buffer
 
     async def on_start(self):
         """
@@ -1598,11 +1601,15 @@ class StreamController(ObservableProcess):
 
         Called automatically on first __anext__() call.
         Creates span, resolves dependencies, logs kwargs as inputs, and builds the internal stream.
+
+        In replay mode (when span has saved outputs), sets up replay buffer instead of
+        executing the generator function.
         """
         if self.ctx is None:
             raise ValueError("StreamController requires Context. Use 'async with Context():'")
 
         # Create span and register with context
+        # This may return a replay span with saved outputs
         self._span_tree = await self.ctx.start_span(
             component=self,
             name=self._name,
@@ -1610,43 +1617,70 @@ class StreamController(ObservableProcess):
             tags=self._tags
         )
 
-        # Resolve dependencies and log inputs
-        bound, kwargs = await self._resolve_dependencies()
+        # Check if this is a replay span (has saved outputs)
+        if self._span_tree.outputs:
+            # Replay mode: extract saved inputs and outputs
+            self._replay_inputs = [v.value for v in self._span_tree.inputs]
+            self._replay_outputs = [v.value for v in self._span_tree.outputs]
+            # Don't create stream/accumulator - we'll yield from replay buffer
+        else:
+            # Normal mode: resolve dependencies and create stream
+            # Resolve dependencies and log inputs
+            bound, kwargs = await self._resolve_dependencies()
 
-        # Call generator function with resolved kwargs
-        gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            # Call generator function with resolved kwargs
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
 
-        # Wrap in Stream process and pipe through Accumulator
-        stream = Stream(gen_instance, name=f"{self._name}_stream")
-        accumulator = Accumulator()
-        self._stream = stream | accumulator
-        self._accumulator = accumulator
+            # Wrap in Stream process and pipe through Accumulator
+            stream = Stream(gen_instance, name=f"{self._name}_stream")
+            accumulator = Accumulator()
+            self._stream = stream | accumulator
+            self._accumulator = accumulator
 
     async def __anext__(self):
         """
-        Delegate to internal stream process.
+        Delegate to internal stream process or replay from saved outputs.
 
-        The base Process.__anext__() will call on_start() automatically
-        on first iteration, then delegate to self._stream.
+        In replay mode, yields saved outputs from the span instead of executing
+        the generator function.
         """
         if not self._did_start:
             await self.on_start()
             self._did_start = True
 
         try:
-            # Get next IP from stream (which passes through Accumulator)
-            ip = await self._stream.__anext__()
-            self._last_ip = ip
+            # Check if we're in replay mode
+            if self._replay_outputs is not None:
+                # Replay mode: yield from saved outputs
+                if self._replay_index >= len(self._replay_outputs):
+                    await self.on_stop()
+                    raise StopAsyncIteration
 
-            # Log output
-            if self._span_tree:
-                await self._span_tree.log_value(ip, io_kind="output")
+                ip = self._replay_outputs[self._replay_index]
+                self._replay_index += 1
+                self._last_ip = ip
 
-            if not self._did_yield:
-                self._did_yield = True
+                if not self._did_yield:
+                    self._did_yield = True
 
-            return ip
+                return ip
+            else:
+                # Normal mode: get next IP from stream (which passes through Accumulator)
+                ip = await self._stream.__anext__()
+                self._last_ip = ip
+
+                # Don't log individual values - they're stream deltas
+                # We'll log the final accumulated result in on_stop()
+
+                if not self._did_yield:
+                    self._did_yield = True
+
+                return ip
         except StopAsyncIteration:
+            # Log the final accumulated result as output
+            if self._span_tree and self._accumulator:
+                await self._span_tree.log_value(self._accumulator.result, io_kind="output")
+
             await self.on_stop()
             raise StopAsyncIteration
         except Exception as e:
@@ -1657,10 +1691,17 @@ class StreamController(ObservableProcess):
         """
         Get the accumulated response from the stream.
 
+        In replay mode, returns all replay outputs.
+        In normal mode, returns accumulated values.
+
         Returns:
             List of all values yielded by the stream
         """
-        if self._accumulator:
+        if self._replay_outputs is not None:
+            # Replay mode: return all replay outputs
+            return self._replay_outputs
+        elif self._accumulator:
+            # Normal mode: return accumulated values
             return self._accumulator.result
         return []
 
@@ -1728,6 +1769,9 @@ class PipeController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
+        self._replay_inputs: list | None = None  # Saved inputs for replay mode
+        self._replay_outputs: list | None = None  # Saved outputs (child processes) for replay mode
+        self._replay_index: int = 0  # Current position in replay buffer
 
     async def on_start(self):
         """
@@ -1735,11 +1779,15 @@ class PipeController(ObservableProcess):
 
         Called automatically on first __anext__() call.
         Creates span, resolves dependencies, and builds the internal generator.
+
+        In replay mode (when span has saved outputs), sets up replay buffer instead of
+        executing the generator function.
         """
         if self.ctx is None:
             raise ValueError("PipeController requires Context. Use 'async with Context():'")
 
         # Create span and register with context
+        # This may return a replay span with saved outputs
         self._span_tree = await self.ctx.start_span(
             component=self,
             name=self._name,
@@ -1747,11 +1795,19 @@ class PipeController(ObservableProcess):
             tags=self._tags
         )
 
-        # Resolve dependencies and log inputs
-        bound, kwargs = await self._resolve_dependencies()
+        # Check if this is a replay span (has saved outputs)
+        if self._span_tree.outputs:
+            # Replay mode: extract saved inputs and outputs
+            self._replay_inputs = [v.value for v in self._span_tree.inputs]
+            self._replay_outputs = [v.value for v in self._span_tree.outputs]
+            # Don't create generator - we'll yield from replay buffer
+        else:
+            # Normal mode: resolve dependencies and create generator
+            # Resolve dependencies and log inputs
+            bound, kwargs = await self._resolve_dependencies()
 
-        # Call generator function with resolved kwargs
-        self._gen = self._gen_func(*bound.args, **bound.kwargs)
+            # Call generator function with resolved kwargs
+            self._gen = self._gen_func(*bound.args, **bound.kwargs)
 
     async def asend(self, value: Any = None):
         """
