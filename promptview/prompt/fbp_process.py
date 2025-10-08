@@ -1523,6 +1523,15 @@ class ObservableProcess(Process):
             event_level = EventLogLevel.chunk
         return FlowRunner(self, event_level=event_level).stream_events()
 
+    def get_response(self):
+        """
+        Get the response/result from this process.
+
+        For most processes, this is just the last value.
+        Subclasses can override to provide more sophisticated response handling.
+        """
+        return self._last_ip
+
 
 # ============================================================================
 # Phase 3: Observable Composite - StreamController
@@ -1581,6 +1590,7 @@ class StreamController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._stream: Process | None = None
+        self._accumulator: Accumulator | None = None
 
     async def on_start(self):
         """
@@ -1606,8 +1616,11 @@ class StreamController(ObservableProcess):
         # Call generator function with resolved kwargs
         gen_instance = self._gen_func(*bound.args, **bound.kwargs)
 
-        # Wrap in Stream process
-        self._stream = Stream(gen_instance, name=f"{self._name}_stream")
+        # Wrap in Stream process and pipe through Accumulator
+        stream = Stream(gen_instance, name=f"{self._name}_stream")
+        accumulator = Accumulator()
+        self._stream = stream | accumulator
+        self._accumulator = accumulator
 
     async def __anext__(self):
         """
@@ -1621,7 +1634,7 @@ class StreamController(ObservableProcess):
             self._did_start = True
 
         try:
-            # Get next IP from stream
+            # Get next IP from stream (which passes through Accumulator)
             ip = await self._stream.__anext__()
             self._last_ip = ip
 
@@ -1639,6 +1652,17 @@ class StreamController(ObservableProcess):
         except Exception as e:
             await self.on_error(e)
             raise e
+
+    def get_response(self):
+        """
+        Get the accumulated response from the stream.
+
+        Returns:
+            List of all values yielded by the stream
+        """
+        if self._accumulator:
+            return self._accumulator.result
+        return []
 
 
 # ============================================================================
@@ -1729,20 +1753,27 @@ class PipeController(ObservableProcess):
         # Call generator function with resolved kwargs
         self._gen = self._gen_func(*bound.args, **bound.kwargs)
 
-    async def __anext__(self):
+    async def asend(self, value: Any = None):
         """
-        Get next child process from the pipe.
+        Send a value into the pipe's internal generator.
 
-        Returns child processes and tracks their index.
-        Sets parent reference on children.
+        This enables yield-based communication where parent can receive
+        responses from completed child processes:
+            response = yield child_process
+
+        Args:
+            value: The value to send (typically response from completed child)
+
+        Returns:
+            Next child process from the generator
         """
         if not self._did_start:
             await self.on_start()
             self._did_start = True
 
         try:
-            # Get next child process from generator
-            child = await self._gen.__anext__()
+            # Send value into the internal generator using asend()
+            child = await self._gen.asend(value)
             self._last_ip = child
 
             # Set parent reference and index on child
@@ -1767,6 +1798,16 @@ class PipeController(ObservableProcess):
         except Exception as e:
             await self.on_error(e)
             raise e
+
+    async def __anext__(self):
+        """
+        Get next child process from the pipe.
+
+        Returns child processes and tracks their index.
+        Sets parent reference on children.
+        """
+        # Delegate to asend with None (equivalent to __anext__)
+        return await self.asend(None)
 
 
 
@@ -1808,6 +1849,7 @@ class FlowRunner:
         self._last_process: Process | None = None
         self._event_level = event_level
         self._pending_child: Process | None = None  # Child process waiting to be pushed
+        self._response_to_send: Any = None  # Response from child to send to parent
 
     @property
     def current(self) -> Process:
@@ -1830,6 +1872,19 @@ class FlowRunner:
         process = self.stack.pop()
         self._last_process = process
         return process
+
+    def _get_response(self) -> Any:
+        """
+        Get the response to send to the next process.
+
+        When a child process completes, we send its response to the parent.
+        This mimics the behavior of: response = yield child_process
+        """
+        if self._response_to_send is not None:
+            response = self._response_to_send
+            self._response_to_send = None
+            return response
+        return None
 
     def __aiter__(self):
         """Make FlowRunner async iterable."""
@@ -1862,23 +1917,19 @@ class FlowRunner:
 
                 # Check if process is starting - emit start event before first value
                 if not process._did_start:
-                    # Call __anext__() to start the process and get first value
-                    value = await process.__anext__()
-                    self.last_value = value
+                    # Start the process and get first value
+                    await process.on_start()
+                    process._did_start = True
 
-                    # Now emit start event if needed
+                    # Now emit start event if needed (before getting first value)
                     if self.should_output_events:
                         if event := await self.try_build_start_event(process, None):
-                            # If value is a child process, save it to push in next iteration
-                            if isinstance(value, (StreamController, PipeController)):
-                                self._pending_child = value
                             return event
 
-                    # Continue to process the value below (fall through)
-                else:
-                    # Normal iteration - get next value
-                    value = await process.__anext__()
-                    self.last_value = value
+                # Get next value using asend (to support yield-based communication)
+                response = self._get_response()
+                value = await process.asend(response)
+                self.last_value = value
 
                 # If value is a Process (from PipeController), push to stack
                 if isinstance(value, (StreamController, PipeController)):
@@ -1901,6 +1952,16 @@ class FlowRunner:
             except StopAsyncIteration:
                 # Process exhausted, pop from stack
                 process = self.pop()
+
+                # Get the response from the completed process
+                if hasattr(process, 'get_response'):
+                    response = process.get_response()
+                else:
+                    response = self.last_value
+
+                # If there's a parent waiting, save the response to send
+                if self.stack:
+                    self._response_to_send = response
 
                 # Emit stop event if needed
                 if self.should_output_events:
