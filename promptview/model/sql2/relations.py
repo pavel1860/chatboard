@@ -126,126 +126,159 @@ class SubQueryRelation:
         return self.sources[0], self.get(field_name)
     
     
+class Source:
+    """
+    Wraps a relation (table/subquery) with optional join metadata.
+    Acts as a transparent proxy to the underlying relation.
+    """
+
+    def __init__(
+        self,
+        base: RelationProtocol,
+        alias: str | None = None,
+        join_on: tuple[RelField, RelField] | None = None,
+        join_type: str = "INNER"
+    ):
+        self.base = base
+        self._alias = alias
+        self.join_on = join_on  # (left_field, right_field)
+        self.join_type = join_type
+
+    @property
+    def name(self) -> str:
+        """Get the base name of the wrapped relation"""
+        return self.base.name
+
+    @property
+    def alias(self) -> str | None:
+        """Get the alias for this source"""
+        return self._alias
+
+    @property
+    def final_name(self) -> str:
+        """Get the effective name (alias if set, otherwise base name)"""
+        return self._alias or self.base.final_name
+
+    @property
+    def sources(self) -> tuple[RelationProtocol, ...]:
+        """Return the base's leaf sources (for compatibility with RelationProtocol)"""
+        return self.base.sources if hasattr(self.base, 'sources') else (self.base,)
+
+    def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
+        """Iterate over fields, wrapping them to reference this Source"""
+        for field in self.base.iter_fields(include_sources):
+            yield RelField(
+                source=self,
+                name=field.name,
+                field_info=field.field_info,
+                alias=field.alias,
+                is_query=field.is_query
+            )
+
+    def get(self, field_name: str) -> RelField:
+        """Get a field by name, wrapping it to reference this Source"""
+        field = self.base.get(field_name)
+        return RelField(
+            source=self,
+            name=field.name,
+            field_info=field.field_info,
+            alias=field.alias,
+            is_query=getattr(field, 'is_query', False)
+        )
+
+    def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
+        """Resolve field and return self as the source"""
+        _, field = self.base.get_source_and_field(field_name)
+        return self, RelField(
+            source=self,
+            name=field.name,
+            field_info=field.field_info,
+            alias=field.alias,
+            is_query=getattr(field, 'is_query', False)
+        )
+
+    def get_on_clause(self) -> str:
+        """Generate SQL ON clause for this join"""
+        if not self.join_on:
+            raise ValueError(f"Source {self.name} has no join information")
+        left_field, right_field = self.join_on
+        return f"{left_field.source.final_name}.{left_field.name} = {self.final_name}.{right_field.name}"
+
+    def __repr__(self):
+        join_info = f", join_on={self.join_on}" if self.join_on else ""
+        return f"Source({self.base.name}, alias={self._alias}{join_info})"
+
+
 TypeRelationInput = tuple[RelationProtocol, ...] | RelationProtocol
 
 
 class Relation:
-    
-    
-    def __init__(self, sources: TypeRelationInput, alias: str | None = None):
-        if not isinstance(sources, tuple):
-            sources = (sources,)
+    """
+    A relation composed of multiple sources with join information.
+    Each source (except the first) contains join metadata.
+    """
+
+    def __init__(self, sources: list[Source], alias: str | None = None):
+        if not sources:
+            raise ValueError("Relation must have at least one source")
         self.sources = sources
-        self.name = self._gen_name(sources)
         self.alias = alias
-        
-        
+
+    @property
+    def name(self) -> str:
+        """Generate name from all source names"""
+        if len(self.sources) == 1:
+            return self.sources[0].name
+        return "_".join([s.name for s in self.sources])
+
     @property
     def final_name(self) -> str:
+        """Get the effective name (alias if set, otherwise generated name)"""
         return self.alias or self.name
-        
-    
-    def _gen_name(self, sources: tuple[RelationProtocol, ...]):
-        if not isinstance(sources, tuple):
-            sources = (sources,)
-        if len(sources) == 1:
-            if isinstance(sources[0], BaseNamespace):
-                return sources[0].name
-            else:
-                return sources[0].name
-        else:
-            return "_".join([source.name for source in sources])
-        
-    # def join(self, target: "Relation", on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
-    #     # self.sources = self.sources + (target,)
-    #     return Relation(self.sources + (target,), alias=self.alias)
+
     def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
-        _f = field_name.split(".")
-        if len(_f) == 1:
-            # if len(self.sources) == 1:
-            #     source = self.sources[0]
-            #     field = self._get_field(source, _f[0])
-            #     return source, field
-            # else:
-            #     raise ValueError(f"for multiple sources, field name must be in the format of 'source.field'")
-            source = self.sources[0]
-            field = self._get_field(source, _f[0])
-            return source, field
-        elif len(_f) == 2:
-            source = self._get_source(_f[0])
-            field = self._get_field(source, _f[1])
-            return source, field
+        """Find which source contains this field"""
+        # Parse "source.field" or just "field"
+        parts = field_name.split(".")
+
+        if len(parts) == 1:
+            # Try first source (default)
+            return self.sources[0].get_source_and_field(field_name)
+        elif len(parts) == 2:
+            # Find the source by name
+            source_name, field = parts
+            for source in self.sources:
+                if source.name == source_name or source.final_name == source_name:
+                    return source.get_source_and_field(field)
+            raise ValueError(f"Source {source_name} not found in {self.name}")
         else:
             raise ValueError(f"Invalid field name: {field_name} on {self.name}")
-        
-    def _get_source(self, source_name: str) -> RelationProtocol:        
-        for source in self.sources:
-            if source.name == source_name:
-                return source
-        raise ValueError(f"Source {source_name} not found on {self.name}")
-    
-    def _get_field(self, source: RelationProtocol, field_name: str) -> RelField:
-        for field in self.iter_fields(include_sources={source.name}):
-            if field.name == field_name:
-                return field
-        raise ValueError(f"Field {field_name} not found on {source.name}")
-        
+
     def get(self, field_name: str) -> RelField:
+        """Get a field by name"""
         _, field = self.get_source_and_field(field_name)
         return field
-        
-    
+
     def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
+        """Iterate over all fields from all sources"""
         for source in self.sources:
             if include_sources is not None and source.name not in include_sources:
                 continue
-            for field in source.iter_fields():
-                    yield field
-                    
+            for field in source.iter_fields(include_sources):
+                yield field
+
     def print(self):
+        """Print a simple representation"""
         return f"REL({self.name})"
-            
-            
+
     def print_tree(self, indent: int = 0):
+        """Print a tree representation of the relation structure"""
         print(" " * indent + "REL", self.name)
         indent += 1
         for source in self.sources:
-            if isinstance(source, NsRelation):
-                print(" " * indent + "NS", source.name)
-            elif isinstance(source, Relation):
-                source.print_tree(indent)
-            else:
-                raise ValueError(f"Invalid source: {source}")
-            
-        
-        
+            join_info = f" [{source.join_type} JOIN]" if source.join_on else ""
+            print(" " * indent + f"SOURCE: {source.name} (alias={source.alias}){join_info}")
+
     def __repr__(self):
-        fields = ", ".join([f"{field}" for field in self.iter_fields()])
-        # table = self.source.name if isinstance(self.source, BaseNamespace) else "None"
-        return f"{self.__class__.__name__}({self.name} -> {{{fields}}})"
-
-
-# class RelationProjection(Relation):
-    
-#     def __init__(self, sources: "tuple[RelationProtocol, ...]", fields: tuple[str, ...], alias: str | None = None):
-#         super().__init__(sources, alias=alias)
-#         self.fields = fields
-        
-        
-#     def iter_fields(self):
-#         for field in super().iter_fields():
-#             if field.name in self.fields:
-#                 yield field
-        
-
-class JoinedRelation(Relation):
-    def __init__(self, left_rel: RelationProtocol, right_rel: RelationProtocol, on: tuple[RelField, RelField], join_type: str = "INNER", alias: str | None = None):
-        super().__init__((right_rel,), alias=alias)
-        self.left_rel = left_rel
-        self.right_rel = right_rel
-        self.on = on
-        self.join_type = join_type
-        
-        
-    def get_on_clause(self) -> str:
-        return f"{self.left_rel.final_name}.{self.on[0].name} = {self.right_rel.final_name}.{self.on[1].name}"
+        sources_str = ", ".join([repr(s) for s in self.sources])
+        return f"Relation([{sources_str}])"

@@ -1,4 +1,5 @@
-from .relational_queries import QuerySet, SelectQuerySet, JoinedRelation, Relation
+from .relational_queries import QuerySet, SelectQuerySet, Relation
+from .relations import Source
 import textwrap
 
 
@@ -37,26 +38,44 @@ class Compiler:
             
             
             
-    def compile_select_query(self, query: SelectQuerySet):            
-            
+    def compile_select_query(self, query: SelectQuerySet):
+        """Compile a SELECT query with FROM and JOIN clauses"""
+
         sql = "SELECT\n"
+
+        # Compile projection fields
         for field in query.iter_projection_fields():
             if field.is_query:
-                sub_sql = self.compile(field.source)            
+                # Subquery field
+                sub_sql = self.compile(field.source)
                 sub_sql = textwrap.indent(sub_sql, "  ")
                 sub_sql = f"(\n{sub_sql}\n) AS {field.name},\n"
                 sub_sql = textwrap.indent(sub_sql, "    ")
                 sql += sub_sql
             else:
+                # Regular field
                 sql += f"    {field.source.final_name}.{field.name},\n"
-        # sql += f"FROM {query.target.name}"
-        sql += f"FROM "
-        
-        for source in query.sources:
-            if not isinstance(source, JoinedRelation):
-                sql += f"{source.final_name}\n"
-            elif isinstance(source, Relation):
-                sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"
-            else:
-                continue
+
+        # Remove trailing comma
+        sql = sql.rstrip(",\n") + "\n"
+
+        # Compile FROM and JOIN clauses
+        if not query.sources:
+            raise ValueError("Query has no sources")
+
+        # First source is the FROM clause (should have no join_on)
+        first_source = query.sources[0]
+        sql += f"FROM {first_source.final_name}\n"
+
+        # Rest are JOINs
+        for source in query.sources[1:]:
+            if not isinstance(source, Source):
+                raise ValueError(f"Expected Source, got {type(source)}")
+
+            if source.join_on is None:
+                raise ValueError(f"Source {source.name} is missing join information")
+
+            # Add JOIN clause
+            sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"
+
         return sql
