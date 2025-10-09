@@ -1811,43 +1811,62 @@ class PipeController(ObservableProcess):
 
     async def asend(self, value: Any = None):
         """
-        Send a value into the pipe's internal generator.
+        Send a value into the pipe's internal generator or replay from saved outputs.
 
         This enables yield-based communication where parent can receive
         responses from completed child processes:
             response = yield child_process
 
+        In replay mode, yields saved child processes from the span instead of
+        executing the generator function.
+
         Args:
             value: The value to send (typically response from completed child)
 
         Returns:
-            Next child process from the generator
+            Next child process from the generator or replay buffer
         """
         if not self._did_start:
             await self.on_start()
             self._did_start = True
 
         try:
-            # Send value into the internal generator using asend()
-            child = await self._gen.asend(value)
-            self._last_ip = child
+            # Check if we're in replay mode
+            if self._replay_outputs is not None:
+                # Replay mode: yield from saved outputs
+                if self._replay_index >= len(self._replay_outputs):
+                    await self.on_stop()
+                    raise StopAsyncIteration
 
-            # Set parent reference and index on child
-            if isinstance(child, (StreamController, PipeController)):
-                child.parent = self
-                child.index = self.index
-                self.index += 1  # Increment for next child
+                child = self._replay_outputs[self._replay_index]
+                self._replay_index += 1
+                self._last_ip = child
 
-            # Log child as output
-            if self._span_tree and isinstance(child, (StreamController, PipeController)):
-                # Log the child's span tree once it's created
-                # Note: child span is created when child.on_start() is called by FlowRunner
-                pass
+                if not self._did_yield:
+                    self._did_yield = True
 
-            if not self._did_yield:
-                self._did_yield = True
+                return child
+            else:
+                # Normal mode: send value into the internal generator using asend()
+                child = await self._gen.asend(value)
+                self._last_ip = child
 
-            return child
+                # Set parent reference and index on child
+                if isinstance(child, (StreamController, PipeController)):
+                    child.parent = self
+                    child.index = self.index
+                    self.index += 1  # Increment for next child
+
+                # Log child as output
+                if self._span_tree and isinstance(child, (StreamController, PipeController)):
+                    # Log the child's span tree once it's created
+                    # Note: child span is created when child.on_start() is called by FlowRunner
+                    pass
+
+                if not self._did_yield:
+                    self._did_yield = True
+
+                return child
         except StopAsyncIteration:
             await self.on_stop()
             raise StopAsyncIteration
