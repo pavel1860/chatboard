@@ -172,18 +172,22 @@ class SpanTree:
             ExecutionSpan.query(
                 turn_cte = Turn.query(branch=branch_id).where(lambda t: t.id.isin([turn_id])),                
             )
-            .include(Artifact)
-            .include(SpanValue.query().include(Artifact))
+            .include(Artifact)            
             .order_by("artifact_id")
         )
         if span_id is not None:
             target_span = await ExecutionSpan.query(branch=branch_id).where(id=span_id).one()
-            spans_query = spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
-        spans = await spans_query.print()
-        
+            spans_query = (
+                spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
+                .include(SpanValue.query().include(Artifact).where(lambda v: v.artifact_id <= target_span.artifact_id))
+            )
+        else:
+            spans_query = spans_query.include(SpanValue.query().include(Artifact))
+        spans = await spans_query
         if copy:
             parent_translation = {}
-            span_lookup = {s.id: s for s in spans}
+            span_lookup_artifact = {}
+            span_lookup = {}
             for s in spans:
                 prev_id = s.id
                 prev_artifact_id = s.artifact_id
@@ -193,8 +197,8 @@ class SpanTree:
                     s.parent_span_id = parent_translation[s.parent_span_id]
                 s = await s.save()
                 parent_translation[prev_id] = s.id
-                span_lookup[prev_artifact_id] = s
-                
+                span_lookup_artifact[prev_artifact_id] = s
+
             for i, s in enumerate(spans):
                 span_values = []
                 for v in s.values:
@@ -204,10 +208,11 @@ class SpanTree:
                     v.span_id = s.id
                     # v = await v.save()
                     if v.kind == "span":
-                        v.artifact_id = span_lookup[v.artifact_id].artifact_id
+                        v.artifact_id = span_lookup_artifact[v.artifact_id].artifact_id
 
                     span_values.append(v)
                 span_values = await asyncio.gather(*[s.save() for s in span_values])
+                span_lookup[s.id] = s
                 s.values = span_values
         
         values = await cls.instantiate_values(spans, branch_id)
