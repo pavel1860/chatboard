@@ -347,7 +347,7 @@ class Context(BaseModel):
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
         return self
 
-    async def load_replay(self, turn_id: int, span_id: int | None = None) -> "Context":
+    async def load_replay(self, turn_id: int, span_id: int | None = None, branch_id: int | None = None) -> "Context":
         """
         Load a span tree for replay mode.
 
@@ -370,7 +370,7 @@ class Context(BaseModel):
                     print(event)
         """
         from .span_tree import SpanTree
-        self._replay_span_tree = await SpanTree.from_turn(turn_id, span_id)
+        self._replay_span_tree = await SpanTree.replay_from_turn(turn_id, span_id, branch_id)
         return self
 
     # def fork(self, branch: Branch | None = None)
@@ -403,7 +403,7 @@ class Context(BaseModel):
             branch = await self._get_branch()
         # if self.turn is None:
             # raise ValueError("Turn not found")
-
+        self._tasks = []
         return self._branch
     
     def get_models(self):

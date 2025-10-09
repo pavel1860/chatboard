@@ -1328,12 +1328,18 @@ class ObservableProcess(Process):
         self.resolved_kwargs: dict[str, Any] = {}
         self.index: int = 0  # Set by parent PipeController
         self.parent: "ObservableProcess | None" = None  # Set by parent PipeController
+        self._replay_inputs: list | None = None  # Saved inputs for replay mode
+        self._replay_outputs: list | None = None  # Saved outputs for replay mode
+        self._replay_index: int = 0  # Current position in replay buffer
 
     @property
     def ctx(self):
         """Get current context."""
         from .context import Context
-        return Context.current()
+        ctx = Context.current()
+        if ctx is None:
+            raise ValueError("StreamController requires Context. Use 'async with Context():'")
+        return ctx
 
     @property
     def span(self):
@@ -1353,18 +1359,39 @@ class ObservableProcess(Process):
             Tuple of (bound_arguments, resolved_kwargs)
         """
         from .injector import resolve_dependencies_kwargs
-        bound, kwargs = await resolve_dependencies_kwargs(
-            self._gen_func,
-            args=self._args,
-            kwargs=self._kwargs
+        
+        
+        self._span_tree = await self.ctx.start_span(
+            component=self,
+            name=self._name,
+            span_type=self._span_type,
+            tags=self._tags
         )
-        self.resolved_kwargs = kwargs
+        
+        if self._span_tree.inputs:            
+            self._replay_inputs = [v.value for v in self._span_tree.inputs]
+            bound, kwargs = await resolve_dependencies_kwargs(
+                self._gen_func,
+                args=self._replay_inputs,
+                kwargs={}
+            )
+            self.resolved_kwargs = kwargs
+        else:   
+            bound, kwargs = await resolve_dependencies_kwargs(
+                self._gen_func,
+                args=self._args,
+                kwargs=self._kwargs
+            )
+            self.resolved_kwargs = kwargs
 
-        # Log resolved kwargs as inputs
-        if self._span_tree:
-            for key, value in kwargs.items():
-                if value is not None:
-                    await self._span_tree.log_value(value, io_kind="input")
+            # Log resolved kwargs as inputs
+            if self._span_tree:
+                for key, value in kwargs.items():
+                    if value is not None:
+                        await self._span_tree.log_value(value, io_kind="input")
+                    
+        if self._span_tree.outputs:
+            self._replay_outputs = [v.value for v in self._span_tree.outputs]
 
         return bound, kwargs
 
@@ -1590,10 +1617,7 @@ class StreamController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._stream: Process | None = None
-        self._accumulator: Accumulator | None = None
-        self._replay_inputs: list | None = None  # Saved inputs for replay mode
-        self._replay_outputs: list | None = None  # Saved outputs for replay mode
-        self._replay_index: int = 0  # Current position in replay buffer
+        self._accumulator: Accumulator | None = None        
 
     async def on_start(self):
         """
@@ -1605,37 +1629,14 @@ class StreamController(ObservableProcess):
         In replay mode (when span has saved outputs), sets up replay buffer instead of
         executing the generator function.
         """
-        if self.ctx is None:
-            raise ValueError("StreamController requires Context. Use 'async with Context():'")
+        bound, kwargs =await self._resolve_dependencies()
+        gen_instance = self._gen_func(*bound.args, **bound.kwargs)
 
-        # Create span and register with context
-        # This may return a replay span with saved outputs
-        self._span_tree = await self.ctx.start_span(
-            component=self,
-            name=self._name,
-            span_type=self._span_type,
-            tags=self._tags
-        )
-
-        # Check if this is a replay span (has saved outputs)
-        if self._span_tree.outputs:
-            # Replay mode: extract saved inputs and outputs
-            self._replay_inputs = [v.value for v in self._span_tree.inputs]
-            self._replay_outputs = [v.value for v in self._span_tree.outputs]
-            # Don't create stream/accumulator - we'll yield from replay buffer
-        else:
-            # Normal mode: resolve dependencies and create stream
-            # Resolve dependencies and log inputs
-            bound, kwargs = await self._resolve_dependencies()
-
-            # Call generator function with resolved kwargs
-            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
-
-            # Wrap in Stream process and pipe through Accumulator
-            stream = Stream(gen_instance, name=f"{self._name}_stream")
-            accumulator = Accumulator()
-            self._stream = stream | accumulator
-            self._accumulator = accumulator
+        # Wrap in Stream process and pipe through Accumulator
+        stream = Stream(gen_instance, name=f"{self._name}_stream")
+        accumulator = Accumulator()
+        self._stream = stream | accumulator
+        self._accumulator = accumulator
 
     async def __anext__(self):
         """
@@ -1769,9 +1770,7 @@ class PipeController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
-        self._replay_inputs: list | None = None  # Saved inputs for replay mode
-        self._replay_outputs: list | None = None  # Saved outputs (child processes) for replay mode
-        self._replay_index: int = 0  # Current position in replay buffer
+        
 
     async def on_start(self):
         """
@@ -1783,31 +1782,10 @@ class PipeController(ObservableProcess):
         In replay mode (when span has saved outputs), sets up replay buffer instead of
         executing the generator function.
         """
-        if self.ctx is None:
-            raise ValueError("PipeController requires Context. Use 'async with Context():'")
-
-        # Create span and register with context
-        # This may return a replay span with saved outputs
-        self._span_tree = await self.ctx.start_span(
-            component=self,
-            name=self._name,
-            span_type=self._span_type,
-            tags=self._tags
-        )
-
-        # Check if this is a replay span (has saved outputs)
-        if self._span_tree.outputs:
-            # Replay mode: extract saved inputs and outputs
-            self._replay_inputs = [v.value for v in self._span_tree.inputs]
-            self._replay_outputs = [v.value for v in self._span_tree.outputs]
-            # Don't create generator - we'll yield from replay buffer
-        else:
-            # Normal mode: resolve dependencies and create generator
-            # Resolve dependencies and log inputs
-            bound, kwargs = await self._resolve_dependencies()
-
-            # Call generator function with resolved kwargs
-            self._gen = self._gen_func(*bound.args, **bound.kwargs)
+        
+        bound, kwargs = await self._resolve_dependencies()
+        # Call generator function with resolved kwargs
+        self._gen = self._gen_func(*bound.args, **bound.kwargs)
 
     async def asend(self, value: Any = None):
         """

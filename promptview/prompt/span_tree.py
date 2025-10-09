@@ -1,4 +1,5 @@
 from codecs import lookup
+import asyncio
 from typing import Any
 from ..model.versioning.models import Turn, Branch, ExecutionSpan, SpanValue, Artifact, ValueIOKind
 
@@ -155,27 +156,65 @@ class SpanTree:
             return span
         return populate_children(SpanTree(root))
     
+    
+    @classmethod
+    async def from_turn(cls, turn_id: int, span_id: int | None = None, branch_id: int | None = None):
+        return await cls._from_turn(turn_id, span_id,branch_id, copy=False, skip_last=False)
+    
+    @classmethod
+    async def replay_from_turn(cls, turn_id: int, span_id: int | None = None, branch_id: int | None = None):
+        return await cls._from_turn(turn_id, span_id, branch_id, copy=True, skip_last=True)
         
     @classmethod
-    async def from_turn(cls, turn_id: int, span_id: int | None = None):
+    async def _from_turn(cls, turn_id: int, span_id: int | None = None, branch_id: int | None = None, copy: bool = False, skip_last: bool = False):
         
         spans_query = (
             ExecutionSpan.query(
-                turn_cte = Turn.query().where(lambda t: t.id.isin([turn_id]))
+                turn_cte = Turn.query(branch=branch_id).where(lambda t: t.id.isin([turn_id])),                
             )
             .include(Artifact)
             .include(SpanValue.query().include(Artifact))
             .order_by("artifact_id")
         )
         if span_id is not None:
-            target_span = await ExecutionSpan.query().where(id=span_id).one()
+            target_span = await ExecutionSpan.query(branch=branch_id).where(id=span_id).one()
             spans_query = spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
-        spans = await spans_query
-        values = await cls.instantiate_values(spans)
+        spans = await spans_query.print()
+        
+        if copy:
+            parent_translation = {}
+            span_lookup = {s.id: s for s in spans}
+            for s in spans:
+                prev_id = s.id
+                prev_artifact_id = s.artifact_id
+                s.id = None
+                s.artifact_id = None
+                if s.parent_span_id is not None:
+                    s.parent_span_id = parent_translation[s.parent_span_id]
+                s = await s.save()
+                parent_translation[prev_id] = s.id
+                span_lookup[prev_artifact_id] = s
+                
+            for i, s in enumerate(spans):
+                span_values = []
+                for v in s.values:
+                    if skip_last and i == len(spans) - 1 and v.io_kind == "output":
+                        continue
+                    v.id = None
+                    v.span_id = s.id
+                    # v = await v.save()
+                    if v.kind == "span":
+                        v.artifact_id = span_lookup[v.artifact_id].artifact_id
+
+                    span_values.append(v)
+                span_values = await asyncio.gather(*[s.save() for s in span_values])
+                s.values = span_values
+        
+        values = await cls.instantiate_values(spans, branch_id)
         return cls.load_span_list(spans, values)
     
     @classmethod
-    async def instantiate_values(cls, spans):
+    async def instantiate_values(cls, spans, branch_id: int | None = None):
         from ..model import NamespaceManager
         model_ids = defaultdict(list)
         for s in spans:
@@ -185,7 +224,7 @@ class SpanTree:
         value_dict = {}
         for k in model_ids:
             ns = NamespaceManager.get_namespace(k)
-            models = await ns._model_cls.query().where(lambda m: m.artifact_id.isin(model_ids[k]))
+            models = await ns._model_cls.query(branch=branch_id).where(lambda m: m.artifact_id.isin(model_ids[k]))
             value_dict[k] = {m.artifact_id: m for m in models}
         return value_dict
     
@@ -216,3 +255,14 @@ class SpanTree:
                 print("  ", v.id, v.io_kind, v.artifact_id)
             for v in s.outputs:
                 print("  ", v.id, v.io_kind, v.artifact_id)
+                
+                
+
+                
+                
+                
+                
+                
+                
+                
+                
