@@ -1,4 +1,4 @@
-from .relations import RelationProtocol, Relation, RelField, TypeRelationInput, SubQueryRelation, Source, NsRelation
+from .relations import RelationProtocol, Relation, RelField, TypeRelationInput, Source, NsRelation
 from .expressions import Expression, WhereClause
 from typing import Iterator
 
@@ -39,7 +39,7 @@ def join(
         # Left is a Source wrapper
         left_sources = [left_rel]
     else:
-        # Left is a leaf relation (NsRelation, SubQueryRelation, etc.)
+        # Left is a leaf relation (NsRelation, QuerySet, etc.)
         # Wrap it in a Source
         left_sources = [Source(base=left_rel)]
 
@@ -86,6 +86,7 @@ class QuerySet(Relation):
         super().__init__(source_list, alias=alias)
         self.projection_fields: dict[str, dict] | None = None
         self.where_clause = WhereClause()
+        self.group_by_fields: list[str] = []
         self.ctes = list[QuerySet]()
         self.recursive_cte = False
 
@@ -122,11 +123,21 @@ class QuerySet(Relation):
         """Add a WHERE condition to the query"""
         self.where_clause &= condition
         return self
+
+    # grouping
+    def group_by(self, *fields: str):
+        """Add GROUP BY fields to the query"""
+        self.group_by_fields.extend(fields)
+        return self
     
     
     def include(self, target: "QuerySet", alias: str):
-        sub_query = SubQueryRelation(target, alias=alias)
-        self.sources = self.sources + (sub_query,)
+        """Include a subquery in SELECT clause as a field (scalar subquery)"""
+        # Add the subquery to projection_fields
+        if self.projection_fields is None:
+            self.projection_fields = {}
+        # Store the QuerySet directly - compiler will handle it
+        self.projection_fields[alias] = {"subquery": target}
         return self
     
     def with_cte(self, cte: "QuerySet"):
@@ -134,17 +145,26 @@ class QuerySet(Relation):
         return self
     
     def iter_projection_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
-        """Iterate over fields that were selected via .select()"""
-        for field in self.iter_fields(include_sources):
-            if self.projection_fields is None:
-                # No projection specified, return all fields
+        """Iterate over fields that were selected via .select() or .include()"""
+        if self.projection_fields is None:
+            # No projection specified, return all fields
+            for field in self.iter_fields(include_sources):
                 yield field
-            else:
-                # Check if this field matches any selected projection
-                # Try both qualified name (source.field) and just field name
-                qualified_name = f"{field.source.name}.{field.name}"
-                if field.name in self.projection_fields or qualified_name in self.projection_fields:
-                    yield field
+        else:
+            # Iterate through projection_fields to maintain order
+            for proj_name, proj_meta in self.projection_fields.items():
+                # Check if this is a subquery
+                if "subquery" in proj_meta:
+                    # Yield a RelField representing the subquery
+                    subquery = proj_meta["subquery"]
+                    yield RelField(source=subquery, name=proj_name, is_query=True)
+                else:
+                    # Regular field - find it in the sources
+                    for field in self.iter_fields(include_sources):
+                        qualified_name = f"{field.source.name}.{field.name}"
+                        if field.name == proj_name or qualified_name == proj_name:
+                            yield field
+                            break
 
         
             

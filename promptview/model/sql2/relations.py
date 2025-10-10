@@ -150,36 +150,6 @@ class NsRelation:
         return f"NS({self.name})"
     
     
-class SubQueryRelation:
-    
-    def __init__(self, source: "QuerySet", alias: str):
-        self.sources = (source,)
-        self._alias = alias
-    
-    @property
-    def name(self) -> str:
-        return self._alias
-    
-    @property
-    def alias(self) -> str:
-        return self._alias
-    
-    @property
-    def final_name(self) -> str:
-        return self.alias or self.name
-    
-    def get(self, field_name: str) -> RelField:
-        if field_name == self.alias:
-            return RelField(self.sources[0], self.alias, is_query=True)
-        raise ValueError(f"Field {field_name} not found on {self.name}")
-    
-    def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
-        yield RelField(self.sources[0], self.alias, is_query=True)
-        
-    def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
-        return self.sources[0], self.get(field_name)
-    
-    
 class Source:
     """
     Wraps a relation (table/subquery) with optional join metadata.
@@ -220,36 +190,71 @@ class Source:
 
     def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
         """Iterate over fields, wrapping them to reference this Source"""
-        for field in self.base.iter_fields(include_sources):
+        # Check if base is a QuerySet (subquery)
+        from .relational_queries import QuerySet
+        is_subquery = isinstance(self.base, QuerySet)
+
+        if is_subquery:
+            # For subqueries, yield a single field representing the subquery itself
             yield RelField(
+                source=self.base,
+                name=self.final_name,
+                is_query=True
+            )
+        else:
+            # For regular relations, proxy to base fields
+            for field in self.base.iter_fields(include_sources):
+                yield RelField(
+                    source=self,
+                    name=field.name,
+                    field_info=field.field_info,
+                    alias=field.alias,
+                    is_query=field.is_query
+                )
+
+    def get(self, field_name: str) -> RelField:
+        """Get a field by name, wrapping it to reference this Source"""
+        # Check if base is a QuerySet (subquery)
+        from .relational_queries import QuerySet
+        is_subquery = isinstance(self.base, QuerySet)
+
+        if is_subquery:
+            # For subqueries, the field_name should match the alias
+            if field_name == self.final_name:
+                return RelField(source=self.base, name=self.final_name, is_query=True)
+            raise ValueError(f"Field {field_name} not found. Subquery only exposes '{self.final_name}'")
+        else:
+            # For regular relations, proxy to base
+            field = self.base.get(field_name)
+            return RelField(
                 source=self,
                 name=field.name,
                 field_info=field.field_info,
                 alias=field.alias,
-                is_query=field.is_query
+                is_query=getattr(field, 'is_query', False)
             )
-
-    def get(self, field_name: str) -> RelField:
-        """Get a field by name, wrapping it to reference this Source"""
-        field = self.base.get(field_name)
-        return RelField(
-            source=self,
-            name=field.name,
-            field_info=field.field_info,
-            alias=field.alias,
-            is_query=getattr(field, 'is_query', False)
-        )
 
     def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
         """Resolve field and return self as the source"""
-        _, field = self.base.get_source_and_field(field_name)
-        return self, RelField(
-            source=self,
-            name=field.name,
-            field_info=field.field_info,
-            alias=field.alias,
-            is_query=getattr(field, 'is_query', False)
-        )
+        # Check if base is a QuerySet (subquery)
+        from .relational_queries import QuerySet
+        is_subquery = isinstance(self.base, QuerySet)
+
+        if is_subquery:
+            # For subqueries, return the subquery field
+            if field_name == self.final_name:
+                return self.base, RelField(source=self.base, name=self.final_name, is_query=True)
+            raise ValueError(f"Field {field_name} not found. Subquery only exposes '{self.final_name}'")
+        else:
+            # For regular relations, proxy to base
+            _, field = self.base.get_source_and_field(field_name)
+            return self, RelField(
+                source=self,
+                name=field.name,
+                field_info=field.field_info,
+                alias=field.alias,
+                is_query=getattr(field, 'is_query', False)
+            )
 
     def get_on_clause(self) -> str:
         """Generate SQL ON clause for this join"""
@@ -264,6 +269,64 @@ class Source:
 
 
 TypeRelationInput = tuple[RelationProtocol, ...] | RelationProtocol
+
+
+class JsonObjectRelation:
+    """
+    Transforms a source relation into a JSON object structure.
+    Maps source fields to JSON keys using jsonb_build_object().
+    """
+
+    def __init__(self, source: RelationProtocol, field_mapping: dict[str, str], alias: str | None = None):
+        """
+        Args:
+            source: The source relation to transform
+            field_mapping: Map of JSON keys to source field names
+                          e.g., {"comment_id": "id", "comment_text": "text"}
+            alias: Optional alias for this relation
+        """
+        self.field_mapping = field_mapping
+        self._alias = alias
+        # Wrap source in Source if it isn't already
+        if isinstance(source, Source):
+            self._source = source
+        else:
+            self._source = Source(base=source)
+
+    @property
+    def name(self) -> str:
+        return self._alias or f"{self._source.name}_json"
+
+    @property
+    def alias(self) -> str | None:
+        return self._alias
+
+    @property
+    def final_name(self) -> str:
+        return self._alias or self.name
+
+    @property
+    def sources(self) -> tuple[Source, ...]:
+        """Return the wrapped source"""
+        return (self._source,)
+
+    def get(self, field_name: str) -> RelField:
+        """Get a field - only the JSON object itself is available"""
+        if field_name == self.final_name or field_name == "json_object":
+            # Return a special field representing the JSON object
+            return RelField(self, "json_object", is_query=False)
+        raise ValueError(f"Field {field_name} not found. JsonObjectRelation only exposes 'json_object'")
+
+    def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
+        """Iterate over fields - yields the JSON object itself"""
+        yield RelField(self, "json_object", is_query=False)
+
+    def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
+        """Resolve field reference"""
+        return self, self.get(field_name)
+
+    def __repr__(self):
+        return f"JsonObjectRelation({self._source.name}, mapping={self.field_mapping})"
 
 
 class Relation:

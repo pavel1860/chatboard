@@ -211,3 +211,64 @@ class WhereClause:
 
     def __repr__(self):
         return f"WhereClause({self.condition})"
+
+
+class AggregateFunction(Expression):
+    """Base class for aggregate functions"""
+    pass
+
+
+class JsonAgg(AggregateFunction):
+    """
+    json_agg() aggregate function - collects values into JSON array.
+
+    Can wrap any expression or relation (like JsonObjectRelation).
+    """
+
+    def __init__(self, expr):
+        """
+        Args:
+            expr: Expression or Relation to aggregate
+        """
+        self.expr = expr
+
+
+class Count(AggregateFunction):
+    """COUNT() aggregate function"""
+
+    def __init__(self, expr=None, distinct: bool = False):
+        """
+        Args:
+            expr: Expression to count (None for COUNT(*))
+            distinct: If True, count only distinct values
+        """
+        self.expr = expr
+        self.distinct = distinct
+
+
+class Sum(AggregateFunction):
+    """SUM() aggregate function"""
+
+    def __init__(self, expr):
+        self.expr = expr
+
+
+class Avg(AggregateFunction):
+    """AVG() aggregate function"""
+
+    def __init__(self, expr):
+        self.expr = expr
+
+
+class Min(AggregateFunction):
+    """MIN() aggregate function"""
+
+    def __init__(self, expr):
+        self.expr = expr
+
+
+class Max(AggregateFunction):
+    """MAX() aggregate function"""
+
+    def __init__(self, expr):
+        self.expr = expr

@@ -152,7 +152,15 @@ class Compiler:
 
         # First source is the FROM clause (should have no join_on)
         first_source = query.sources[0]
-        sql += f"FROM {first_source.final_name}\n"
+
+        # Check if first source is a subquery
+        if isinstance(first_source.base, QuerySet):
+            # Compile subquery
+            sub_sql = self.compile(first_source.base)
+            sub_sql = textwrap.indent(sub_sql, "    ")
+            sql += f"FROM (\n{sub_sql}\n) AS {first_source.final_name}\n"
+        else:
+            sql += f"FROM {first_source.final_name}\n"
 
         # Rest are JOINs
         for source in query.sources[1:]:
@@ -162,8 +170,15 @@ class Compiler:
             if source.join_on is None:
                 raise ValueError(f"Source {source.name} is missing join information")
 
-            # Add JOIN clause
-            sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"
+            # Check if source is a subquery
+            if isinstance(source.base, QuerySet):
+                # Compile subquery for JOIN
+                sub_sql = self.compile(source.base)
+                sub_sql = textwrap.indent(sub_sql, "    ")
+                sql += f"{source.join_type} JOIN (\n{sub_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
+            else:
+                # Regular table JOIN
+                sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"
 
         # Add WHERE clause if present
         if query.where_clause:
