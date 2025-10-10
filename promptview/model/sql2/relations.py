@@ -14,12 +14,66 @@ class RelField:
         self.alias = alias
         self.source = source
         self.is_query = is_query
-        
+
     def __repr__(self):
         return f"RelField({self.source.name}.{self.name})"
-    
+
     def __str__(self):
         return f"{self.source.name}.{self.name}"
+
+    # Comparison operators
+    def __eq__(self, other):
+        from .expressions import Eq
+        return Eq(self, other)
+
+    def __ne__(self, other):
+        from .expressions import Neq
+        return Neq(self, other)
+
+    def __gt__(self, other):
+        from .expressions import Gt
+        return Gt(self, other)
+
+    def __ge__(self, other):
+        from .expressions import Gte
+        return Gte(self, other)
+
+    def __lt__(self, other):
+        from .expressions import Lt
+        return Lt(self, other)
+
+    def __le__(self, other):
+        from .expressions import Lte
+        return Lte(self, other)
+
+    # Helper methods for SQL operations
+    def is_null(self):
+        from .expressions import IsNull
+        return IsNull(self)
+
+    def is_not_null(self):
+        from .expressions import IsNotNull
+        return IsNotNull(self)
+
+    def in_(self, values: list):
+        from .expressions import In
+        return In(self, values)
+
+    def not_in(self, values: list):
+        from .expressions import NotIn
+        return NotIn(self, values)
+
+    def between(self, lower, upper):
+        from .expressions import Between
+        return Between(self, lower, upper)
+
+    def like(self, pattern: str):
+        from .expressions import Like
+        return Like(self, pattern)
+
+    def ilike(self, pattern: str):
+        from .expressions import ILike
+        return ILike(self, pattern)
     
     
 

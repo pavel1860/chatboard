@@ -1,4 +1,5 @@
 from .relations import RelationProtocol, Relation, RelField, TypeRelationInput, SubQueryRelation, Source, NsRelation
+from .expressions import Expression, WhereClause
 from typing import Iterator
 
 
@@ -84,6 +85,7 @@ class QuerySet(Relation):
 
         super().__init__(source_list, alias=alias)
         self.projection_fields: dict[str, dict] | None = None
+        self.where_clause = WhereClause()
         self.ctes = list[QuerySet]()
         self.recursive_cte = False
 
@@ -112,7 +114,13 @@ class QuerySet(Relation):
         self.projection_fields = {}
         for f in fields:
             self.get(f)
-            self.projection_fields[f] = {}        
+            self.projection_fields[f] = {}
+        return self
+
+    # filtering
+    def where(self, condition: Expression):
+        """Add a WHERE condition to the query"""
+        self.where_clause &= condition
         return self
     
     
