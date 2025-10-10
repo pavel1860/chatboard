@@ -874,12 +874,16 @@ await test_full_replay()
 # Implementation starts here
 
 from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
+
 import json
 import asyncio
+
+from promptview.model.versioning.models import ExecutionSpan
 
 if TYPE_CHECKING:
     from .span_tree import SpanTree
     from pydantic import BaseModel
+    from promptview.block import Block
 
 
 class FlowException(Exception):
@@ -1390,7 +1394,7 @@ class ObservableProcess(Process):
                     if value is not None:
                         await self._span_tree.log_value(value, io_kind="input")
                     
-        if self._span_tree.outputs:
+        if self._span_tree.outputs and not self._span_tree.need_to_replay:
             self._replay_outputs = [v.value for v in self._span_tree.outputs]
 
         return bound, kwargs
@@ -1617,7 +1621,8 @@ class StreamController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._stream: Process | None = None
-        self._accumulator: Accumulator | None = None        
+        self._accumulator: Accumulator | None = None
+        self._parser: Parser | None = None
 
     async def on_start(self):
         """
@@ -1636,7 +1641,18 @@ class StreamController(ObservableProcess):
         stream = Stream(gen_instance, name=f"{self._name}_stream")
         accumulator = Accumulator()
         self._stream = stream | accumulator
+        if self._parser is not None:
+            self._stream |= self._parser
         self._accumulator = accumulator
+        
+    def parse(self, block_schema: "Block"):
+        if self._parser is not None:
+            raise FlowException("Parser already initialized")
+        if self._gen_func is None:
+            raise FlowException("StreamController is not initialized")
+        self._parser = Parser(response_schema=block_schema)      
+        return self
+
 
     async def __anext__(self):
         """
@@ -1786,6 +1802,15 @@ class PipeController(ObservableProcess):
         bound, kwargs = await self._resolve_dependencies()
         # Call generator function with resolved kwargs
         self._gen = self._gen_func(*bound.args, **bound.kwargs)
+        
+        
+    async def on_value_event(self, value: Any):
+        if isinstance(value, StreamController):
+            return None
+        elif isinstance(value, PipeController):
+            return None
+        else:
+            return await super().on_value_event(value)
 
     async def asend(self, value: Any = None):
         """
@@ -1822,6 +1847,16 @@ class PipeController(ObservableProcess):
 
                 if not self._did_yield:
                     self._did_yield = True
+                    
+                # if isinstance(child, ExecutionSpan):
+                while isinstance(child, ExecutionSpan):
+                    # child_span = self.ctx.
+                    print(f"child is ExecutionSpan {child.id}")
+                    path = [int(i) for i in child.path.split(".")]
+                    child_span = self.ctx.get_span(path[1:])
+                    if child_span is None:
+                        raise ValueError(f"Child span not found for {child.path}")
+                    child = child_span.outputs[-1].value
 
                 return child
             else:

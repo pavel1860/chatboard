@@ -6,7 +6,7 @@ import contextvars
 from typing import TYPE_CHECKING, AsyncGenerator, Callable, List, Literal, Type, TypeVar, Self, Any
 
 from promptview.model.base.types import ArtifactKind
-from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type
+from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
 
 
 
@@ -807,11 +807,14 @@ class ExecutionSpan(VersionedModel):
         else:
             return "parameter", None
         
-    def _build_parameter(self, value: SerializableType) -> Parameter:
+    def _build_parameter(self, value: SerializableType) -> Parameter | None:
         if isinstance(value, Parameter):
             return value
-        else:            
-            return Parameter(data={"value": serialize_value(value)}, kind=type_to_str(type(value)))
+        else:     
+            kind = type_to_str_or_none(type(value))
+            if kind is None:
+                return None
+            return Parameter(data={"value": serialize_value(value)}, kind=kind)
             
 
     
@@ -820,8 +823,11 @@ class ExecutionSpan(VersionedModel):
         if kind == "block":
             return await self.add_block_event(target, io_kind)
         elif kind == "parameter":
-            parm = await self._build_parameter(target).save()
-            artifact_id = parm.artifact.id            
+            param = self._build_parameter(target)
+            if param is None:
+                return None
+            await param.save()
+            artifact_id = param.artifact.id            
         try:
             value = await self.add(SpanValue(
                 span_id=self.id,

@@ -1,6 +1,6 @@
 from codecs import lookup
 import asyncio
-from typing import Any
+from typing import Any, Iterator
 from ..model.versioning.models import Turn, Branch, ExecutionSpan, SpanValue, Artifact, ValueIOKind
 
 
@@ -45,7 +45,7 @@ class SpanTree:
         span_type: str = "component", 
         tags: list[str] = [], 
         index: int = 0, 
-        children: list[ExecutionSpan] | None = None, 
+        children: "list[SpanTree] | None" = None, 
         parent: "SpanTree | None" = None,
         values: list[Value] | None = None
     ):    
@@ -62,6 +62,7 @@ class SpanTree:
         self._lookup = {}
         self.children = children or []
         self._values = values or []
+        self.need_to_replay = False
 
         
     async def save(self):
@@ -112,12 +113,12 @@ class SpanTree:
             children = last.children
         return last
     
-    def traverse(self):
+    def traverse(self) -> "Iterator[SpanTree]":
         yield self
         for child in self.children:
             yield from child.traverse()
             
-    def get(self, path: list[int]):
+    def get(self, path: list[int]) -> "SpanTree | None":
         if len(path) == 0:
             return self
         if len(path) == 1:
@@ -184,10 +185,11 @@ class SpanTree:
         else:
             spans_query = spans_query.include(SpanValue.query().include(Artifact))
         spans = await spans_query
+        span_lookup = None
         if copy:
             parent_translation = {}
-            span_lookup_artifact = {}
-            span_lookup = {}
+            span_lookup_artifact = {}   
+            span_lookup = {}         
             for s in spans:
                 prev_id = s.id
                 prev_artifact_id = s.artifact_id
@@ -212,21 +214,30 @@ class SpanTree:
 
                     span_values.append(v)
                 span_values = await asyncio.gather(*[s.save() for s in span_values])
-                span_lookup[s.id] = s
+                span_lookup[s.artifact_id] = s
                 s.values = span_values
         
-        values = await cls.instantiate_values(spans, branch_id)
-        return cls.load_span_list(spans, values)
+        values = await cls.instantiate_values(spans, branch_id, span_lookup)
+        span_tree = cls.load_span_list(spans, values)
+        last_span = span_tree.get_last()
+        while last_span is not None:
+            last_span.need_to_replay = True
+            last_span = last_span.parent
+        return span_tree
     
     @classmethod
-    async def instantiate_values(cls, spans, branch_id: int | None = None):
+    async def instantiate_values(cls, spans, branch_id: int | None = None, span_lookup: dict[int, ExecutionSpan] | None = None):
         from ..model import NamespaceManager
         model_ids = defaultdict(list)
+        value_dict = {"execution_spans": {}}
         for s in spans:
             for v in s.values:
-                model_ids[v.artifact.model_name].append(v.artifact.id)
+                if span_lookup and v.kind == "span":
+                    value_dict["execution_spans"][v.artifact_id] = span_lookup[v.artifact_id]
+                else:
+                    model_ids[v.artifact.model_name].append(v.artifact.id)
 
-        value_dict = {}
+        
         for k in model_ids:
             ns = NamespaceManager.get_namespace(k)
             models = await ns._model_cls.query(branch=branch_id).where(lambda m: m.artifact_id.isin(model_ids[k]))

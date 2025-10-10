@@ -34,6 +34,15 @@ def type_to_str(value_type: type) -> str:
         raise UnknownType(f"Unknown type: {value_type}")
     return val
 
+def type_to_str_or_none(value_type: type) -> str | None:
+    val = REVERSE_TYPE_REGISTRY.get(value_type, None)
+    if val is None:
+        return None
+    return val
+
+
+
+
 def str_to_type(value_type: str) -> type:
     val = TYPE_REGISTRY.get(value_type, None)
     if val is None:

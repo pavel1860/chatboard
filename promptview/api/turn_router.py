@@ -175,8 +175,5 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                 
 
             return turns    
-        
-        
-        
-        
+
     return turn_router

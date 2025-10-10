@@ -86,6 +86,7 @@ class Context(BaseModel):
         self._branch = branch
         self._turn = turn
         self._auth = auth
+        self._root_span: "SpanTree | None" = None
         
     @property
     def request_id(self):
@@ -218,6 +219,7 @@ class Context(BaseModel):
                 replay_span = None  # Name mismatch, don't use replay span
 
         # Use replay span if available, otherwise create new span
+        
         if replay_span:
             # Replay mode: use existing span with saved outputs
             span_tree = replay_span
@@ -267,6 +269,8 @@ class Context(BaseModel):
 
             parent._child_count += 1
 
+        if self._root_span is None:
+            self._root_span = span_tree
         return span_tree
 
     async def end_span(self):
@@ -288,6 +292,11 @@ class Context(BaseModel):
             self._execution_path.pop()
 
         return component
+    
+    def get_span(self, path: list[int]) -> "SpanTree | None":
+        if self._root_span is None:
+            return None
+        return self._root_span.get(path)
 
     @classmethod
     async def from_request(cls, request: "Request"):

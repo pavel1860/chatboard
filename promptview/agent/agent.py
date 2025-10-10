@@ -121,13 +121,18 @@ class Agent():
                 if message.role == "user":
                     events = []  
                     index = 0
-                    async for event in self.agent_component(message).stream_events():
+                    async for event in self.agent_component(message).stream():
                         event = self.update_metadata(ctx, index, events, event)
                         index += 1
                         if filter_events and event.type not in filter_events:
                             continue
-                        # if ctx.user.auto_respond == "auto":            
-                        yield event.to_ndjson() if serialize else event
+                        # if ctx.user.auto_respond == "auto":
+                        try:            
+                            yield event.to_ndjson() if serialize else event
+                        except Exception as e:
+                            raise e
+                            print("Error streaming event", e)
+                            
                 # elif message.role == "assistant":
                 #     if not user.phone_number:
                 #         raise ValueError("User phone number is required")
