@@ -1,8 +1,14 @@
-from typing import Any, Type
+from typing import TYPE_CHECKING, Any, Type
 from pydantic._internal._model_construction import ModelMetaclass
 
 from promptview.model.base.types import VersioningStrategy
 from .namespace_manager2 import NamespaceManager
+
+if TYPE_CHECKING:
+    from .base.base_field_info import BaseFieldInfo
+    from .sql2.relations import RelField
+
+
 
 class ModelMeta(ModelMetaclass, type):
     """
@@ -77,3 +83,30 @@ class ModelMeta(ModelMetaclass, type):
         if db_type == "postgres":
             name += "s"
         return name
+
+    def __getattr__(cls, name) -> Any:
+        """
+        This method is called for EVERY attribute access on the class!
+        Be careful - you must use super().__getattribute__ to avoid infinite recursion.
+        """
+        from .sql2.relations import RelField, NsRelation
+        from .namespace_manager2 import NamespaceManager
+        # Get the _columns dict (must use super to avoid recursion)
+        if name.startswith("_"):
+            return super().__getattribute__(name)
+        
+        
+        columns = super().__getattribute__('model_fields')    
+        
+        # If it's a column, return a ColumnExpression
+        if name in columns:
+            # print(name)
+            try:
+                ns = cls.get_namespace()
+                return RelField(NsRelation(ns), name, columns[name])
+            except:
+                return super().__getattribute__(name)
+            # return super().__getattribute__(name)
+        
+        # Otherwise, return the normal attribute
+        return super().__getattribute__(name)
