@@ -301,3 +301,22 @@ class Max(AggregateFunction):
 
     def __init__(self, expr):
         self.expr = expr
+
+
+class Coalesce(Expression):
+    """
+    COALESCE() function - returns the first non-NULL value.
+
+    Example:
+        Coalesce(field, Value(0))  # Return field or 0 if NULL
+        Coalesce(subquery, Value("[]"))  # Return subquery result or empty array
+    """
+
+    def __init__(self, *values):
+        """
+        Args:
+            *values: Variable number of expressions to check for NULL
+        """
+        if len(values) < 2:
+            raise ValueError("COALESCE requires at least 2 arguments")
+        self.values = values

@@ -3,7 +3,7 @@ from .relations import Source, RelField
 from .expressions import (
     Expression, BinaryExpression, And, Or, Not, IsNull, IsNotNull,
     In, NotIn, Between, Like, ILike, Value, JsonBuildObject, JsonAgg,
-    Count, Sum, Avg, Min, Max, AggregateFunction
+    Count, Sum, Avg, Min, Max, AggregateFunction, Coalesce
 )
 import textwrap
 
@@ -196,6 +196,20 @@ class Compiler:
             # MAX(expression)
             expr_sql = self.compile_expr(expr.expr)
             return f"MAX({expr_sql})"
+
+        elif isinstance(expr, Coalesce):
+            # COALESCE(value1, value2, ...)
+            values_sql = []
+            for value in expr.values:
+                # Check if it's a QuerySet (subquery)
+                if isinstance(value, QuerySet):
+                    # Compile as subquery
+                    sub_sql = self.compile(value)
+                    values_sql.append(f"({sub_sql})")
+                else:
+                    # Regular expression
+                    values_sql.append(self.compile_expr(value))
+            return f"COALESCE({', '.join(values_sql)})"
 
         else:
             raise ValueError(f"Unknown expression type: {type(expr)}")
