@@ -17,6 +17,7 @@ class Compiler:
     def __init__(self):
         self.params = []
         self.param_counter = 1
+        self.indent_level = 0  # Track current indentation level for nested expressions
 
     def compile(self, query: QuerySet):
     
@@ -125,14 +126,42 @@ class Compiler:
 
         elif isinstance(expr, JsonBuildObject):
             # jsonb_build_object('key1', value1, 'key2', value2, ...)
+            # Format with newlines for readability
             pairs = []
+            has_nested_json = False
+
+            # Increase indent level for nested content
+            self.indent_level += 1
+            base_indent = "    " * self.indent_level
+
             for key, value_expr in expr.field_map.items():
                 # Key is always a string literal
-                pairs.append(f"'{key}'")
+                key_sql = f"'{key}'"
                 # Value can be any expression
                 value_sql = self.compile_expr(value_expr)
-                pairs.append(value_sql)
-            return f"jsonb_build_object({', '.join(pairs)})"
+
+                # Check if this value is a nested JSON object
+                if isinstance(value_expr, (JsonBuildObject, JsonAgg)):
+                    has_nested_json = True
+
+                pairs.append(f"{key_sql}, {value_sql}")
+
+            # Decrease indent level after processing
+            self.indent_level -= 1
+            outer_indent = "    " * self.indent_level
+
+            # Use multi-line format if:
+            # - More than 2 keys, OR
+            # - Contains nested JSON objects, OR
+            # - We're already nested (indent_level > 1)
+            if len(pairs) > 2 or has_nested_json or self.indent_level > 0:
+                # Multi-line format with proper indentation
+                pairs_formatted = f",\n{base_indent}".join(pairs)
+                return f"jsonb_build_object(\n{base_indent}{pairs_formatted}\n{outer_indent})"
+            else:
+                # Single line for simple cases (only at top level with <= 2 keys)
+                pairs_flat = ", ".join(pairs)
+                return f"jsonb_build_object({pairs_flat})"
 
         elif isinstance(expr, JsonAgg):
             # json_agg(expression)
