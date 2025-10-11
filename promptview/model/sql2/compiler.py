@@ -269,4 +269,18 @@ class Compiler:
             group_by_sql = ", ".join(query.group_by_fields)
             sql += f"GROUP BY {group_by_sql}\n"
 
+        # Add ORDER BY clause if present
+        if query.order_by_fields:
+            order_parts = [f"{field} {direction}" for field, direction in query.order_by_fields]
+            order_by_sql = ", ".join(order_parts)
+            sql += f"ORDER BY {order_by_sql}\n"
+
+        # Add LIMIT clause if present
+        if query.limit_value is not None:
+            sql += f"LIMIT {query.limit_value}\n"
+
+        # Add OFFSET clause if present
+        if query.offset_value is not None:
+            sql += f"OFFSET {query.offset_value}\n"
+
         return sql

@@ -87,6 +87,9 @@ class QuerySet(Relation):
         self.projection_fields: dict[str, dict] | None = None
         self.where_clause = WhereClause()
         self.group_by_fields: list[str] = []
+        self.order_by_fields: list[tuple[str, str]] = []  # List of (field, direction) tuples
+        self.limit_value: int | None = None
+        self.offset_value: int | None = None
         self.ctes = list[QuerySet]()
         self.recursive_cte = False
 
@@ -137,6 +140,36 @@ class QuerySet(Relation):
     def group_by(self, *fields: str):
         """Add GROUP BY fields to the query"""
         self.group_by_fields.extend(fields)
+        return self
+
+    # ordering
+    def order_by(self, *fields: str):
+        """
+        Add ORDER BY fields to the query.
+
+        Use '-' prefix for descending order:
+            query.order_by('posts.created_at')  # ASC
+            query.order_by('-posts.created_at')  # DESC
+            query.order_by('posts.title', '-posts.created_at')  # Multiple
+        """
+        for field in fields:
+            if field.startswith('-'):
+                # Descending order
+                self.order_by_fields.append((field[1:], 'DESC'))
+            else:
+                # Ascending order (default)
+                self.order_by_fields.append((field, 'ASC'))
+        return self
+
+    # pagination
+    def limit(self, limit: int):
+        """Set LIMIT for the query"""
+        self.limit_value = limit
+        return self
+
+    def offset(self, offset: int):
+        """Set OFFSET for the query"""
+        self.offset_value = offset
         return self
     
     
