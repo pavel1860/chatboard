@@ -165,8 +165,23 @@ class Compiler:
 
         elif isinstance(expr, JsonAgg):
             # json_agg(expression)
-            inner_sql = self.compile_expr(expr.expr)
-            return f"json_agg({inner_sql})"
+            # Check if the inner expression is complex (JsonBuildObject)
+            if isinstance(expr.expr, JsonBuildObject):
+                # Increase indent for nested content
+                self.indent_level += 1
+                inner_sql = self.compile_expr(expr.expr)
+                self.indent_level -= 1
+
+                # Format with newlines if JsonBuildObject was multi-line
+                if '\n' in inner_sql:
+                    indent = "    " * (self.indent_level + 1)
+                    inner_sql_indented = textwrap.indent(inner_sql, indent)
+                    return f"json_agg(\n{inner_sql_indented}\n{' ' * (self.indent_level * 4)})"
+                else:
+                    return f"json_agg({inner_sql})"
+            else:
+                inner_sql = self.compile_expr(expr.expr)
+                return f"json_agg({inner_sql})"
 
         elif isinstance(expr, Count):
             # COUNT(*) or COUNT(DISTINCT expr)
@@ -204,8 +219,10 @@ class Compiler:
                 # Check if it's a QuerySet (subquery)
                 if isinstance(value, QuerySet):
                     # Compile as subquery
-                    sub_sql = self.compile(value)
-                    values_sql.append(f"({sub_sql})")
+                    sub_sql, _ = self.compile(value)
+                    # Indent the subquery for readability
+                    sub_sql = textwrap.indent(sub_sql.rstrip(), "    ")
+                    values_sql.append(f"(\n{sub_sql}\n    )")
                 else:
                     # Regular expression
                     values_sql.append(self.compile_expr(value))
