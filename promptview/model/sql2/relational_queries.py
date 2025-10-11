@@ -90,6 +90,8 @@ class QuerySet(Relation):
         self.order_by_fields: list[tuple[str, str]] = []  # List of (field, direction) tuples
         self.limit_value: int | None = None
         self.offset_value: int | None = None
+        self.distinct_enabled: bool = False
+        self.distinct_on_fields: list[str] = []  # Fields for DISTINCT ON (Postgres-specific)
         self.ctes = list[QuerySet]()
         self.recursive_cte = False
 
@@ -170,6 +172,24 @@ class QuerySet(Relation):
     def offset(self, offset: int):
         """Set OFFSET for the query"""
         self.offset_value = offset
+        return self
+
+    # distinct
+    def distinct(self, *fields: str):
+        """
+        Add DISTINCT or DISTINCT ON to the query.
+
+        Usage:
+            query.distinct()  # SELECT DISTINCT
+            query.distinct('posts.author_id')  # SELECT DISTINCT ON (posts.author_id)
+            query.distinct('posts.author_id', 'posts.category')  # Multiple fields
+        """
+        if fields:
+            # DISTINCT ON (Postgres-specific)
+            self.distinct_on_fields = list(fields)
+        else:
+            # Simple DISTINCT
+            self.distinct_enabled = True
         return self
     
     

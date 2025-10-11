@@ -203,7 +203,18 @@ class Compiler:
     def compile_select_query(self, query: SelectQuerySet):
         """Compile a SELECT query with FROM and JOIN clauses"""
 
-        sql = "SELECT\n"
+        sql = "SELECT"
+
+        # Add DISTINCT or DISTINCT ON
+        if query.distinct_on_fields:
+            # DISTINCT ON (Postgres-specific)
+            distinct_fields = ", ".join(query.distinct_on_fields)
+            sql += f" DISTINCT ON ({distinct_fields})"
+        elif query.distinct_enabled:
+            # Simple DISTINCT
+            sql += " DISTINCT"
+
+        sql += "\n"
 
         # Compile projection fields
         for field in query.iter_projection_fields():
