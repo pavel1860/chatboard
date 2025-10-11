@@ -247,25 +247,31 @@ class Compiler:
 
         sql += "\n"
 
-        # Compile projection fields
-        for field in query.iter_projection_fields():
-            if field.is_query:
-                # Subquery field (from include)
-                sub_sql = self.compile(field.source)
-                sub_sql = textwrap.indent(sub_sql, "  ")
-                sub_sql = f"(\n{sub_sql}\n) AS {field.name},\n"
-                sub_sql = textwrap.indent(sub_sql, "    ")
-                sql += sub_sql
-            elif isinstance(field.source, Expression):
-                # Expression field (from select_expr)
-                expr_sql = self.compile_expr(field.source)
-                sql += f"    {expr_sql} AS {field.name},\n"
-            else:
-                # Regular field
-                sql += f"    {field.source.final_name}.{field.name},\n"
+        # Check if this is a scalar subquery
+        if query.scalar_expr is not None:
+            # Scalar subquery: just compile the expression without alias
+            expr_sql = self.compile_expr(query.scalar_expr)
+            sql += f"    {expr_sql}\n"
+        else:
+            # Regular query: compile projection fields with aliases
+            for field in query.iter_projection_fields():
+                if field.is_query:
+                    # Subquery field (from include)
+                    sub_sql, _ = self.compile(field.source)
+                    sub_sql = textwrap.indent(sub_sql, "  ")
+                    sub_sql = f"(\n{sub_sql}\n) AS {field.name},\n"
+                    sub_sql = textwrap.indent(sub_sql, "    ")
+                    sql += sub_sql
+                elif isinstance(field.source, Expression):
+                    # Expression field (from select_expr)
+                    expr_sql = self.compile_expr(field.source)
+                    sql += f"    {expr_sql} AS {field.name},\n"
+                else:
+                    # Regular field
+                    sql += f"    {field.source.final_name}.{field.name},\n"
 
-        # Remove trailing comma
-        sql = sql.rstrip(",\n") + "\n"
+            # Remove trailing comma
+            sql = sql.rstrip(",\n") + "\n"
 
         # Compile FROM and JOIN clauses
         if not query.sources:

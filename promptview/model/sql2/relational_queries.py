@@ -94,6 +94,7 @@ class QuerySet(Relation):
         self.distinct_on_fields: list[str] = []  # Fields for DISTINCT ON (Postgres-specific)
         self.ctes = list[QuerySet]()
         self.recursive_cte = False
+        self.scalar_expr: Expression | None = None  # For scalar subqueries (select_scalar)
 
     def join(self, target: RelationProtocol, on: tuple[str, str], join_type: str = "INNER", alias: str | None = None):
         """Add a join to this QuerySet (mutates in place)"""
@@ -130,6 +131,21 @@ class QuerySet(Relation):
         if self.projection_fields is None:
             self.projection_fields = {}
         self.projection_fields[alias] = {"expr": expr}
+        return self
+
+    def select_scalar(self, expr: Expression):
+        """
+        Select a single scalar expression (for subqueries used as expressions).
+
+        This marks the query as a scalar subquery that returns a single value without an alias.
+        Use this when the query will be embedded in expressions like COALESCE, IN, etc.
+
+        Example:
+            comments_subquery.select_scalar(
+                JsonAgg(JsonBuildObject({...}))
+            )
+        """
+        self.scalar_expr = expr
         return self
 
     # filtering
