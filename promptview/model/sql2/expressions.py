@@ -213,6 +213,29 @@ class WhereClause:
         return f"WhereClause({self.condition})"
 
 
+class JsonBuildObject(Expression):
+    """
+    jsonb_build_object() function - constructs a JSON object from key-value pairs.
+
+    Takes a dictionary mapping JSON keys to expressions (fields, subqueries, other expressions).
+
+    Example:
+        JsonBuildObject({
+            "id": posts_rel.get("id"),
+            "title": posts_rel.get("title"),
+            "comment_count": comment_count_subquery
+        })
+    """
+
+    def __init__(self, field_map: dict[str, any]):
+        """
+        Args:
+            field_map: Dictionary mapping JSON keys (strings) to expressions/fields
+                      e.g., {"id": posts.get("id"), "count": Count()}
+        """
+        self.field_map = field_map
+
+
 class AggregateFunction(Expression):
     """Base class for aggregate functions"""
     pass
@@ -222,13 +245,19 @@ class JsonAgg(AggregateFunction):
     """
     json_agg() aggregate function - collects values into JSON array.
 
-    Can wrap any expression or relation (like JsonObjectRelation).
+    Can wrap any expression (fields, JsonBuildObject, subqueries, etc.).
+
+    Example:
+        JsonAgg(JsonBuildObject({
+            "id": comments.get("id"),
+            "text": comments.get("text")
+        }))
     """
 
     def __init__(self, expr):
         """
         Args:
-            expr: Expression or Relation to aggregate
+            expr: Expression to aggregate into JSON array
         """
         self.expr = expr
 

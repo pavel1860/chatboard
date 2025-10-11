@@ -271,64 +271,6 @@ class Source:
 TypeRelationInput = tuple[RelationProtocol, ...] | RelationProtocol
 
 
-class JsonObjectRelation:
-    """
-    Transforms a source relation into a JSON object structure.
-    Maps source fields to JSON keys using jsonb_build_object().
-    """
-
-    def __init__(self, source: RelationProtocol, field_mapping: dict[str, str], alias: str | None = None):
-        """
-        Args:
-            source: The source relation to transform
-            field_mapping: Map of JSON keys to source field names
-                          e.g., {"comment_id": "id", "comment_text": "text"}
-            alias: Optional alias for this relation
-        """
-        self.field_mapping = field_mapping
-        self._alias = alias
-        # Wrap source in Source if it isn't already
-        if isinstance(source, Source):
-            self._source = source
-        else:
-            self._source = Source(base=source)
-
-    @property
-    def name(self) -> str:
-        return self._alias or f"{self._source.name}_json"
-
-    @property
-    def alias(self) -> str | None:
-        return self._alias
-
-    @property
-    def final_name(self) -> str:
-        return self._alias or self.name
-
-    @property
-    def sources(self) -> tuple[Source, ...]:
-        """Return the wrapped source"""
-        return (self._source,)
-
-    def get(self, field_name: str) -> RelField:
-        """Get a field - only the JSON object itself is available"""
-        if field_name == self.final_name or field_name == "json_object":
-            # Return a special field representing the JSON object
-            return RelField(self, "json_object", is_query=False)
-        raise ValueError(f"Field {field_name} not found. JsonObjectRelation only exposes 'json_object'")
-
-    def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
-        """Iterate over fields - yields the JSON object itself"""
-        yield RelField(self, "json_object", is_query=False)
-
-    def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
-        """Resolve field reference"""
-        return self, self.get(field_name)
-
-    def __repr__(self):
-        return f"JsonObjectRelation({self._source.name}, mapping={self.field_mapping})"
-
-
 class Relation:
     """
     A relation composed of multiple sources with join information.

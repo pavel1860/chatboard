@@ -112,10 +112,19 @@ class QuerySet(Relation):
     
     # projection
     def select(self, *fields: str):
-        self.projection_fields = {}
+        """Select fields by name (e.g., 'posts.id', 'posts.title')"""
+        if self.projection_fields is None:
+            self.projection_fields = {}
         for f in fields:
             self.get(f)
             self.projection_fields[f] = {}
+        return self
+
+    def select_expr(self, expr: Expression, alias: str):
+        """Select an expression with an alias (for aggregates, functions, subqueries, etc.)"""
+        if self.projection_fields is None:
+            self.projection_fields = {}
+        self.projection_fields[alias] = {"expr": expr}
         return self
 
     # filtering
@@ -145,7 +154,7 @@ class QuerySet(Relation):
         return self
     
     def iter_projection_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
-        """Iterate over fields that were selected via .select() or .include()"""
+        """Iterate over fields that were selected via .select(), .select_expr(), or .include()"""
         if self.projection_fields is None:
             # No projection specified, return all fields
             for field in self.iter_fields(include_sources):
@@ -153,8 +162,14 @@ class QuerySet(Relation):
         else:
             # Iterate through projection_fields to maintain order
             for proj_name, proj_meta in self.projection_fields.items():
-                # Check if this is a subquery
-                if "subquery" in proj_meta:
+                # Check if this is an expression (from select_expr)
+                if "expr" in proj_meta:
+                    # Yield a RelField representing the expression
+                    # The compiler will recognize this and compile the expression
+                    expr = proj_meta["expr"]
+                    yield RelField(source=expr, name=proj_name, is_query=False)
+                # Check if this is a subquery (from include)
+                elif "subquery" in proj_meta:
                     # Yield a RelField representing the subquery
                     subquery = proj_meta["subquery"]
                     yield RelField(source=subquery, name=proj_name, is_query=True)

@@ -2,7 +2,8 @@ from .relational_queries import QuerySet, SelectQuerySet, Relation
 from .relations import Source, RelField
 from .expressions import (
     Expression, BinaryExpression, And, Or, Not, IsNull, IsNotNull,
-    In, NotIn, Between, Like, ILike, Value
+    In, NotIn, Between, Like, ILike, Value, JsonBuildObject, JsonAgg,
+    Count, Sum, Avg, Min, Max, AggregateFunction
 )
 import textwrap
 
@@ -27,7 +28,7 @@ class Compiler:
             raise ValueError(f"Unknown query type: {type(query)}")
             
         sql = cte_sql + sql
-        return sql
+        return sql, self.params
 
     def compile_ctes(self, query: QuerySet):
         if not query.ctes:
@@ -122,6 +123,51 @@ class Compiler:
             pattern_sql = self.compile_expr(expr.pattern)
             return f"{value_sql} ILIKE {pattern_sql}"
 
+        elif isinstance(expr, JsonBuildObject):
+            # jsonb_build_object('key1', value1, 'key2', value2, ...)
+            pairs = []
+            for key, value_expr in expr.field_map.items():
+                # Key is always a string literal
+                pairs.append(f"'{key}'")
+                # Value can be any expression
+                value_sql = self.compile_expr(value_expr)
+                pairs.append(value_sql)
+            return f"jsonb_build_object({', '.join(pairs)})"
+
+        elif isinstance(expr, JsonAgg):
+            # json_agg(expression)
+            inner_sql = self.compile_expr(expr.expr)
+            return f"json_agg({inner_sql})"
+
+        elif isinstance(expr, Count):
+            # COUNT(*) or COUNT(DISTINCT expr)
+            if expr.expr is None:
+                return "COUNT(*)"
+            else:
+                distinct = "DISTINCT " if expr.distinct else ""
+                expr_sql = self.compile_expr(expr.expr)
+                return f"COUNT({distinct}{expr_sql})"
+
+        elif isinstance(expr, Sum):
+            # SUM(expression)
+            expr_sql = self.compile_expr(expr.expr)
+            return f"SUM({expr_sql})"
+
+        elif isinstance(expr, Avg):
+            # AVG(expression)
+            expr_sql = self.compile_expr(expr.expr)
+            return f"AVG({expr_sql})"
+
+        elif isinstance(expr, Min):
+            # MIN(expression)
+            expr_sql = self.compile_expr(expr.expr)
+            return f"MIN({expr_sql})"
+
+        elif isinstance(expr, Max):
+            # MAX(expression)
+            expr_sql = self.compile_expr(expr.expr)
+            return f"MAX({expr_sql})"
+
         else:
             raise ValueError(f"Unknown expression type: {type(expr)}")
 
@@ -133,12 +179,16 @@ class Compiler:
         # Compile projection fields
         for field in query.iter_projection_fields():
             if field.is_query:
-                # Subquery field
+                # Subquery field (from include)
                 sub_sql = self.compile(field.source)
                 sub_sql = textwrap.indent(sub_sql, "  ")
                 sub_sql = f"(\n{sub_sql}\n) AS {field.name},\n"
                 sub_sql = textwrap.indent(sub_sql, "    ")
                 sql += sub_sql
+            elif isinstance(field.source, Expression):
+                # Expression field (from select_expr)
+                expr_sql = self.compile_expr(field.source)
+                sql += f"    {expr_sql} AS {field.name},\n"
             else:
                 # Regular field
                 sql += f"    {field.source.final_name}.{field.name},\n"
@@ -184,5 +234,10 @@ class Compiler:
         if query.where_clause:
             where_sql = self.compile_expr(query.where_clause.condition)
             sql += f"WHERE {where_sql}\n"
+
+        # Add GROUP BY clause if present
+        if query.group_by_fields:
+            group_by_sql = ", ".join(query.group_by_fields)
+            sql += f"GROUP BY {group_by_sql}\n"
 
         return sql
