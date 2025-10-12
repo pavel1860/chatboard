@@ -10,6 +10,7 @@ import time
 
 if TYPE_CHECKING:
     from .model3 import Model
+    from .versioning.models import Branch
 
 _extensions_registry = set()
 
@@ -17,6 +18,7 @@ class NamespaceManager:
     _initialized = False
     _registry: Dict[tuple[str, str], Any] = {}
     _model_to_namespace: Dict[Type, Any] = {}
+    _main_branch: "Branch | None" = None
 
     @classmethod
     def build_namespace(cls, model_name: str, db_type: str = "postgres", versioning_strategy: VersioningStrategy = VersioningStrategy.NONE, **kwargs):
@@ -54,15 +56,32 @@ class NamespaceManager:
         if ns is None:
             raise ValueError(f"Namespace for model {model_cls} not found.")
         return ns
+    
+    @classmethod
+    def get_main_branch(cls):
+        if cls._main_branch is None:
+            raise ValueError("Main branch not initialized")
+        return cls._main_branch
+    
+    @classmethod
+    def get_main_branch_or_none(cls):
+        return cls._main_branch
+    
+    
+    @classmethod
+    async def init_main_branch(cls):
+        from .versioning.models import Branch
+        cls._main_branch = await Branch().get_main()
+        print("Initialized main branch")
 
 
     @classmethod
-    async def initialize_all(cls):
+    async def initialize_all(cls, init_main_branch: bool = True):
         if cls._initialized:
             print("NamespaceManager already initialized")
             return        
         start_time = time.time()
-        from .versioning.models import Branch
+            
         await PgNamespace.install_extensions()
         # Branch.model_rebuild()
         # BlockNode.model_rebuild()
@@ -77,6 +96,8 @@ class NamespaceManager:
             if hasattr(ns, "add_foreign_keys"):
                 await ns.add_foreign_keys()
         print("Added all foreign keys")
+        if init_main_branch:
+            await cls.init_main_branch()
         end_time = time.time()
         print(f"initialize_all took {end_time - start_time} seconds")
         cls._initialized = True

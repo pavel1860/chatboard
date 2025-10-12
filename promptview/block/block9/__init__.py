@@ -1,4 +1,4 @@
-from .block import Block, BlockChunk, BlockSent, BlockSchema, AttrBlock
+from .block import Block, BlockChunk, BlockSent, BlockSchema, AttrBlock, BlockList
 from .base_blocks import BaseBlock, BaseContent, BlockSequence
 __all__ = [
     "Block",
@@ -9,4 +9,5 @@ __all__ = [
     "BlockSequence",
     "BlockSchema",
     "AttrBlock",
+    "BlockList",
 ]

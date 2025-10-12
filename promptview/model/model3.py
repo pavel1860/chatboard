@@ -175,7 +175,7 @@ class Model(BaseModel, metaclass=ModelMeta):
     
     
     
-    async def add(self, model: MODEL | Modelable[MODEL], **kwargs) -> MODEL:
+    async def add(self, model: MODEL | Modelable[MODEL], should_append: bool = True, **kwargs) -> MODEL:
         """Add a model instance to the database"""
         ns = self.get_namespace()
         if isinstance(model, Modelable):
@@ -196,7 +196,7 @@ class Model(BaseModel, metaclass=ModelMeta):
             setattr(model, relation.foreign_key, key)
             result = await model.save()
         field = getattr(self, relation.name)
-        if field is not None:
+        if field is not None and should_append:
             field.append(result)
         return result
     

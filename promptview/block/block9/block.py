@@ -792,3 +792,13 @@ class BlockSchema(Block):
         for child in self.children:
             res += f"\n{child.repr_tree(verbose=verbose)}"
         return res
+
+
+
+
+
+
+
+
+class BlockList(list[Block]):
+    pass

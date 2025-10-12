@@ -1,7 +1,7 @@
 
-# from .block7 import BlockChunk, BlockSent, BlockList, block, ContextStack, Blockable, Block, BlockSchema
-from .block7 import BlockList, block, ContextStack, Blockable
-from .block9 import BlockChunk, BlockSent,  block, Block, BlockSchema, BaseBlock, AttrBlock
+# from .block7 import BlockList, block, ContextStack, Blockable
+from .block7 import block, ContextStack, Blockable
+from .block9 import BlockChunk, BlockSent,  block, Block, BlockSchema, BaseBlock, AttrBlock, BlockList
 from .util import BlockRole, LlmUsage, ToolCall
 
 from .style import InlineStyle, BlockStyle, StyleManager, UndefinedTagError

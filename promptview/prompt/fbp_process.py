@@ -1363,6 +1363,7 @@ class ObservableProcess(Process):
             Tuple of (bound_arguments, resolved_kwargs)
         """
         from .injector import resolve_dependencies_kwargs
+        from ..llms import LLM, LlmConfig
         
         
         self._span_tree = await self.ctx.start_span(
@@ -1391,8 +1392,8 @@ class ObservableProcess(Process):
             # Log resolved kwargs as inputs
             if self._span_tree:
                 for key, value in kwargs.items():
-                    if value is not None:
-                        await self._span_tree.log_value(value, io_kind="input")
+                    if value is not None and type(value) not in [LLM, LlmConfig]:
+                        await self._span_tree.log_value(value, io_kind="input", name=key)
                     
         if self._span_tree.outputs and not self._span_tree.need_to_replay:
             self._replay_outputs = [v.value for v in self._span_tree.outputs]
@@ -1696,7 +1697,9 @@ class StreamController(ObservableProcess):
         except StopAsyncIteration:
             # Log the final accumulated result as output
             if self._span_tree and self._accumulator:
-                await self._span_tree.log_value(self._accumulator.result, io_kind="output")
+                # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
+                await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
+                
 
             await self.on_stop()
             raise StopAsyncIteration
