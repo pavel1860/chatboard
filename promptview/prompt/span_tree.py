@@ -314,7 +314,11 @@ class SpanTree:
             target_span = await ExecutionSpan.query(branch=branch_id).where(id=span_id).one()
             spans_query = (
                 spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
-                .include(SpanValue.query().where(lambda v: v.artifact_id <= target_span.artifact_id))
+                .include(
+                    SpanValue.query()
+                    .where(lambda v: v.artifact_id <= target_span.artifact_id)
+                    .include(Artifact)
+                )
             )
         else:
             spans_query = spans_query.include(SpanValue.query().include(Artifact))           

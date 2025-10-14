@@ -836,6 +836,10 @@ class SpanValue(Model):
         foreign_key="id",
         junction_model=ValueArtifact,
     )
+    value_artifacts: list[ValueArtifact] = RelationField(
+        primary_key="id",
+        foreign_key="value_id",
+    )
     alias: str | None = ModelField(default=None)
     name: str | None = ModelField(default=None)  # Keyword argument name (e.g., "count", "items")
    
