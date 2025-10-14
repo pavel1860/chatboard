@@ -31,22 +31,32 @@ class Value:
         self._is_list = span_value.kind == "list"
         self._is_span = span_value.kind == "span"
         # For single artifacts, check if it's a parameter
-        self._is_parameter = False
         self._container = container
-        if not self._is_list and not self._is_span and span_value.artifacts:
-            self._is_parameter = span_value.artifacts[0].kind == "parameter"
+            
+    
+    def _get_value(self, value: Any):
+        if isinstance(value, Parameter):
+            return value.value
+        return value
 
+    
     @property
     def value(self):
         if self._is_list:
-            # Value is already a list from instantiate_values
-            return self._value
-        elif self._is_span:
-            # Return SpanTree directly for child spans
-            return self._value
-        elif self._is_parameter:
-            return self._value.value
-        return self._value
+            return [self._get_value(v) for v in self._value]
+        return self._get_value(self._value)
+
+    # @property
+    # def value(self):
+    #     if self._is_list:
+    #         # Value is already a list from instantiate_values
+    #         return self._value
+    #     elif self._is_span:
+    #         # Return SpanTree directly for child spans
+    #         return self._value
+    #     elif self._is_parameter:
+    #         return self._value.value
+    #     return self._value
 
     @property
     def id(self):
@@ -717,33 +727,15 @@ class SpanTree:
                     else:
                         serialized_items.append(str(item))
                 value_data["value"] = serialized_items
-            elif v._is_parameter:
-                # Parameter artifact - serialize the value properly
-                param_value = v.value
-                if hasattr(param_value, 'to_dict'):
-                    value_data["value"] = param_value.to_dict()
-                elif hasattr(param_value, 'model_dump'):
-                    value_data["value"] = param_value.model_dump()
-                elif isinstance(param_value, (str, int, float, bool, type(None))):
-                    value_data["value"] = param_value
-                else:
-                    value_data["value"] = str(param_value)
-            elif hasattr(v._value, 'artifact_id'):
-                # Single model artifact
-                value_data["value"] = {
-                    "artifact_id": v._value.artifact_id if v._value.artifact_id else None,
-                    "model_name": v._value.__class__.__name__,
-                    "id": v._value.id if hasattr(v._value, 'id') and v._value.id else None,
-                }
             else:
-                # Raw value - ensure it's JSON serializable
+                # Single value - use consistent serialization
                 raw_value = v.value
-                if isinstance(raw_value, (str, int, float, bool, type(None), list, dict)):
-                    value_data["value"] = raw_value
-                elif hasattr(raw_value, 'to_dict'):
+                if hasattr(raw_value, 'to_dict'):
                     value_data["value"] = raw_value.to_dict()
                 elif hasattr(raw_value, 'model_dump'):
                     value_data["value"] = raw_value.model_dump()
+                elif isinstance(raw_value, (str, int, float, bool, type(None), list, dict)):
+                    value_data["value"] = raw_value
                 else:
                     value_data["value"] = str(raw_value)
 
