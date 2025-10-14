@@ -29,20 +29,34 @@ class Value:
         self.span_value = span_value
         self._value = value
         self._is_list = span_value.kind == "list"
+        self._is_span = span_value.kind == "span"
         # For single artifacts, check if it's a parameter
-        self._is_parameter = False
         self._container = container
-        if not self._is_list and span_value.artifacts:
-            self._is_parameter = span_value.artifacts[0].kind == "parameter"
+            
+    
+    def _get_value(self, value: Any):
+        if isinstance(value, Parameter):
+            return value.value
+        return value
 
+    
     @property
     def value(self):
         if self._is_list:
-            # Value is already a list from instantiate_values
-            return self._value
-        elif self._is_parameter:
-            return self._value.value
-        return self._value
+            return [self._get_value(v) for v in self._value]
+        return self._get_value(self._value)
+
+    # @property
+    # def value(self):
+    #     if self._is_list:
+    #         # Value is already a list from instantiate_values
+    #         return self._value
+    #     elif self._is_span:
+    #         # Return SpanTree directly for child spans
+    #         return self._value
+    #     elif self._is_parameter:
+    #         return self._value.value
+    #     return self._value
 
     @property
     def id(self):
@@ -54,14 +68,22 @@ class Value:
 
     @property
     def artifact_id(self):
-        # For lists, return None or first artifact_id
+        # For lists, return container artifact id
         if self._is_list:
             if not self._container:
                 raise ValueError("Container is not set")
             return self._container.id
+        # For spans, return the span's artifact_id
+        if self._is_span:
+            return self._value.root.artifact_id if isinstance(self._value, SpanTree) else None
+        # For single artifacts
         return self.span_value.artifacts[0].id if self.span_value.artifacts else None
-    
-    
+
+    @property
+    def span_tree(self) -> "SpanTree | None":
+        """Get as SpanTree if this is a span value."""
+        return self._value if self._is_span else None
+
     def __repr__(self):
         return f"Value(id={self.id}, io_kind={self.io_kind}, artifact_id={self.artifact_id}, value={self.value})"
 
@@ -70,15 +92,15 @@ class SpanTree:
         
     # def __init__(self, span: ExecutionSpan, index: int = 0, children: list[ExecutionSpan] | None = None, parent: "SpanTree | None" = None):
     def __init__(
-        self, 
-        target: str | ExecutionSpan, 
-        span_type: str = "component", 
-        tags: list[str] = [], 
-        index: int = 0, 
-        children: "list[SpanTree] | None" = None, 
+        self,
+        target: str | ExecutionSpan,
+        span_type: str = "component",
+        tags: list[str] = [],
+        index: int = 0,
+        children: "list[SpanTree] | None" = None,
         parent: "SpanTree | None" = None,
         values: list[Value] | None = None
-    ):    
+    ):
         """
         Initialize a span tree
         """
@@ -90,7 +112,8 @@ class SpanTree:
             path = ".".join([str(i) for i in self.path])
             self.root = ExecutionSpan(name=target, span_type=span_type, tags=tags, path=path, parent_span_id=parent.id if parent else None)
         self._lookup = {}
-        self.children = children or []
+        # Keep _children for backward compatibility during migration, but make it private
+        self._children = children or []
         self._values = values or []
         self.need_to_replay = False
 
@@ -126,11 +149,16 @@ class SpanTree:
     @property
     def values(self):
         return self._values
-    
+
+    @property
+    def children(self) -> list["SpanTree"]:
+        """Computed property - extracts child spans from values list."""
+        return [v.span_tree for v in self._values if v._is_span and v.span_tree is not None]
+
     @property
     def inputs(self):
         return [v for v in self.values if v.io_kind == "input"]
-    
+
     @property
     def outputs(self):
         return [v for v in self.values if v.io_kind == "output"]
@@ -211,7 +239,7 @@ class SpanTree:
                 if v.kind == "list":
                     container = value_dict["list"][v.artifact_id]
                     if container is None:
-                        raise ValueError("Container is not set")                    
+                        raise ValueError("Container is not set")
                     items = []
                     for artifact in v.artifacts:
                         if artifact.kind == "list":
@@ -220,9 +248,18 @@ class SpanTree:
                         items.append(value)
                     span._values.append(Value(v, items, container))
                 elif v.kind == "span":
-                    # ExecutionSpan reference
-                    exec_span = value_dict.get("execution_spans", {}).get(v.artifacts[0].id if v.artifacts else None)
-                    span._values.append(Value(v, exec_span))
+                    # Create SpanTree for child span (not just ExecutionSpan)
+                    # Find the child ExecutionSpan by artifact_id
+                    child_exec_span = value_dict.get("execution_spans", {}).get(v.artifacts[0].id if v.artifacts else None)
+                    if child_exec_span:
+                        # Create SpanTree wrapper for the child
+                        child_span_tree = SpanTree(child_exec_span, parent=span)
+                        # Recursively populate this child
+                        await populate_children(child_span_tree)
+                        span._values.append(Value(v, child_span_tree))
+                    else:
+                        # Fallback: just store ExecutionSpan if not found
+                        span._values.append(Value(v, child_exec_span))
                 else:
                     # Single artifact
                     artifact = v.artifacts[0] if v.artifacts else None
@@ -230,11 +267,21 @@ class SpanTree:
                         model = value_dict.get(artifact.model_name, {}).get(artifact.id)
                         span._values.append(Value(v, model))
 
-            if children is None:
-                return span
-            span.children = [SpanTree(c, index=i, parent=span) for i, c in enumerate(children)]
-            for child in span.children:
-                await populate_children(child)
+            # Note: We don't use the children lookup anymore - children come from span values
+            # But we still need to process orphaned children for backward compatibility
+            if children:
+                for i, c in enumerate(children):
+                    # Check if this child is already in values as a span
+                    already_in_values = any(
+                        v._is_span and v._value and getattr(v._value.root if isinstance(v._value, SpanTree) else v._value, 'id', None) == c.id
+                        for v in span._values
+                    )
+                    if not already_in_values:
+                        # Orphaned child - create SpanTree and recursively populate
+                        child_span_tree = SpanTree(c, index=i, parent=span)
+                        await populate_children(child_span_tree)
+                        # Note: Not adding to values since there's no SpanValue for it
+
             return span
 
         return await populate_children(SpanTree(root))
@@ -283,6 +330,8 @@ class SpanTree:
             elif k == "block_trees":
                 models = await get_blocks(model_ids[k], dump_models=False)
                 value_dict[k] = models
+            elif k == "execution_spans":
+                value_dict[k] = {s.artifact_id: s for s in spans}
             else:
                 ns = NamespaceManager.get_namespace(k)
                 models = await ns._model_cls.query(branch=branch_id).where(lambda m: m.artifact_id.isin(model_ids[k]))
@@ -391,11 +440,14 @@ class SpanTree:
     #     value = await self.root.log_value(value, io_kind=io_kind, name=name)
     #     return value
     def _get_target_meta(self, target: Any) -> tuple[ArtifactKindEnum, int | None]:
-        from ..block import Block        
+        from ..block import Block
         if isinstance(target, Block):
             return "block", None
         elif isinstance(target, Log):
             return "log", target.artifact_id
+        elif isinstance(target, SpanTree):
+            # Handle SpanTree (extract ExecutionSpan for artifact_id)
+            return "span", target.root.artifact_id
         elif isinstance(target, ExecutionSpan):
             if target == self:
                 print(f"target == self {target.id} {self.id}")
@@ -419,6 +471,9 @@ class SpanTree:
             if param is None:
                 raise ValueError(f"Target '{target}' cannot be logged as a parameter")
             return param, kind, artifact_id
+        elif kind == "span":
+            # Keep SpanTree as-is (don't convert to ExecutionSpan)
+            return target, kind, artifact_id
         else:
             return target, kind, artifact_id
         
@@ -477,9 +532,27 @@ class SpanTree:
             if kind == "block":
                 target = await insert_block(target, self.branch_id, self.turn_id, self.id)
                 artifact_id = target.artifact_id
+            elif kind == "span":
+                # For spans, get artifact from SpanTree or ExecutionSpan
+                if isinstance(target, SpanTree):
+                    artifact = target.root.artifact
+                else:  # ExecutionSpan
+                    artifact = target.artifact
+                value = await self.root.add(SpanValue(
+                    span_id=self.id,
+                    kind=kind,
+                    alias=alias,
+                    io_kind=io_kind,
+                    name=name,
+                    artifact_id=artifact_id,
+                ))
+                await value.add(artifact)
+                v = Value(value, target)  # Keep SpanTree or ExecutionSpan as-is
+                return self._append_value(value, target)
             elif artifact_id is None:
                 await target.save()
                 artifact_id = target.artifact_id
+
             value = await self.root.add(SpanValue(
                 span_id=self.id,
                 kind=kind,
@@ -590,12 +663,15 @@ class SpanTree:
     
     async def add_child(self, name: str, span_type: str = "component", tags: list[str] = []):
         """
-        Add a child span to the current span and log the span as an output value
+        Add a child span to the current span by logging it as a span value.
+        The child will be accessible via the computed 'children' property.
         """
         span_tree = await SpanTree(name, span_type, tags, index=len(self.children), parent=self).save()
-        self.children.append(span_tree)  # Add to children list
-        await self.log_value(span_tree.root, io_kind="output")
-        await span_tree.save()
+
+        # Log the SpanTree as a value - this adds it to _values
+        # The 'children' property will extract it automatically
+        await self.log_value(span_tree, io_kind="output")
+
         return span_tree
     
     def print_tree(self):
@@ -616,8 +692,8 @@ class SpanTree:
             "status": self.root.status,
             "start_time": self.root.start_time.isoformat() if self.root.start_time else None,
             "end_time": self.root.end_time.isoformat() if self.root.end_time else None,
-            "values": [],
-            "children": []
+            "values": []
+            # Note: No separate "children" field - children are serialized within values as span values
         }
 
         # Convert values with junction table support
@@ -631,51 +707,39 @@ class SpanTree:
             }
 
             # Serialize the actual value
-            if v._is_list:
-                # List of artifacts - serialize each item
-                value_data["value"] = [
-                    {
-                        "artifact_id": item.artifact_id if hasattr(item, 'artifact_id') else None,
-                        "model_name": item.__class__.__name__,
-                        "id": item.id if hasattr(item, 'id') and item.id else None,
-                    }
-                    for item in v.value
-                ]
-            elif v._is_parameter:
-                # Parameter artifact - serialize the value properly
-                param_value = v.value
-                if hasattr(param_value, 'to_dict'):
-                    value_data["value"] = param_value.to_dict()
-                elif hasattr(param_value, 'model_dump'):
-                    value_data["value"] = param_value.model_dump()
-                elif isinstance(param_value, (str, int, float, bool, type(None))):
-                    value_data["value"] = param_value
+            if v._is_span:
+                # Child span - recursively serialize the SpanTree
+                if isinstance(v.value, SpanTree):
+                    value_data["value"] = v.value.to_dict()
                 else:
-                    value_data["value"] = str(param_value)
-            elif hasattr(v._value, 'artifact_id'):
-                # Single model artifact
-                value_data["value"] = {
-                    "artifact_id": v._value.artifact_id if v._value.artifact_id else None,
-                    "model_name": v._value.__class__.__name__,
-                    "id": v._value.id if hasattr(v._value, 'id') and v._value.id else None,
-                }
+                    # Fallback for ExecutionSpan (shouldn't happen with new architecture)
+                    value_data["value"] = {"id": str(v.value.id) if v.value else None}
+            elif v._is_list:
+                # List of artifacts - serialize each item
+                serialized_items = []
+                for item in v.value:
+                    if hasattr(item, 'to_dict'):
+                        serialized_items.append(item.to_dict())
+                    elif hasattr(item, 'model_dump'):
+                        serialized_items.append(item.model_dump())
+                    elif isinstance(item, (str, int, float, bool, type(None), list, dict)):
+                        serialized_items.append(item)
+                    else:
+                        serialized_items.append(str(item))
+                value_data["value"] = serialized_items
             else:
-                # Raw value - ensure it's JSON serializable
+                # Single value - use consistent serialization
                 raw_value = v.value
-                if isinstance(raw_value, (str, int, float, bool, type(None), list, dict)):
-                    value_data["value"] = raw_value
-                elif hasattr(raw_value, 'to_dict'):
+                if hasattr(raw_value, 'to_dict'):
                     value_data["value"] = raw_value.to_dict()
                 elif hasattr(raw_value, 'model_dump'):
                     value_data["value"] = raw_value.model_dump()
+                elif isinstance(raw_value, (str, int, float, bool, type(None), list, dict)):
+                    value_data["value"] = raw_value
                 else:
                     value_data["value"] = str(raw_value)
 
             result["values"].append(value_data)
-
-        # Recursively convert children
-        for child in self.children:
-            result["children"].append(child.to_dict())
 
         return result
                 
