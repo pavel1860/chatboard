@@ -706,14 +706,17 @@ class SpanTree:
                     value_data["value"] = {"id": str(v.value.id) if v.value else None}
             elif v._is_list:
                 # List of artifacts - serialize each item
-                value_data["value"] = [
-                    {
-                        "artifact_id": item.artifact_id if hasattr(item, 'artifact_id') else None,
-                        "model_name": item.__class__.__name__,
-                        "id": item.id if hasattr(item, 'id') and item.id else None,
-                    }
-                    for item in v.value
-                ]
+                serialized_items = []
+                for item in v.value:
+                    if hasattr(item, 'to_dict'):
+                        serialized_items.append(item.to_dict())
+                    elif hasattr(item, 'model_dump'):
+                        serialized_items.append(item.model_dump())
+                    elif isinstance(item, (str, int, float, bool, type(None), list, dict)):
+                        serialized_items.append(item)
+                    else:
+                        serialized_items.append(str(item))
+                value_data["value"] = serialized_items
             elif v._is_parameter:
                 # Parameter artifact - serialize the value properly
                 param_value = v.value
