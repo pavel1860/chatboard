@@ -38,6 +38,18 @@ class Value:
         if isinstance(value, Parameter):
             return value.value
         return value
+    
+    def get_artifact_kind(self, value: Artifact):
+        if value.kind == "parameter":
+            return value
+        return value.kind
+    
+    @property
+    def kind(self):
+        if self._is_list:
+            return [self.get_artifact_kind(v) for v in self.span_value.artifacts if v.kind != "list"]
+            
+        return self.span_value.artifacts[0].kind
 
     
     @property
@@ -701,7 +713,7 @@ class SpanTree:
             value_data = {
                 "id": v.span_value.id,
                 "io_kind": v.io_kind,
-                "kind": v.span_value.kind,
+                "kind": v.kind,
                 "name": v.span_value.name,  # Kwarg name
                 "artifact_id": v.artifact_id,  # Container or single artifact
             }
