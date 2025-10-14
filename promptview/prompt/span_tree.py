@@ -320,6 +320,8 @@ class SpanTree:
             elif k == "block_trees":
                 models = await get_blocks(model_ids[k], dump_models=False)
                 value_dict[k] = models
+            elif k == "execution_spans":
+                value_dict[k] = {s.artifact_id: s for s in spans}
             else:
                 ns = NamespaceManager.get_namespace(k)
                 models = await ns._model_cls.query(branch=branch_id).where(lambda m: m.artifact_id.isin(model_ids[k]))
