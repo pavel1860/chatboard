@@ -532,10 +532,7 @@ class StreamController(BaseFbpComponent):
             current = current.parent
         return path
     
-    def get_response(self):
-        if self._parser:
-            return self._parser.res_ctx.instance
-        # return self.acc
+    
         
     def parse(self, block_schema: Block) -> Self:
         if self._parser is not None:

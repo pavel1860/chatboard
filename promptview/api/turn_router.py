@@ -29,84 +29,61 @@ def create_turn_router(context_cls: Type[Context] | None = None):
     )
     
     
-    @turn_router.get("/spans")   
+    @turn_router.get("/spans")
     async def get_turn_spans(
         list_params: ListParams = Depends(get_list_params),
         filters: QueryListType | None = Depends(query_filters),
         ctx = Depends(get_model_ctx)
     ):
+        """
+        Get turns with their span trees using the new SpanTree architecture.
+
+        This endpoint uses SpanTree.from_turn() which handles:
+        - Loading ExecutionSpans with their hierarchy
+        - Loading SpanValues with the ValueArtifact junction table
+        - Instantiating actual model instances for values
+        - Building the complete tree structure
+        """
+        from ..prompt.span_tree import SpanTree
+
         async with ctx:
+            # Get recent committed turns
             turns = await (
-                Turn.query() 
+                Turn.query()
                 .include(Artifact)
                 .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id"))
                 .where(status = TurnStatus.COMMITTED)
-                .limit(10) 
-                .offset(0) 
-                .order_by("-created_at") 
-                .json()
+                .limit(10)
+                .offset(0)
+                .order_by("-created_at")
             )
-                
-                
-            # filter_artifacts = lambda kind: [a for turn in turns for a in turn["artifacts"] if a["kind"] == kind]
-            filter_art_ids = lambda kind: [a["id"] for turn in turns for a in turn["artifacts"] if a["kind"] == kind]
 
-            async def get_spans(art_ids: list[int]):
-                if not art_ids:
-                    return {}
-                spans = await ExecutionSpan.query().where(lambda t: t.artifact_id.isin(art_ids)).include(SpanValue).order_by("-artifact_id").json()
-                return {s["artifact_id"]: s for s in spans}
-
-            async def get_logs(art_ids: list[int]):
-                if not art_ids:
-                    return {}
-                logs = await Log.query().where(lambda t: t.artifact_id.isin(art_ids)).order_by("-artifact_id").json()
-                return {l["artifact_id"]: l for l in logs}
-
-
-            blocks_lookup = await get_blocks(filter_art_ids('block'))
-            log_lookup = await get_logs(filter_art_ids('log'))
-            spans_lookup = await get_spans(filter_art_ids('span'))
-
-            visited = set()
-
-
-            root_spans = []
-            visited = set()
-
+            # Load span tree for each turn
+            result = []
             for turn in turns:
-                root_span = None
-                for art in turn['artifacts']:
-                    if art['kind'] == 'span':
-                        span = spans_lookup[art['id']]
-                        if span['parent_span_id'] is None:
-                            if root_span is not None:
-                                raise ValueError("Multiple root spans found")                
-                            root_span = span
-                            root_spans.append(span['id'])
-                turn['span'] = root_span
-                del turn['artifacts']                
+                turn_data = {
+                    "id": turn.id,
+                    "created_at": turn.created_at.isoformat() if turn.created_at else None,
+                    "status": turn.status,
+                    "branch_id": turn.branch_id,
+                    "forked_branches": [{"id": b.id} for b in getattr(turn, "forked_branches", [])],
+                    "span": None
+                }
 
-            def populate_span_values(span, depth=0, max_depth=2):
-                if span['id'] in visited:
-                    raise ValueError(f"Circular reference detected: {span['id']}")
-                visited.add(span['id'])    
-                for value in span['values']:
-                    if value['kind'] == "block":
-                        value['artifact'] = blocks_lookup[value['artifact_id']]
-                    elif value['kind'] == "log":
-                        value['artifact'] = log_lookup[value['artifact_id']]
-                    elif value['kind'] == "span":
-                        value['artifact'] = spans_lookup[value['artifact_id']]
-                        vs = value['artifact']
-                        print(depth*" ", "populating value:", value["id"], "span:", vs["id"], f"(parent {vs["parent_span_id"]})")
-                        populate_span_values(vs, depth+1, max_depth)
-                
-            for turn in turns:
-                if turn['span']:
-                    populate_span_values(turn['span'])
+                try:
+                    # Load span tree using SpanTree.from_turn()
+                    span_tree = await SpanTree.from_turn(turn.id, branch_id=turn.branch_id)
 
-            return turns
+                    # Convert SpanTree to JSON-serializable format
+                    turn_data["span"] = span_tree.to_dict()
+                except Exception as e:
+                    # If turn has no spans, just skip
+                    print(f"Error loading span tree for turn {turn.id}: {e}")
+                    turn_data["span"] = None
+
+                result.append(turn_data)
+
+            return result
 
 
 

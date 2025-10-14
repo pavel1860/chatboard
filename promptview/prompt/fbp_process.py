@@ -882,7 +882,6 @@ from promptview.model.versioning.models import ExecutionSpan
 
 if TYPE_CHECKING:
     from .span_tree import SpanTree
-    from pydantic import BaseModel
     from promptview.block import Block
 
 
@@ -1161,7 +1160,7 @@ class Stream(Process):
         self._save_stream_dir = filepath
 
     @classmethod
-    def load(cls, filepath: str, model: Type["BaseModel"] | None = None, delay: float = 0.0):
+    def load(cls, filepath: str, delay: float = 0.0):
         """
         Load a stream from a saved JSONL file.
 
@@ -1174,21 +1173,14 @@ class Stream(Process):
             New Stream instance that replays from file
         """
         async def load_stream():
+            from ..block import BlockChunk
             with open(filepath, "r") as f:
                 for line in f:
                     if delay > 0:
                         await asyncio.sleep(delay)
-
                     data = json.loads(line)
-
-                    if model:
-                        # Deserialize into Pydantic model
-                        ip = model.model_validate(data)
-                    else:
-                        # Return raw dict
-                        ip = data
-
-                    yield ip
+                    block = BlockChunk.model_validate(data)
+                    yield block
 
         return cls(load_stream(), name=f"stream_from_{filepath}")
 
@@ -1562,6 +1554,8 @@ class ObservableProcess(Process):
         For most processes, this is just the last value.
         Subclasses can override to provide more sophisticated response handling.
         """
+        if isinstance(self._last_ip, ObservableProcess):
+            return self._last_ip.get_response()
         return self._last_ip
 
 
@@ -1624,6 +1618,9 @@ class StreamController(ObservableProcess):
         self._stream: Process | None = None
         self._accumulator: Accumulator | None = None
         self._parser: Parser | None = None
+        self._save_filepath: str | None = None
+        self._load_filepath: str | None = None
+        
 
     async def on_start(self):
         """
@@ -1639,7 +1636,16 @@ class StreamController(ObservableProcess):
         gen_instance = self._gen_func(*bound.args, **bound.kwargs)
 
         # Wrap in Stream process and pipe through Accumulator
-        stream = Stream(gen_instance, name=f"{self._name}_stream")
+        if self._load_filepath is not None:
+            stream = Stream.load(self._load_filepath)        
+        else:
+            stream = Stream(gen_instance, name=f"{self._name}_stream")
+        if self._save_filepath is not None:
+            import os
+            os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
+            if os.path.exists(self._save_filepath):
+                os.remove(self._save_filepath)
+            stream.save_stream(self._save_filepath)
         accumulator = Accumulator()
         self._stream = stream | accumulator
         if self._parser is not None:
@@ -1696,8 +1702,9 @@ class StreamController(ObservableProcess):
                 return ip
         except StopAsyncIteration:
             # Log the final accumulated result as output
-            if self._span_tree and self._accumulator:
+            # if self._span_tree and self._accumulator:
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
+            if self._span_tree and self._parser and self._parser.res_ctx.instance is not None:
                 await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
                 
 
@@ -1720,10 +1727,25 @@ class StreamController(ObservableProcess):
         if self._replay_outputs is not None:
             # Replay mode: return all replay outputs
             return self._replay_outputs
-        elif self._accumulator:
+        # elif self._accumulator:
             # Normal mode: return accumulated values
-            return self._accumulator.result
-        return []
+            # return self._accumulator.result
+        if self._parser:
+            return self._parser.res_ctx.instance
+        # return self.acc
+        return None
+    
+    def save(self, filename: str):
+        if self._load_filepath is not None:
+            raise FlowException("StreamController is already loaded")
+        self._save_filepath = filename
+        return self
+    
+    def load(self, filename: str):
+        if self._save_filepath is not None:
+            raise FlowException("StreamController is already saved")
+        self._load_filepath = filename
+        return self
 
 
 # ============================================================================

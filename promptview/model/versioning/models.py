@@ -380,6 +380,53 @@ class Artifact(Model):
             turn_id=turn_id
         )
         
+    @classmethod
+    def query(
+        cls: Type[Self], 
+        fields: list[str] | None = None, 
+        alias: str | None = None, 
+        use_ctx: bool = True,
+        branch: Branch | int | None = None,
+        turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+        use_liniage: bool = True,
+        limit: int | None = None, 
+        offset: int | None = None, 
+        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+        direction: Literal["asc", "desc"] = "desc",
+        **kwargs
+    ) -> "PgSelectQuerySet[Self]":
+        from ..postgres2.pg_query_set import PgSelectQuerySet
+        
+        query = PgSelectQuerySet(cls, alias=alias).select(*fields if fields else "*")
+        
+        if turn_cte is None and use_liniage:
+            turn_cte = Turn.query(branch=branch, to_select=True)
+            if statuses:
+                turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
+            if limit:
+                turn_cte = turn_cte.limit(limit)
+                turn_cte = turn_cte.order_by(f"-index" if direction == "desc" else "index")
+            if offset:
+                turn_cte = turn_cte.offset(offset) 
+        if turn_cte is not None:
+            query.use_cte(
+                turn_cte,
+                name="turn_liniage",
+                alias="tl",
+            )            
+        return query
+                       
+        # return (
+        #     PgSelectQuerySet(cls, alias=alias) \
+        #     .use_cte(
+        #         turn_cte,
+        #         name="turn_liniage",
+        #         alias="tl",
+        #     )
+        #     .select(*fields if fields else "*")
+        #     # .join(turn_cte, on=("turn_id", "id")).use_cte(turn_cte, name="committed_turns", alias="ct")
+        # )
+        
 
 
 
@@ -484,6 +531,7 @@ class VersionedModel(Model):
         use_ctx: bool = True,
         branch: Branch | int | None = None,
         turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+        use_liniage: bool = True,
         limit: int | None = None, 
         offset: int | None = None, 
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
@@ -492,17 +540,25 @@ class VersionedModel(Model):
     ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
         
-        if turn_cte is None:
-            turn_cte = Turn.query(branch=branch, to_select=True)
-            if statuses:
-                turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
-            if limit:
-                turn_cte = turn_cte.limit(limit)
-                turn_cte = turn_cte.order_by(f"-index" if direction == "desc" else "index")
-            if offset:
-                turn_cte = turn_cte.offset(offset)
+        # if turn_cte is None:
+        #     turn_cte = Turn.query(branch=branch, to_select=True)
+        #     if statuses:
+        #         turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
+        #     if limit:
+        #         turn_cte = turn_cte.limit(limit)
+        #         turn_cte = turn_cte.order_by(f"-index" if direction == "desc" else "index")
+        #     if offset:
+        #         turn_cte = turn_cte.offset(offset)
         
-        art_cte = Artifact.query().join(turn_cte, on=("turn_id", "id")).use_cte(turn_cte, name="committed_turns", alias="ct")
+        # art_cte = Artifact.query(statuses=statuses, limit=limit, offset=offset, direction=direction).join(turn_cte, on=("turn_id", "id")).use_cte(turn_cte, name="committed_turns", alias="ct")
+        art_cte = Artifact.query(
+            statuses=statuses, 
+            limit=limit, 
+            offset=offset, 
+            direction=direction, 
+            use_liniage=use_liniage, 
+            turn_cte=turn_cte
+        )
         return (
             PgSelectQuerySet(cls, alias=alias) \
             .use_cte(

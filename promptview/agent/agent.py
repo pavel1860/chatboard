@@ -156,7 +156,7 @@ class Agent():
     ):
         ctx = await Context.from_kwargs(**kwargs, auth=auth)
         async with ctx.start_turn(auto_commit=auto_commit) as turn:            
-            async for event in self.agent_component(message).stream_events(event_level=EventLogLevel[level]):
+            async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
                 print("--------------------------------")
                 if isinstance(event, Block):
                     event.print()
