@@ -1,6 +1,6 @@
 from typing import Literal, Set
 from fastapi.responses import StreamingResponse
-
+from ..prompt import SpanTree
 from ..prompt.context import Context
 from ..prompt.flow_components import EventLogLevel
 from ..block.util import StreamEvent
@@ -77,13 +77,33 @@ class Agent():
             auth: AuthModel = Depends(get_auth),
             # ctx: tuple[User, Branch, Partition, Message, ExecutionContext] = Depends(get_ctx),
         ):  
-            print("ctx >>>", auth)      
             # context = await Context.from_request(request)
             content, options, state, files = payload
             message = self._block_from_content(content, options['role'])
             context = await Context.from_kwargs(**ctx, auth=auth)            
+            context = context.start_turn()
             agent_gen = self.stream_agent_with_context(context, message)
             return StreamingResponse(agent_gen, media_type="text/plain")
+        
+        @self.ingress_router.post("/replay")
+        async def replay(
+            request: Request,
+            payload: str = Depends(get_request_content),
+            ctx: dict = Depends(get_request_ctx),
+            auth: AuthModel = Depends(get_auth),
+        ):
+            content, options, state, files = payload
+            context = await Context.from_kwargs(**ctx, auth=auth)
+            turn_id = options.get('fork_from', None)
+            if turn_id is None:
+                raise ValueError("forkFrom is required")
+            span = await SpanTree.from_turn(turn_id)
+            args = span.get_input_args() 
+            # context = context.fork(turn_id=turn_id).start_turn()
+            context = context.start_turn()
+            agent_gen = self.stream_agent_with_context(context, args[0], serialize=True)
+            return StreamingResponse(agent_gen, media_type="text/plain")
+            
         
         # self.ingress_router.add_api_route(
         #     path="/complete", 
@@ -112,7 +132,7 @@ class Agent():
         metadata: dict | None = None,
     ):
 
-        async with ctx.start_turn() as turn:            
+        async with ctx:
             # auto_commit = user.auto_respond == "auto" and message.role == "user" or message.role == "assistant"
             # async with branch.start_turn(
             #     metadata=metadata, 

@@ -1659,6 +1659,10 @@ class StreamController(ObservableProcess):
             raise FlowException("StreamController is not initialized")
         self._parser = Parser(response_schema=block_schema)      
         return self
+    
+    def name(self, name: str):
+        self._name = name
+        return self
 
 
     async def __anext__(self):

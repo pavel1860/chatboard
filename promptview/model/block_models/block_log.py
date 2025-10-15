@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 
 from ...block import BaseBlock, Block, BlockChunk, BlockList, BlockSent, AttrBlock
-from ..versioning.models import Branch
+from ..versioning.models import Artifact, Branch, SpanValue
 from ..sql.expressions import RawValue
 from ..sql.queries import Column
 from ...utils.db_connections import PGConnectionManager
@@ -226,28 +226,37 @@ class BlockLogQuery:
         self.direction = direction
         self.span_name = span_name
         self.statuses = statuses
+        self.include_roles = None
+        self.exclude_roles = None
         # self.query = self._build_block_query() if not span_name else self._build_span_query()
         
     def __await__(self):
         return self.execute().__await__()
     
     async def execute(self) -> List[Block]:
-        query = self._build_block_query() if not self.span_name else self._build_span_query()
+        query = self._build_block_query()
+        artifact_ids = []
+        if self.span_name:
+            span_query = self._build_span_query(self.span_name)
+            spans = await span_query
+            artifact_ids = [a.id for span in spans for sv in span.values for a in sv.artifacts]
         def tree_to_block(tree):
             # print(tree)
             if not tree['nodes']:
                 return None
             return load_block_dump(tree['nodes'])
+        if artifact_ids:
+            query = query.where(lambda x: x.artifact_id.isin(artifact_ids))
         query = query.parse(tree_to_block)
-        return await query.json()
+        results = await query.json()
         
+        if self.include_roles:
+            results = [b for b in results if b.role in self.include_roles]
+        if self.exclude_roles:
+            results = [b for b in results if b.role not in self.exclude_roles]
+        return results
+    
     def _build_block_query(self):
-        # if self.span_name:
-        #     return ExecutionSpan.vquery(
-        #         limit=self.limit, 
-        #         offset=self.offset, 
-        #         direction=self.direction
-        #     ).select("*").include(BlockTree.query(alias="bt").include(BlockNode.query(alias="bn").include(BlockModel))).where(name=self.span_name)
         return BlockTree.query(
             alias="bt", 
             limit=self.limit, 
@@ -258,18 +267,22 @@ class BlockLogQuery:
             BlockNode.query(alias="bn").order_by("id").include(BlockModel)
         ).order_by("created_at")
         
-    def _build_span_query(self):
-        return ExecutionSpan.query(
-            alias="es", 
-            limit=self.limit, 
-            offset=self.offset, 
-            direction=self.direction,
-            statuses=self.statuses            
-        ).include(BlockTree.query(alias="bt").include(BlockNode.query(alias="bn").include(BlockModel))).where(name=self.span_name)
+    def _build_span_query(self, name: str):
+        return ExecutionSpan.query().include(
+            SpanValue.query().include(
+                Artifact
+            )
+        ).where(name=name)
+
         
     def where(self, span: str | None = None):
         if span:
             self.span_name = span
+        return self
+    
+    def role(self, exclude: set[str] | None = None, include: set[str] | None = None):
+        self.include_roles = include
+        self.exclude_roles = exclude
         return self
     
     def status(self, statuses: list[TurnStatus]):
@@ -286,7 +299,6 @@ class BlockLogQuery:
     
     def span(self, span: str):
         self.span_name = span
-        self.query = self._build_span_query()
         return self
     
     def print(self):

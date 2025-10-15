@@ -271,6 +271,7 @@ class Turn(Model):
         use_ctx: bool = True,
         branch: Branch | int | None = None,
         to_select: bool = True,
+        include_branch_turn: bool = False,
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
@@ -280,10 +281,11 @@ class Turn(Model):
         if branch_id is not None:
             branch_cte = Branch.recursive_query(branch_id)
             col = branch_cte.get_field("start_turn_index")
+            start_turn_value = RawValue[int]("bh.start_turn_index - 1" if not include_branch_turn else "bh.start_turn_index")
             query = (
                 query 
-                .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))
-                .where(lambda t: (t.index <= RawValue[int]("bh.start_turn_index - 1")))
+                .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))                
+                .where(lambda t: (t.index <= start_turn_value))
             )
         if to_select:
             query = query.select(*fields if fields else "*")
@@ -393,6 +395,7 @@ class Artifact(Model):
         offset: int | None = None, 
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
         direction: Literal["asc", "desc"] = "desc",
+        include_branch_turn: bool = False,
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
@@ -400,7 +403,7 @@ class Artifact(Model):
         query = PgSelectQuerySet(cls, alias=alias).select(*fields if fields else "*")
         
         if turn_cte is None and use_liniage:
-            turn_cte = Turn.query(branch=branch, to_select=True)
+            turn_cte = Turn.query(branch=branch, to_select=True, include_branch_turn=include_branch_turn)
             if statuses:
                 turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
             if limit:
@@ -536,6 +539,7 @@ class VersionedModel(Model):
         offset: int | None = None, 
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
         direction: Literal["asc", "desc"] = "desc",
+        include_branch_turn: bool = False,
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
@@ -557,7 +561,8 @@ class VersionedModel(Model):
             offset=offset, 
             direction=direction, 
             use_liniage=use_liniage, 
-            turn_cte=turn_cte
+            turn_cte=turn_cte,
+            include_branch_turn=include_branch_turn
         )
         return (
             PgSelectQuerySet(cls, alias=alias) \
@@ -731,6 +736,44 @@ class ArtifactModel(VersionedModel):
     #         .order_by("-artifact_id", "-version")
     #     ) 
     #     return query
+    
+    @classmethod
+    def query(
+        cls: Type[Self], 
+        fields: list[str] | None = None, 
+        alias: str | None = None, 
+        use_ctx: bool = True,
+        branch: Branch | int | None = None,
+        turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+        use_liniage: bool = True,
+        limit: int | None = None, 
+        offset: int | None = None, 
+        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+        direction: Literal["asc", "desc"] = "desc",
+        include_branch_turn: bool = False,
+        **kwargs
+    ) -> "PgSelectQuerySet[Self]":
+        from ..postgres2.pg_query_set import PgSelectQuerySet
+        
+        art_cte = Artifact.query(
+            statuses=statuses, 
+            limit=limit, 
+            offset=offset, 
+            direction=direction, 
+            use_liniage=use_liniage, 
+            turn_cte=turn_cte,
+            include_branch_turn=include_branch_turn
+        )
+        return (
+            PgSelectQuerySet(cls, alias=alias) \
+            .use_cte(
+                art_cte,
+                name="artifact_cte",
+                alias="ac",
+            )
+            .select(*fields if fields else "*")
+        )
+
     
         
     @classmethod

@@ -49,9 +49,9 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         async with ctx:
             # Get recent committed turns
             turns = await (
-                Turn.query()
+                Turn.query(include_branch_turn=True)
                 .include(Artifact)
-                .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id"))
+                .agg("forked_branches", Branch.query(["id", "forked_from_branch_id", "forked_from_turn_id", "forked_from_index"]), on=("id", "forked_from_turn_id"))
                 .where(status = TurnStatus.COMMITTED)
                 .limit(10)
                 .offset(0)
@@ -66,7 +66,12 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                     "created_at": turn.created_at.isoformat() if turn.created_at else None,
                     "status": turn.status,
                     "branch_id": turn.branch_id,
-                    "forked_branches": [{"id": b.id} for b in getattr(turn, "forked_branches", [])],
+                    "forked_branches": [{
+                        "id": b.id, 
+                        "forkedFromBranchId": b.forked_from_branch_id, 
+                        "forkedFromTurnId": b.forked_from_turn_id, 
+                        "forkedFromIndex": b.forked_from_index
+                    } for b in getattr(turn, "forked_branches", [])],
                     "span": None
                 }
 

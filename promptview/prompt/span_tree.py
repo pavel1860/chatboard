@@ -222,6 +222,9 @@ class SpanTree:
         if len(path) == 1:
             return self.children[path[0]]
         return self.children[path[0]].get(path[1:])
+    
+    def get_input_args(self):
+        return [v.value for v in self.inputs]
         
     @classmethod
     async def load_span_list(cls, span_list: list[ExecutionSpan], value_dict: dict[str, dict[int, Any]]):
@@ -702,6 +705,7 @@ class SpanTree:
             "path": self.root.path,
             "span_type": self.root.span_type,
             "status": self.root.status,
+            "tags": self.root.tags,
             "start_time": self.root.start_time.isoformat() if self.root.start_time else None,
             "end_time": self.root.end_time.isoformat() if self.root.end_time else None,
             "values": []
