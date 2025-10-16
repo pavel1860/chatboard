@@ -114,33 +114,73 @@ class SpanTree:
         values: list[Value] | None = None
     ):
         """
-        Initialize a span tree
+        Initialize a span tree.
+
+        Note: When creating a new span from string name, the caller must handle
+        path computation and call .save() to persist the ExecutionSpan.
+        This __init__ is primarily for wrapping existing ExecutionSpan instances.
         """
         self.parent = parent
         self.index = index
         if isinstance(target, ExecutionSpan):
+            # Wrapping existing span
             self.root = target
         else:
-            path = ".".join([str(i) for i in self.path])
-            self.root = ExecutionSpan(name=target, span_type=span_type, tags=tags, path=path, parent_span_id=parent.id if parent else None)
+            # Creating new span
+            if parent is None:
+                # Top-level span - path will be computed in save() using turn context
+                # Use placeholder path "0" that will be replaced
+                self.root = ExecutionSpan(
+                    name=target,
+                    span_type=span_type,
+                    tags=tags,
+                    path="0",  # Placeholder - will be updated in save()
+                    parent_span_id=None
+                )
+            else:
+                # Child span - compute path from parent
+                child_index = len(parent.children) if parent else 0
+                path = f"{parent.root.path}.{child_index}"
+                self.root = ExecutionSpan(
+                    name=target,
+                    span_type=span_type,
+                    tags=tags,
+                    path=path,
+                    parent_span_id=parent.id if parent else None
+                )
+
         self._lookup = {}
-        # Keep _children for backward compatibility during migration, but make it private
         self._children = children or []
         self._values = values or []
+        self._value_index = 0  # Track next value index
         self.need_to_replay = False
 
         
     async def save(self):
         """
-        Save the span tree to the database
+        Save the span tree to the database.
+
+        For top-level spans created from string names, the path should be
+        computed by the Context before calling save().
         """
+        # Check if this is a top-level span with placeholder path
+        if self.parent is None and self.root.parent_span_id is None and self.root.path == "0":
+            # Get turn from context and use its span counter
+            from .context import Context
+            ctx = Context.current()
+            if ctx is None or ctx.turn is None:
+                raise ValueError("Cannot create top-level span outside of turn context")
+
+            # Get next span index from context counter
+            span_index = ctx.get_next_top_level_span_index()
+            self.root.path = str(span_index + 1)  # "1", "2", "3", ...
+            self.index = span_index
+
+            # Register this top-level span with the Context
+            ctx._top_level_spans.append(self)
+
         await self.root.save()
         return self
-    
-    @classmethod
-    async def init_new(cls, name: str, span_type: str = "component", tags: list[str] = [], index: int = 0):
-        span = await ExecutionSpan(name=name, span_type=span_type, tags=tags, path="0").save()
-        return cls(span)
 
     @property
     def id(self):
@@ -229,21 +269,19 @@ class SpanTree:
     @classmethod
     async def load_span_list(cls, span_list: list[ExecutionSpan], value_dict: dict[str, dict[int, Any]]):
         """
-        Load a span tree from a list of ExecutionSpan instances.
-        Now async because we need to load ValueArtifact entries for lists.
+        Load span trees from a list of ExecutionSpan instances.
+        Returns list of top-level SpanTrees (no single root).
         """
         from ..model.versioning.models import ValueArtifact
 
         lookup = defaultdict(list)
-        root = None
+        top_level_spans = []
+
         for span in span_list:
             if span.parent_span_id is None:
-                root = span
+                top_level_spans.append(span)
             else:
                 lookup[span.parent_span_id].append(span)
-        else:
-            if root is None:
-                raise ValueError("No root span found")
 
         async def populate_children(span: SpanTree):
             children = lookup.get(span.id)
@@ -299,7 +337,18 @@ class SpanTree:
 
             return span
 
-        return await populate_children(SpanTree(root))
+        # Populate all top-level spans
+        result_spans = []
+        for i, top_span in enumerate(top_level_spans):
+            span_tree = SpanTree(top_span, parent=None, index=i)
+            await populate_children(span_tree)
+            result_spans.append(span_tree)
+
+        if len(result_spans) == 0:
+            raise ValueError("No spans found")
+
+        # Always return list of SpanTrees (even if single span)
+        return result_spans
     
     
     @classmethod
@@ -422,12 +471,16 @@ class SpanTree:
                 s.values = span_values
         
         values = await cls.gather_artifacts(spans, branch_id, span_lookup)
-        span_tree = await cls.load_span_list(spans, values)
-        last_span = span_tree.get_last()
-        while last_span is not None:
-            last_span.need_to_replay = True
-            last_span = last_span.parent
-        return span_tree
+        span_trees = await cls.load_span_list(spans, values)
+
+        # Mark spans for replay if needed
+        for span_tree in span_trees:
+            last_span = span_tree.get_last()
+            while last_span is not None:
+                last_span.need_to_replay = True
+                last_span = last_span.parent
+
+        return span_trees
     
     
     
@@ -503,22 +556,28 @@ class SpanTree:
             
             
     async def log_value(self, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
+        # Compute path for this value using in-memory counter
+        value_path = f"{self.root.path}.{self._value_index}"
+        self._value_index += 1  # Increment for next value
+
         if isinstance(target, list) and is_artifact_list(target):
             container_artifact = await Artifact(
                 branch_id=self.branch_id,
                 turn_id=self.turn_id,
+                span_id=self.id,  # NEW: Track creation context
                 kind="list",
             ).save()
-            
+
             value = await self.root.add(SpanValue(
                 span_id=self.id,
                 kind="list",
                 alias=alias,
                 io_kind=io_kind,
                 name=name,
+                path=value_path,  # NEW: Set path
                 artifact_id=container_artifact.id,
             ))
-            
+
             await value.add(container_artifact)
             
             list_artifacts = []
@@ -540,8 +599,7 @@ class SpanTree:
             v = Value(value, list_artifacts, container_artifact)
             self._values.append(v)
             return v
-            # return self._append_value(value, list_artifacts, container_artifact)
-            
+
         else:
             target, kind, artifact_id = self._sanitize_target_value(target)
             if kind == "block":
@@ -559,10 +617,11 @@ class SpanTree:
                     alias=alias,
                     io_kind=io_kind,
                     name=name,
+                    path=value_path,  # NEW: Set path
                     artifact_id=artifact_id,
                 ))
                 await value.add(artifact)
-                v = Value(value, target)  # Keep SpanTree or ExecutionSpan as-is
+                v = Value(value, target)
                 return self._append_value(value, target)
             elif artifact_id is None:
                 await target.save()
@@ -574,6 +633,7 @@ class SpanTree:
                 alias=alias,
                 io_kind=io_kind,
                 name=name,
+                path=value_path,  # NEW: Set path
                 artifact_id=artifact_id,
             ))
             await value.add(target.artifact)
@@ -681,10 +741,23 @@ class SpanTree:
         Add a child span to the current span by logging it as a span value.
         The child will be accessible via the computed 'children' property.
         """
-        span_tree = await SpanTree(name, span_type, tags, index=len(self.children), parent=self).save()
+        # Compute child path
+        child_index = len(self.children)
+        child_path = f"{self.root.path}.{child_index}"
+
+        # Create child ExecutionSpan directly
+        child_span = await ExecutionSpan(
+            name=name,
+            span_type=span_type,
+            tags=tags,
+            path=child_path,
+            parent_span_id=self.id
+        ).save()
+
+        # Wrap in SpanTree
+        span_tree = SpanTree(child_span, parent=self, index=child_index)
 
         # Log the SpanTree as a value - this adds it to _values
-        # The 'children' property will extract it automatically
         await self.log_value(span_tree, io_kind="output")
 
         return span_tree
