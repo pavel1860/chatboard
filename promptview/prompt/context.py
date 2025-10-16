@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from ..auth.user_manager2 import AuthModel
 from ..model.model3 import Model
 from ..model.postgres2.pg_query_set import PgSelectQuerySet
-from ..model.versioning.models import Branch, ExecutionSpan, SpanTypeEnum, Turn, TurnStatus, VersionedModel
+from ..model.versioning.models import Branch, ExecutionSpan, SpanTypeEnum, Turn, TurnStatus, VersionedModel, Artifact
 from dataclasses import dataclass
 from ..utils.function_utils import call_function
 if TYPE_CHECKING:
@@ -22,12 +22,12 @@ _context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
 @dataclass
 class LoadTurn:
     turn_id: int
-    
+
 @dataclass
 class LoadBranch:
     branch_id: int
-    
-    
+
+
 @dataclass
 class ForkTurn:
     turn: Turn | None = None
@@ -36,8 +36,8 @@ class ForkTurn:
 @dataclass
 class ForkBranch:
     branch_id: int
-    
-    
+
+
 @dataclass
 class StartTurn:
     branch_id: int | None = None
@@ -56,10 +56,11 @@ class Context(BaseModel):
     _auth: AuthModel | None = None
     _ctx_models: dict[str, Model] = {}
     _tasks: list[LoadBranch | LoadTurn | ForkTurn | StartTurn] = []
-    _span_tree: "SpanTree | None" = None
     _execution_stack: list = []
-    _replay_span_tree: "SpanTree | None" = None  # Span tree to replay from
+    _replay_span_trees: list["SpanTree"] = []  # Top-level span trees to replay from
     _execution_path: list[int] = []  # Current execution path like [0, 1, 2]
+    _top_level_span_count: int = 0  # Counter for top-level spans in current turn
+    _top_level_spans: list["SpanTree"] = []  # All top-level spans in this turn
     
     
     def __init__(
@@ -86,7 +87,6 @@ class Context(BaseModel):
         self._branch = branch
         self._turn = turn
         self._auth = auth
-        self._root_span: "SpanTree | None" = None
         
     @property
     def request_id(self):
@@ -115,6 +115,19 @@ class Context(BaseModel):
         if self.current_component and hasattr(self.current_component, '_span_tree'):
             return self.current_component._span_tree
         return None
+
+    @property
+    def top_level_spans(self) -> list["SpanTree"]:
+        """Get all top-level spans created in this turn."""
+        return self._top_level_spans
+
+    @property
+    def root_span(self) -> "SpanTree | None":
+        """
+        Get the first top-level span (for backward compatibility).
+        If you have multiple top-level spans, use top_level_spans instead.
+        """
+        return self._top_level_spans[0] if self._top_level_spans else None
 
     def _get_current_execution_path(self) -> list[int]:
         """
@@ -148,35 +161,50 @@ class Context(BaseModel):
         """
         Look up a span in the replay tree at the given path.
 
-        Path format matches SpanTree.path:
-        - Root: [0]
-        - First child: [0, 0]
-        - Second child: [0, 1]
+        Path format:
+        - [0] = first top-level span
+        - [1] = second top-level span
+        - [0, 0] = first child of first top-level span
+        - [0, 1] = second child of first top-level span
 
         Args:
-            path: Execution path like [0], [0, 0], [0, 1]
+            path: Execution path like [0], [1], [0, 0], [0, 1]
 
         Returns:
             SpanTree at that path, or None if not found
         """
-        if not self._replay_span_tree:
+        if not self._replay_span_trees or not path:
             return None
 
-        # Check if looking for root
-        if path == [0]:
-            return self._replay_span_tree
+        # First index is the top-level span index
+        if path[0] >= len(self._replay_span_trees):
+            return None
 
-        # Navigate down the tree using path indices
-        # Start at root (path[0] = 0), then navigate children
-        current = self._replay_span_tree
+        top_level_span = self._replay_span_trees[path[0]]
 
-        # Skip first index (root is [0]), navigate using remaining indices
+        # If path has only one element, return the top-level span
+        if len(path) == 1:
+            return top_level_span
+
+        # Navigate down the tree using remaining path indices
+        current = top_level_span
         for index in path[1:]:
             if not current.children or index >= len(current.children):
                 return None
             current = current.children[index]
 
         return current
+
+    def get_next_top_level_span_index(self) -> int:
+        """
+        Get the next index for a top-level span in the current turn.
+
+        Returns:
+            The next span index (starting from 0)
+        """
+        index = self._top_level_span_count
+        self._top_level_span_count += 1
+        return index
 
     async def start_span(
         self,
@@ -207,7 +235,7 @@ class Context(BaseModel):
 
         # Check if we should use a span from replay tree
         replay_span = None
-        if self._replay_span_tree:
+        if self._replay_span_trees:
             # Get current execution path
             current_path = self._get_current_execution_path()
 
@@ -219,19 +247,30 @@ class Context(BaseModel):
                 replay_span = None  # Name mismatch, don't use replay span
 
         # Use replay span if available, otherwise create new span
-        
+
         if replay_span:
             # Replay mode: use existing span with saved outputs
             span_tree = replay_span
         elif not self._execution_stack:
-            # Root component - create root span tree
-            if self._span_tree is None:
-                self._span_tree = await SpanTree.init_new(
-                    name=name,
-                    span_type=span_type,
-                    tags=tags
-                )
-            span_tree = self._span_tree
+            # Top-level component - create top-level span (no root span)
+            # Get next top-level span index from context counter
+            span_index = self.get_next_top_level_span_index()
+            top_level_path = str(span_index + 1)  # "1", "2", "3", ...
+
+            # Create ExecutionSpan directly
+            exec_span = await ExecutionSpan(
+                name=name,
+                span_type=span_type,
+                tags=tags,
+                path=top_level_path,
+                parent_span_id=None  # Top-level, no parent
+            ).save()
+
+            # Wrap in SpanTree
+            span_tree = SpanTree(exec_span, parent=None, index=span_index)
+
+            # Add to top-level spans list
+            self._top_level_spans.append(span_tree)
         else:
             # Child component - create child span
             parent_span = self.current_span_tree
@@ -269,8 +308,6 @@ class Context(BaseModel):
 
             parent._child_count += 1
 
-        if self._root_span is None:
-            self._root_span = span_tree
         return span_tree
 
     async def end_span(self):
@@ -294,9 +331,29 @@ class Context(BaseModel):
         return component
     
     def get_span(self, path: list[int]) -> "SpanTree | None":
-        if self._root_span is None:
+        """
+        Get a span by its full path from the top-level spans.
+        Path format: [top_level_index, child_index, child_child_index, ...]
+        Examples:
+            [0] = first top-level span
+            [1] = second top-level span
+            [2, 1, 0] = first child of second child of third top-level span
+        """
+        if not path or not self._top_level_spans:
             return None
-        return self._root_span.get(path)
+
+        # First index is the top-level span index
+        if path[0] >= len(self._top_level_spans):
+            return None
+
+        top_level_span = self._top_level_spans[path[0]]
+
+        # If path has more elements, navigate down the tree
+        if len(path) == 1:
+            return top_level_span
+        else:
+            # Use SpanTree.get() which expects relative path from this span
+            return top_level_span.get(path[1:])
 
     @classmethod
     async def from_request(cls, request: "Request"):
@@ -358,15 +415,16 @@ class Context(BaseModel):
 
     async def load_replay(self, turn_id: int, span_id: int | None = None, branch_id: int | None = None) -> "Context":
         """
-        Load a span tree for replay mode.
+        Load span trees for replay mode.
 
-        When a span tree is loaded, Context will use it to provide saved spans
+        When span trees are loaded, Context will use them to provide saved spans
         during execution instead of creating new ones. This enables replay of
         previous executions.
 
         Args:
             turn_id: The turn ID to load spans from
-            span_id: Optional specific span to start from (default: root span)
+            span_id: Optional specific span to start from (default: all top-level spans)
+            branch_id: Optional branch ID for the turn
 
         Returns:
             Self for method chaining
@@ -379,7 +437,7 @@ class Context(BaseModel):
                     print(event)
         """
         from .span_tree import SpanTree
-        self._replay_span_tree = await SpanTree.replay_from_turn(turn_id, span_id, branch_id)
+        self._replay_span_trees = await SpanTree.replay_from_turn(turn_id, span_id, branch_id)
         return self
 
     # def fork(self, branch: Branch | None = None)

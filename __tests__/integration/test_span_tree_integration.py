@@ -87,7 +87,9 @@ async def test_save_artifact_list(setup_database):
         assert value.value[2].id == post3.id
 
     # Test loading from turn
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     assert len(span_tree.values) == 1
 
     list_value = span_tree.values[0]
@@ -114,7 +116,9 @@ async def test_save_single_block(setup_database):
         # assert value.value.id == blk.id
 
     # Test loading from turn
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     assert len(span_tree.values) == 1
     # assert span_tree.values[0].value.id == blk.id
 
@@ -136,7 +140,9 @@ async def test_save_block_list(setup_database):
         value = await span.log_value([blk1, blk2, blk3])
 
     # Test loading from turn
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     value = span_tree.values[0].value
 
     assert type(value) == list
@@ -169,7 +175,9 @@ async def test_add_child_span(setup_database):
         assert span_values[0].span_tree.id == child_span.id
 
     # Test loading from turn
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     assert len(span_tree.children) == 1
     assert span_tree.children[0].name == "child"
 
@@ -191,7 +199,9 @@ async def test_multiple_children(setup_database):
         assert parent_span.children[2].name == "child3"
 
     # Test loading from turn - children should be in execution order
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     assert len(span_tree.children) == 3
     assert span_tree.children[0].name == "child1"
     assert span_tree.children[1].name == "child2"
@@ -216,7 +226,9 @@ async def test_nested_children(setup_database):
         assert root.children[0].children[0].children[0].name == "great_grandchild"
 
     # Test loading from turn
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     assert len(span_tree.children) == 1
     assert len(span_tree.children[0].children) == 1
     assert len(span_tree.children[0].children[0].children) == 1
@@ -253,7 +265,9 @@ async def test_mixed_values_and_children(setup_database):
         assert parent.children[0].id == child.id
 
     # Test loading preserves order
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     assert len(span_tree.values) == 3
     assert span_tree.values[0]._is_span == False
     assert span_tree.values[1]._is_span == True
@@ -278,7 +292,9 @@ async def test_to_dict_serialization(setup_database):
         child = await parent.add_child("child")
 
     # Load and serialize
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     serialized = span_tree.to_dict()
 
     # Check structure
@@ -315,7 +331,9 @@ async def test_to_dict_no_duplicate_children(setup_database):
         await parent.add_child("child1")
         await parent.add_child("child2")
 
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
     serialized = span_tree.to_dict()
 
     # Should NOT have a separate "children" field
@@ -339,7 +357,9 @@ async def test_traverse_with_children(setup_database):
         child2 = await root.add_child("child2")
         grandchild = await child1.add_child("grandchild")
 
-    span_tree = await SpanTree.from_turn(ctx.turn.id)
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+    assert len(span_trees) == 1  # One top-level span
+    span_tree = span_trees[0]
 
     # Traverse should visit all spans
     spans = list(span_tree.traverse())
@@ -348,3 +368,78 @@ async def test_traverse_with_children(setup_database):
     assert spans[1].name == "child1"
     assert spans[2].name == "grandchild"
     assert spans[3].name == "child2"
+
+
+@pytest.mark.asyncio
+async def test_multiple_top_level_spans(setup_database):
+    """Test that multiple top-level spans in a single turn are properly tracked."""
+    ctx = Context()
+
+    async with ctx.start_turn() as ctx:
+        # Create first top-level span
+        span1 = await SpanTree("preprocessing").save()
+        await span1.log_value("preprocess data", io_kind="output")
+
+        # Create second top-level span
+        span2 = await SpanTree("main_task").save()
+        post = await Post(title="Post 1", text="Text 1").save()
+        await span2.log_value(post, io_kind="output")
+
+        # Create third top-level span
+        span3 = await SpanTree("postprocessing").save()
+        await span3.log_value("cleanup", io_kind="output")
+
+    # Load from turn
+    span_trees = await SpanTree.from_turn(ctx.turn.id)
+
+    # Should have 3 top-level spans
+    assert len(span_trees) == 3
+
+    # Verify each span
+    assert span_trees[0].name == "preprocessing"
+    assert span_trees[0].root.path == "1"
+    assert span_trees[0].index == 0
+    assert len(span_trees[0].values) == 1
+
+    assert span_trees[1].name == "main_task"
+    assert span_trees[1].root.path == "2"
+    assert span_trees[1].index == 1
+    assert len(span_trees[1].values) == 1
+
+    assert span_trees[2].name == "postprocessing"
+    assert span_trees[2].root.path == "3"
+    assert span_trees[2].index == 2
+    assert len(span_trees[2].values) == 1
+
+
+@pytest.mark.asyncio
+async def test_context_tracks_multiple_top_level_spans(setup_database):
+    """Test that Context properly tracks multiple top-level spans."""
+    ctx = Context()
+
+    async with ctx.start_turn():
+        # Initially no spans
+        assert len(ctx.top_level_spans) == 0
+
+        # Create first top-level span
+        span1 = await SpanTree("span1").save()
+        assert len(ctx.top_level_spans) == 1
+        assert ctx.root_span == span1
+        assert ctx.top_level_spans[0] == span1
+
+        # Create second top-level span
+        span2 = await SpanTree("span2").save()
+        assert len(ctx.top_level_spans) == 2
+        assert ctx.root_span == span1  # root_span still points to first
+        assert ctx.top_level_spans[0] == span1
+        assert ctx.top_level_spans[1] == span2
+
+        # Create third top-level span
+        span3 = await SpanTree("span3").save()
+        assert len(ctx.top_level_spans) == 3
+        assert ctx.top_level_spans[2] == span3
+
+        # Test get_span with multiple top-level spans
+        assert ctx.get_span([0]) == span1
+        assert ctx.get_span([1]) == span2
+        assert ctx.get_span([2]) == span3
