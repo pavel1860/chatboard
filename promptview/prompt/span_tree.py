@@ -96,6 +96,16 @@ class Value:
         """Get as SpanTree if this is a span value."""
         return self._value if self._is_span else None
 
+    @property
+    def path(self) -> str:
+        """Get the LTREE path of this value."""
+        return self.span_value.path
+
+    @property
+    def name(self) -> str | None:
+        """Get the name of this value."""
+        return self.span_value.name
+
     def __repr__(self):
         return f"Value(id={self.id}, io_kind={self.io_kind}, artifact_id={self.artifact_id}, value={self.value})"
 
@@ -262,7 +272,30 @@ class SpanTree:
         if len(path) == 1:
             return self.children[path[0]]
         return self.children[path[0]].get(path[1:])
-    
+
+    def get_value_by_path(self, path: str) -> Value | None:
+        """
+        Get a value by its LTREE path string.
+
+        Args:
+            path: LTREE path string (e.g., "1.0.2")
+
+        Returns:
+            Value at that path, or None if not found
+        """
+        # Check if this is a value in the current span
+        for value in self.values:
+            if value.span_value.path == path:
+                return value
+
+        # Check children recursively
+        for child in self.children:
+            result = child.get_value_by_path(path)
+            if result:
+                return result
+
+        return None
+
     def get_input_args(self):
         return [v.value for v in self.inputs]
         
@@ -766,9 +799,9 @@ class SpanTree:
         for s in self.traverse():
             print(s.id, s.path, s.name)
             for v in s.inputs:
-                print("  ", v.id, v.io_kind, v.artifact_id)
+                print(">>  ", v.id, v.io_kind, v.artifact_id, v.path, ":", v.value)
             for v in s.outputs:
-                print("  ", v.id, v.io_kind, v.artifact_id)
+                print("<<  ", v.id, v.io_kind, v.artifact_id, v.path, ":", v.value)
 
     def to_dict(self) -> dict:
         """Convert SpanTree to JSON-serializable dict with new junction table architecture."""

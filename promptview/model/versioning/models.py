@@ -20,6 +20,7 @@ from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
     from ...block import Block
+    from ...evaluation.models import TestTurn
 
 # ContextVars for current branch/turn
 _curr_branch = contextvars.ContextVar("curr_branch", default=None)
@@ -51,6 +52,7 @@ class Branch(Model):
 
     turns: List["Turn"] = RelationField(foreign_key="branch_id")
     children: List["Branch"] = RelationField(foreign_key="forked_from_branch_id")
+    
     
     async def fork_branch(self, turn: "Turn", name: str | None = None):
         branch = await Branch(
@@ -199,6 +201,8 @@ class Turn(Model):
     spans: List["ExecutionSpan"] = RelationField(foreign_key="turn_id")
     block_trees: List["BlockTree"] = RelationField(foreign_key="turn_id")
     values: List["SpanValue"] = RelationField(foreign_key="turn_id")  # Turn-level values
+    # test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")
+    
 
     _auto_commit: bool = True
     _raise_on_error: bool = True

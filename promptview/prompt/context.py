@@ -13,6 +13,7 @@ from ..utils.function_utils import call_function
 if TYPE_CHECKING:
     from fastapi import Request
     from .span_tree import SpanTree
+    from ..evaluation.context import EvaluationContext
 
 # Context variable for implicit context passing across async boundaries
 _context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
@@ -43,6 +44,10 @@ class StartTurn:
     branch_id: int | None = None
     auto_commit: bool = True
 
+@dataclass
+class StartEval:
+    test_case_id: int
+
 
 class ContextError(Exception):
     pass
@@ -55,12 +60,13 @@ class Context(BaseModel):
     _request: "Request | None" = None
     _auth: AuthModel | None = None
     _ctx_models: dict[str, Model] = {}
-    _tasks: list[LoadBranch | LoadTurn | ForkTurn | StartTurn] = []
+    _tasks: list[LoadBranch | LoadTurn | ForkTurn | StartTurn | StartEval] = []
     _execution_stack: list = []
     _replay_span_trees: list["SpanTree"] = []  # Top-level span trees to replay from
     _execution_path: list[int] = []  # Current execution path like [0, 1, 2]
     _top_level_span_count: int = 0  # Counter for top-level spans in current turn
     _top_level_spans: list["SpanTree"] = []  # All top-level spans in this turn
+    _evaluation_context: "EvaluationContext | None" = None  # Evaluation context if in eval mode
     
     
     def __init__(
@@ -408,10 +414,82 @@ class Context(BaseModel):
     def start_turn(self, auto_commit: bool = True) -> "Context":
         self._tasks.append(StartTurn(auto_commit=auto_commit))
         return self
-    
+
+    def start_eval(self, test_case_id: int) -> "Context":
+        """
+        Start evaluation mode for this context.
+
+        This loads a test case and sets up evaluation context to automatically
+        run evaluators as values are logged during execution.
+
+        Args:
+            test_case_id: The test case ID to evaluate against
+
+        Returns:
+            Self for method chaining
+
+        Example:
+            ctx = Context()
+            async with ctx.start_eval(test_case_id=1):
+                result = await my_agent("test input")
+        """
+        self._tasks.append(StartEval(test_case_id=test_case_id))
+        return self
+
     def fork(self, turn: Turn | None = None, turn_id: int | None = None) -> "Context":
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
         return self
+
+    async def _setup_evaluation(self, test_case_id: int):
+        """
+        Setup evaluation context for the given test case.
+
+        Loads reference data and creates evaluation tracking objects.
+        """
+        from ..evaluation import TestCase, TestRun, TurnEval, TestTurn, EvaluationContext
+        from .span_tree import SpanTree
+
+        # Load test case
+        test_case = await TestCase.get(test_case_id)
+
+        # Get first test turn (for MVP, support single turn)
+        test_turns = await TestTurn.query().where(test_case_id=test_case_id).execute()
+        if not test_turns:
+            raise ValueError(f"No test turns found for test case {test_case_id}")
+
+        test_turn = test_turns[0]
+
+        # Load reference turn and span trees
+        ref_span_trees = await SpanTree.from_turn(test_turn.turn_id)
+        if not isinstance(ref_span_trees, list):
+            ref_span_trees = [ref_span_trees]
+
+        # Create test run
+        test_run = await TestRun(
+            test_case_id=test_case_id,
+            status="running"
+        ).save()
+
+        # Create turn evaluation
+        turn_eval = await TurnEval(
+            test_turn_id=test_turn.id,
+            ref_turn_id=test_turn.turn_id,
+            test_run_id=test_run.id
+        ).save()
+
+        # Create evaluation context
+        # Instead of building flat index, just pass the reference span trees
+        # EvaluationContext will use get_value_by_path() on-demand
+        eval_ctx = EvaluationContext(
+            test_case=test_case,
+            test_run=test_run,
+            turn_eval=turn_eval,
+            test_turn=test_turn,
+            reference_span_trees=ref_span_trees
+        )
+
+        # Store in context
+        self._evaluation_context = eval_ctx
 
     async def load_replay(self, turn_id: int, span_id: int | None = None, branch_id: int | None = None) -> "Context":
         """
@@ -463,6 +541,8 @@ class Context(BaseModel):
             elif isinstance(task, StartTurn):
                 branch = await self._get_branch()
                 self._turn = await branch.create_turn(auto_commit=task.auto_commit)
+            elif isinstance(task, StartEval):
+                await self._setup_evaluation(task.test_case_id)
 
 
         if self._branch is None and len(self._tasks) > 0:

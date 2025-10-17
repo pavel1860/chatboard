@@ -881,7 +881,7 @@ import asyncio
 from promptview.model.versioning.models import ExecutionSpan
 
 if TYPE_CHECKING:
-    from .span_tree import SpanTree
+    from .span_tree import SpanTree, Value
     from promptview.block import Block
 
 
@@ -1022,7 +1022,7 @@ class Process:
 
             # Log input to span tree for observability
             if self._span_tree:
-                await self._span_tree.log_value(ip, io_kind="input")
+                value = await self._span_tree.log_value(ip, io_kind="input")
 
             # Track that we've yielded at least once
             if not self._did_yield:
@@ -1620,6 +1620,7 @@ class StreamController(ObservableProcess):
         self._parser: Parser | None = None
         self._save_filepath: str | None = None
         self._load_filepath: str | None = None
+        self._stream_value: Value | None = None
         
 
     async def on_start(self):
@@ -1709,8 +1710,8 @@ class StreamController(ObservableProcess):
             # if self._span_tree and self._accumulator:
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
             if self._span_tree and self._parser and self._parser.res_ctx.instance is not None:
-                await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
-                
+                value = await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
+                self._stream_value = value
 
             await self.on_stop()
             raise StopAsyncIteration
@@ -1734,6 +1735,7 @@ class StreamController(ObservableProcess):
         # elif self._accumulator:
             # Normal mode: return accumulated values
             # return self._accumulator.result
+        return self._stream_value
         if self._parser:
             return self._parser.res_ctx.instance
         # return self.acc
@@ -1815,6 +1817,7 @@ class PipeController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
+        self._last_value: Value | None = None
         
 
     async def on_start(self):
@@ -1898,6 +1901,9 @@ class PipeController(ObservableProcess):
                     child.parent = self
                     child.index = self.index
                     self.index += 1  # Increment for next child
+                elif self._span_tree:
+                    value = await self._span_tree.log_value(child, io_kind="output")
+                    self._last_value = value
 
                 # Log child as output
                 if self._span_tree and isinstance(child, (StreamController, PipeController)):
@@ -2048,6 +2054,9 @@ class FlowRunner:
                 value = await process.asend(response)
                 self.last_value = value
 
+                # Trigger evaluation if context has evaluation enabled
+                # await self._try_evaluate_value(process, value)
+
                 # If value is a Process (from PipeController), push to stack
                 if isinstance(value, (StreamController, PipeController)):
                     self.push(value)
@@ -2100,6 +2109,17 @@ class FlowRunner:
                     raise e
 
         raise StopAsyncIteration
+    
+    async def _try_evaluate_value(self, process: Process, value: Any):
+        """Try to evaluate value based on evaluation context."""
+        
+        eval_context = self.ctx._evaluation_context
+        if eval_context is None:
+            return
+        
+        
+        evaluator = eval_context.get_evaluator(value)
+        await eval_context.evaluate_value(value, self.ctx.current_span_tree)
 
     async def try_build_start_event(self, process: Process, value: Any):
         """Try to build start event based on event_level."""
