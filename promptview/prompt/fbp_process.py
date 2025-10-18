@@ -1709,8 +1709,12 @@ class StreamController(ObservableProcess):
             # Log the final accumulated result as output
             # if self._span_tree and self._accumulator:
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
-            if self._span_tree and self._parser and self._parser.res_ctx.instance is not None:
-                value = await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
+            if self._span_tree:
+                value = None
+                if self._parser and self._parser.res_ctx.instance is not None:
+                    value = await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
+                elif self._accumulator:
+                    value = await self._span_tree.log_value(self._accumulator.result, io_kind="output")
                 self._stream_value = value
 
             await self.on_stop()
@@ -1934,6 +1938,51 @@ class PipeController(ObservableProcess):
 
 
 
+
+
+class EvaluatorController(ObservableProcess):
+    """
+    EvaluationController is a process that evaluates values based on evaluation context.
+    """
+    def __init__(
+        self, 
+        gen_func: Callable[..., AsyncGenerator],
+        name: str,
+        span_type: str = "component",
+        tags: list[str] | None = None,
+        args: tuple = (),
+        kwargs: dict[str, Any] | None = None,
+        upstream: Process | None = None
+    ):
+        super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
+        self._gen: AsyncGenerator | None = None
+        self._did_start = False
+        self._did_yield = False
+        self._last_ip = None
+        self._last_value = None
+        self._parent = upstream
+        self._index = 0 if upstream else None
+    
+    
+    async def on_start(self):
+        return None
+    
+    async def on_value_event(self, value: Any):
+        return None
+    
+    async def on_stop(self):
+        return None
+    
+    async def on_error(self, error: Exception):
+        return None
+
+    async def asend(self, value: Any = None):
+        return await self._gen.asend(value)
+    
+    async def __anext__(self):
+        return await self._gen.__anext__()
+
+
 # ============================================================================
 # FlowRunner - Orchestrates nested process execution
 # ============================================================================
@@ -1965,6 +2014,7 @@ class FlowRunner:
             root_process: The root process to execute (usually PipeController)
             event_level: Level of events to emit (chunk, span, turn)
         """
+        from .context import Context
         self.stack: list[Process] = [root_process]
         self.last_value: Any = None
         self._output_events = False
@@ -1973,6 +2023,7 @@ class FlowRunner:
         self._event_level = event_level
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
+        self.ctx = Context.current()
 
     @property
     def current(self) -> Process:
@@ -2055,7 +2106,7 @@ class FlowRunner:
                 self.last_value = value
 
                 # Trigger evaluation if context has evaluation enabled
-                # await self._try_evaluate_value(process, value)
+                
 
                 # If value is a Process (from PipeController), push to stack
                 if isinstance(value, (StreamController, PipeController)):
@@ -2065,6 +2116,8 @@ class FlowRunner:
                         if event := await self.try_build_value_event(process, value):
                             return event
                     continue
+                
+                await self._try_evaluate_value(process)
 
                 # Emit value event if needed
                 if self.should_output_events:
@@ -2110,16 +2163,23 @@ class FlowRunner:
 
         raise StopAsyncIteration
     
-    async def _try_evaluate_value(self, process: Process, value: Any):
+    async def _try_evaluate_value(self, process: Process):
         """Try to evaluate value based on evaluation context."""
-        
-        eval_context = self.ctx._evaluation_context
-        if eval_context is None:
+        from ..evaluation.decorators import evaluator_registry
+        eval_ctx = self.ctx._evaluation_context
+        value = process._last_value if hasattr(process, '_last_value') else None
+        if eval_ctx is None or value is None:
             return
         
+        evaluators = eval_ctx.get_evaluators(value)
+        for eval_config in evaluators:
+            evaluator_controller = evaluator_registry.instantiate(value, eval_config, eval_ctx.test_case, eval_ctx.test_run)
+            self.push(evaluator_controller)        
+        print(evaluators)
         
-        evaluator = eval_context.get_evaluator(value)
-        await eval_context.evaluate_value(value, self.ctx.current_span_tree)
+        return value
+        # evaluator = eval_context.get_evaluator(value)
+        # await eval_context.evaluate_value(value, self.ctx.current_span_tree)
 
     async def try_build_start_event(self, process: Process, value: Any):
         """Try to build start event based on event_level."""

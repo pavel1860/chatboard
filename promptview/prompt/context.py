@@ -109,6 +109,12 @@ class Context(BaseModel):
             The current Context instance, or None if no context is active
         """
         return _context_var.get()
+    
+    @property
+    def eval_ctx(self) -> "EvaluationContext":
+        if self._evaluation_context is None:
+            raise ValueError("Evaluation context not set")
+        return self._evaluation_context
 
     @property
     def current_component(self):
@@ -261,7 +267,7 @@ class Context(BaseModel):
             # Top-level component - create top-level span (no root span)
             # Get next top-level span index from context counter
             span_index = self.get_next_top_level_span_index()
-            top_level_path = str(span_index + 1)  # "1", "2", "3", ...
+            top_level_path = str(span_index)  # "0", "1", "2", ...
 
             # Create ExecutionSpan directly
             exec_span = await ExecutionSpan(
@@ -434,6 +440,7 @@ class Context(BaseModel):
                 result = await my_agent("test input")
         """
         self._tasks.append(StartEval(test_case_id=test_case_id))
+        self._tasks.append(StartTurn())
         return self
 
     def fork(self, turn: Turn | None = None, turn_id: int | None = None) -> "Context":

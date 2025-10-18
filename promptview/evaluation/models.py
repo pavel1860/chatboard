@@ -29,7 +29,7 @@ class EvaluatorConfig(BaseModel):
     name: str = Field(..., description="Evaluator function name")
     path_pattern: str | None = Field(None, description="LTREE path pattern for SpanValue.path (e.g., '1.*', '*.0', '1.2.3')")
     tags: list[str] = Field(default=[], description="Match values whose parent span has these tags")
-    # span_name: str | None = Field(None, description="Match values whose parent span has this name")
+    span_name: str | None = Field(None, description="Match values whose parent span has this name")
     # value_name: str | None = Field(None, description="Match values by their name field")
     metadata: dict = Field(default={}, description="Additional evaluator configuration")
 

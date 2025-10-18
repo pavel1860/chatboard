@@ -36,6 +36,24 @@ class EvaluationContext:
     # Track evaluation results
     results: list[dict[str, Any]] = field(default_factory=list)
     value_evals: list[ValueEval] = field(default_factory=list)
+    
+    
+    
+    def get_eval_span_tree(self, path: list[int]) -> "SpanTree":
+        span_tree = self.reference_span_trees[path[0]].get(path[1:])
+        if span_tree is None:
+            raise ValueError(f"Span tree not found for path {path}")
+        return span_tree
+    
+    
+    def get_evaluators(self, value: "Value") -> list["EvaluatorConfig"]:
+        return match_value_to_evaluators(
+            value,
+            self.get_eval_span_tree(value.path[:-1]),
+            self.test_turn.evaluators
+        )
+        
+
 
     async def evaluate_value(
         self,

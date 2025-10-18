@@ -93,7 +93,7 @@ def match_value_to_evaluators(
     for evaluator in evaluators:
         # Check path pattern
         if evaluator.path_pattern:
-            if not match_ltree_pattern(value.path, evaluator.path_pattern):
+            if not match_ltree_pattern(value.str_path, evaluator.path_pattern):
                 continue
 
         # Check tags (span must have at least one of the specified tags)
@@ -107,9 +107,9 @@ def match_value_to_evaluators(
                 continue
 
         # Check value name (exact match)
-        if evaluator.value_name:
-            if value.name != evaluator.value_name:
-                continue
+        # if evaluator.value_name:
+        #     if value.name != evaluator.value_name:
+        #         continue
 
         # All criteria matched
         matched.append(evaluator)

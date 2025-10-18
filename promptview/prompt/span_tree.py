@@ -97,8 +97,12 @@ class Value:
         return self._value if self._is_span else None
 
     @property
-    def path(self) -> str:
+    def path(self) -> list[int]:
         """Get the LTREE path of this value."""
+        return [int(p) for p in self.span_value.path.split(".")]
+    
+    @property
+    def str_path(self) -> str:
         return self.span_value.path
 
     @property
@@ -183,7 +187,7 @@ class SpanTree:
 
             # Get next span index from context counter
             span_index = ctx.get_next_top_level_span_index()
-            self.root.path = str(span_index + 1)  # "1", "2", "3", ...
+            self.root.path = str(span_index)  # "0", "1", "2", ...
             self.index = span_index
 
             # Register this top-level span with the Context
@@ -203,6 +207,15 @@ class SpanTree:
         if self.index is None:
             return self.parent.path
         return self.parent.path + [self.index]
+    
+    
+    @property
+    def str_path(self) -> str:
+        if self.parent is None:
+            return str(self.index)
+        if self.index is None:
+            return self.parent.str_path
+        return self.parent.str_path + "." + str(self.index)
     
     @property
     def name(self):
@@ -590,8 +603,13 @@ class SpanTree:
             
     async def log_value(self, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
         # Compute path for this value using in-memory counter
-        value_path = f"{self.root.path}.{self._value_index}"
-        self._value_index += 1  # Increment for next value
+        if io_kind == "output":
+            value_path = f"{self.root.path}.{self._value_index}"
+            self._value_index += 1  # Increment for next value
+        elif io_kind == "input":
+            value_path = self.root.path
+        else:
+            raise ValueError(f"Invalid io_kind: {io_kind}")
 
         if isinstance(target, list) and is_artifact_list(target):
             container_artifact = await Artifact(

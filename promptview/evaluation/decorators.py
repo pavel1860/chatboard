@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from ..testing.test_models import TestCase, TestRun
     from ..prompt.span_tree import Value
     from .models import EvaluatorConfig
+    from ..prompt.fbp_process import EvaluatorController
 
 
 @dataclass
@@ -26,7 +27,28 @@ class EvalCtx:
 
 
 # Global registry of evaluator functions
-_evaluator_registry: dict[str, Callable] = {}
+class EvaluatorRegistry:
+    def __init__(self):
+        self._evaluator_registry: dict[str, Callable] = {}
+
+    def register(self, name: str, func: Callable):
+        self._evaluator_registry[name] = func
+
+    def get(self, name: str) -> Callable | None:
+        return self._evaluator_registry.get(name)
+    
+    def instantiate(self, value: "Value", eval_config: "EvaluatorConfig", test_case: "TestCase", test_run: "TestRun") -> "EvaluatorController":
+        from ..prompt.fbp_process import EvaluatorController
+        
+        gen_func = self._evaluator_registry[eval_config.name]
+        ctx = EvalCtx(test_case, test_run, eval_config)
+        return EvaluatorController(gen_func, eval_config.name, span_type="evaluator", args=(), kwargs={"ctx": ctx, "ref_value": value, "test_value": value})
+
+    def list(self) -> list[str]:
+        return list(self._evaluator_registry.keys())
+
+
+evaluator_registry = EvaluatorRegistry()
 
 
 def evaluator(
@@ -79,16 +101,16 @@ def evaluator(
             return result, {}
 
     # Register in global registry
-    _evaluator_registry[func.__name__] = wrapper
+    evaluator_registry.register(func.__name__, wrapper)
 
     return wrapper
 
 
 def get_evaluator(name: str) -> Callable | None:
     """Get an evaluator function by name from the registry."""
-    return _evaluator_registry.get(name)
+    return evaluator_registry.get(name)
 
 
 def list_evaluators() -> list[str]:
     """List all registered evaluator names."""
-    return list(_evaluator_registry.keys())
+    return evaluator_registry.list()
