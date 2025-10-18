@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 
 from ...block import BaseBlock, Block, BlockChunk, BlockList, BlockSent, AttrBlock
-from ..versioning.models import Artifact, Branch, SpanValue
+from ..versioning.models import Artifact, Branch, DataFlowNode
 from ..sql.expressions import RawValue
 from ..sql.queries import Column
 from ...utils.db_connections import PGConnectionManager
@@ -269,7 +269,7 @@ class BlockLogQuery:
         
     def _build_span_query(self, name: str):
         return ExecutionSpan.query().include(
-            SpanValue.query().include(
+            DataFlowNode.query().include(
                 Artifact
             )
         ).where(name=name)

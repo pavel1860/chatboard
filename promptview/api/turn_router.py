@@ -6,7 +6,7 @@ from ..model.query_url_params import parse_query_params, QueryListType
 from ..model import TurnStatus
 from .utils import query_filters
 from ..model.block_models.block_log import get_blocks
-from ..model.versioning.models import Turn, ExecutionSpan, SpanValue, Log, Artifact
+from ..model.versioning.models import Turn, ExecutionSpan, DataFlowNode, Log, Artifact
 from ..model.versioning.models import Branch
 from .utils import ListParams, get_list_params
 
@@ -40,7 +40,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
 
         This endpoint uses SpanTree.from_turn() which handles:
         - Loading ExecutionSpans with their hierarchy
-        - Loading SpanValues with the ValueArtifact junction table
+        - Loading DataFlowNodes with the DataArtifact junction table
         - Instantiating actual model instances for values
         - Building the complete tree structure
         """
@@ -109,7 +109,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         async with ctx:
             turns = await Turn.query().include(
                         ExecutionSpan.query(alias="es").select("*").include(
-                            SpanValue
+                            DataFlowNode
                         )
                 ) \
                 .agg("forked_branches", Branch.query(["id"]), on=("id", "forked_from_turn_id")) \

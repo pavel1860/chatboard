@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, Field
 
-from ..model import Model, ModelField, KeyField, RelationField, SpanValue, Turn
+from ..model import Model, ModelField, KeyField, RelationField, DataFlowNode, Turn
 
 
 
@@ -50,7 +50,7 @@ class ValueEval(Model):
 
     # What was evaluated
     turn_eval_id: int = ModelField(foreign_key=True, description="Parent turn evaluation")
-    value_id: int = ModelField(foreign_key=True, foreign_cls=SpanValue, description="The SpanValue that was evaluated")
+    value_id: int = ModelField(foreign_key=True, foreign_cls=DataFlowNode, description="The SpanValue that was evaluated")
     path: str = ModelField(db_type="LTREE", description="Value path for querying")
 
     # Evaluation results

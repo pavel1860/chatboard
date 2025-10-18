@@ -200,7 +200,7 @@ class Turn(Model):
     artifacts: List["Artifact"] = RelationField(foreign_key="turn_id")
     spans: List["ExecutionSpan"] = RelationField(foreign_key="turn_id")
     block_trees: List["BlockTree"] = RelationField(foreign_key="turn_id")
-    values: List["SpanValue"] = RelationField(foreign_key="turn_id")  # Turn-level values
+    values: List["DataFlowNode"] = RelationField(foreign_key="turn_id")  # Turn-level values
     # test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")
     
 
@@ -863,7 +863,7 @@ class Log(VersionedModel):
 ValueIOKind = Literal["input", "output"]
 
 
-class ValueArtifact(Model):
+class DataArtifact(Model):
     id: int = KeyField(primary_key=True)  # Auto-increment ID
     value_id: int = ModelField(foreign_key=True)
     artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
@@ -871,7 +871,7 @@ class ValueArtifact(Model):
     name: str | None = ModelField(default=None)  # For dicts - key name
     
 
-class SpanValue(Model):
+class DataFlowNode(Model):
     id: int = KeyField(primary_key=True)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
     kind: ArtifactKindEnum = ModelField()
@@ -887,9 +887,9 @@ class SpanValue(Model):
         primary_key="id",
         junction_keys=["value_id", "artifact_id"],
         foreign_key="id",
-        junction_model=ValueArtifact,
+        junction_model=DataArtifact,
     )
-    value_artifacts: list[ValueArtifact] = RelationField(
+    value_artifacts: list[DataArtifact] = RelationField(
         primary_key="id",
         foreign_key="value_id",
     )
@@ -918,7 +918,7 @@ class ExecutionSpan(VersionedModel):
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
     
     # Relations
-    values: List["SpanValue"] = RelationField([], foreign_key="span_id")
+    values: List["DataFlowNode"] = RelationField([], foreign_key="span_id")
     artifacts: List[Artifact] = RelationField(foreign_key="span_id")
     # events: List[Event] = RelationField(foreign_key="execution_span_id")
     block_trees: List[BlockTree] = RelationField(foreign_key="span_id")

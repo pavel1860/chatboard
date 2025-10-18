@@ -3,7 +3,7 @@ import asyncio
 from typing import Any, Iterator, TYPE_CHECKING
 
 from ..utils.type_utils import SerializableType, serialize_value, type_to_str_or_none
-from ..model.versioning.models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanValue, Artifact, ValueArtifact, ValueIOKind, Parameter, Log, VersionedModel
+from ..model.versioning.models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
 from ..block import BlockList, Block
 from ..model.block_models.block_log import insert_block, get_blocks
 
@@ -23,9 +23,9 @@ def is_artifact_list(target_list: Any) -> bool:
     return False
             
 
-class Value:
+class DataFlow:
 
-    def __init__(self, span_value: SpanValue, value: Any, container: Artifact | None = None):
+    def __init__(self, span_value: DataFlowNode, value: Any, container: Artifact | None = None):
         self.span_value = span_value
         self._value = value
         self._is_list = span_value.kind == "list"
@@ -111,7 +111,7 @@ class Value:
         return self.span_value.name
 
     def __repr__(self):
-        return f"Value(id={self.id}, io_kind={self.io_kind}, artifact_id={self.artifact_id}, value={self.value})"
+        return f"DataFlow(id={self.id}, io_kind={self.io_kind}, artifact_id={self.artifact_id}, value={self.value})"
 
 
 class SpanTree:
@@ -125,7 +125,7 @@ class SpanTree:
         index: int = 0,
         children: "list[SpanTree] | None" = None,
         parent: "SpanTree | None" = None,
-        values: list[Value] | None = None
+        values: list[DataFlow] | None = None
     ):
         """
         Initialize a span tree.
@@ -286,7 +286,7 @@ class SpanTree:
             return self.children[path[0]]
         return self.children[path[0]].get(path[1:])
 
-    def get_value_by_path(self, path: str) -> Value | None:
+    def get_value_by_path(self, path: str) -> DataFlow | None:
         """
         Get a value by its LTREE path string.
 
@@ -318,7 +318,7 @@ class SpanTree:
         Load span trees from a list of ExecutionSpan instances.
         Returns list of top-level SpanTrees (no single root).
         """
-        from ..model.versioning.models import ValueArtifact
+        from ..model.versioning.models import DataArtifact
 
         lookup = defaultdict(list)
         top_level_spans = []
@@ -345,7 +345,7 @@ class SpanTree:
                             continue
                         value = value_dict[artifact.model_name][artifact.id]
                         items.append(value)
-                    span._values.append(Value(v, items, container))
+                    span._values.append(DataFlow(v, items, container))
                 elif v.kind == "span":
                     # Create SpanTree for child span (not just ExecutionSpan)
                     # Find the child ExecutionSpan by artifact_id
@@ -355,16 +355,16 @@ class SpanTree:
                         child_span_tree = SpanTree(child_exec_span, parent=span)
                         # Recursively populate this child
                         await populate_children(child_span_tree)
-                        span._values.append(Value(v, child_span_tree))
+                        span._values.append(DataFlow(v, child_span_tree))
                     else:
                         # Fallback: just store ExecutionSpan if not found
-                        span._values.append(Value(v, child_exec_span))
+                        span._values.append(DataFlow(v, child_exec_span))
                 else:
                     # Single artifact
                     artifact = v.artifacts[0] if v.artifacts else None
                     if artifact:
                         model = value_dict.get(artifact.model_name, {}).get(artifact.id)
-                        span._values.append(Value(v, model))
+                        span._values.append(DataFlow(v, model))
 
             # Note: We don't use the children lookup anymore - children come from span values
             # But we still need to process orphaned children for backward compatibility
@@ -400,7 +400,7 @@ class SpanTree:
     @classmethod
     async def gather_artifacts(cls, spans, branch_id: int | None = None, span_lookup: dict[int, ExecutionSpan] | None = None):
         from ..model import NamespaceManager
-        from ..model.versioning.models import ValueArtifact
+        from ..model.versioning.models import DataArtifact
 
         model_ids = defaultdict(list)
         value_dict = {"execution_spans": {}}
@@ -474,13 +474,13 @@ class SpanTree:
             spans_query = (
                 spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
                 .include(
-                    SpanValue.query()
+                    DataFlowNode.query()
                     .where(lambda v: v.artifact_id <= target_span.artifact_id)
                     .include(Artifact)
                 )
             )
         else:
-            spans_query = spans_query.include(SpanValue.query().include(Artifact))           
+            spans_query = spans_query.include(DataFlowNode.query().include(Artifact))           
         spans = await spans_query
         if not spans:
             raise ValueError(f"No spans found for turn {turn_id} branch {branch_id} span {span_id}")
@@ -619,7 +619,7 @@ class SpanTree:
                 kind="list",
             ).save()
 
-            value = await self.root.add(SpanValue(
+            value = await self.root.add(DataFlowNode(
                 span_id=self.id,
                 kind="list",
                 alias=alias,
@@ -641,13 +641,13 @@ class SpanTree:
                     await item.save()
                     artifact_id = item.artifact_id                
                 list_artifacts.append(item)
-                va = await ValueArtifact(
+                va = await DataArtifact(
                     value_id=value.id,
                     artifact_id=artifact_id,
                     position=position,
                 ).save()
 
-            v = Value(value, list_artifacts, container_artifact)
+            v = DataFlow(value, list_artifacts, container_artifact)
             self._values.append(v)
             return v
 
@@ -662,7 +662,7 @@ class SpanTree:
                     artifact = target.root.artifact
                 else:  # ExecutionSpan
                     artifact = target.artifact
-                value = await self.root.add(SpanValue(
+                value = await self.root.add(DataFlowNode(
                     span_id=self.id,
                     kind=kind,
                     alias=alias,
@@ -672,13 +672,13 @@ class SpanTree:
                     artifact_id=artifact_id,
                 ))
                 await value.add(artifact)
-                v = Value(value, target)
+                v = DataFlow(value, target)
                 return self._append_value(value, target)
             elif artifact_id is None:
                 await target.save()
                 artifact_id = target.artifact_id
 
-            value = await self.root.add(SpanValue(
+            value = await self.root.add(DataFlowNode(
                 span_id=self.id,
                 kind=kind,
                 alias=alias,
@@ -688,7 +688,7 @@ class SpanTree:
                 artifact_id=artifact_id,
             ))
             await value.add(target.artifact)
-            v = Value(value, target)
+            v = DataFlow(value, target)
             return self._append_value(value, target)
             
     
@@ -715,7 +715,7 @@ class SpanTree:
             ).save()
 
             # Create container SpanValue
-            value = await self.root.add(SpanValue(
+            value = await self.root.add(DataFlowNode(
                 span_id=self.id,
                 kind="list",
                 alias=alias,
@@ -727,7 +727,7 @@ class SpanTree:
             # Create ValueArtifact entries for each item
             list_artifacts = []
             for position, item in enumerate(target):
-                va = await ValueArtifact(
+                va = await DataArtifact(
                     value_id=value.id,
                     artifact_id=item.artifact_id,
                     position=position,
@@ -749,7 +749,7 @@ class SpanTree:
             target = param
 
         try:
-            value = await self.root.add(SpanValue(
+            value = await self.root.add(DataFlowNode(
                 span_id=self.id,
                 kind=kind,
                 alias=alias,
@@ -763,8 +763,8 @@ class SpanTree:
             print(f"Error logging value: {e}")
             raise e
     
-    def _append_value(self, value: SpanValue, target: Any, list_artifacts: list[Any] | None = None):
-        v = Value(value, target, list_artifacts)
+    def _append_value(self, value: DataFlowNode, target: Any, list_artifacts: list[Any] | None = None):
+        v = DataFlow(value, target, list_artifacts)
         self._values.append(v)
         return v
         
@@ -776,7 +776,7 @@ class SpanTree:
         #     tree_id = str(uuid.uuid4())
         block_tree = await insert_block(block, self.root.artifact.branch_id, self.root.artifact.turn_id, self.id)
             
-        value = await self.root.add(SpanValue(
+        value = await self.root.add(DataFlowNode(
             span_id=self.id,
             kind="block",
             io_kind=io_kind,

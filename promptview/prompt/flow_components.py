@@ -16,7 +16,7 @@ from lxml import etree
 
 from ..block import BlockSchema, Block
 if TYPE_CHECKING:
-    from ..model.versioning.models import ExecutionSpan, SpanValue, Log, SpanTypeEnum
+    from ..model.versioning.models import ExecutionSpan, DataFlowNode, Log, SpanTypeEnum
 
 
 
@@ -490,7 +490,7 @@ class StreamController(BaseFbpComponent):
         self._span_type = span_type
         self.parent: "PipeController | None" = None
         self._span: "ExecutionSpan | None" = None
-        self.span_value: "SpanValue | None" = None
+        self.span_value: "DataFlowNode | None" = None
         self.resolved_kwargs: dict[str, Any] = {}
 
         
@@ -777,7 +777,7 @@ class PipeController(BaseFbpComponent):
         self.parent: "PipeController | None" = None
         self._span: "ExecutionSpan | None" = None
         self.index = 0
-        self.span_value: "SpanValue | None" = None
+        self.span_value: "DataFlowNode | None" = None
         self.resolved_kwargs: dict[str, Any] = {}
     
     @property

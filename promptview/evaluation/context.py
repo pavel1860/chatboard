@@ -8,7 +8,7 @@ from .decorators import get_evaluator, EvalCtx
 from .matching import match_value_to_evaluators
 
 if TYPE_CHECKING:
-    from ..prompt.span_tree import Value, SpanTree
+    from ..prompt.span_tree import DataFlow, SpanTree
     from .models import TestCase, TestRun, TurnEval, TestTurn
 
 
@@ -46,7 +46,7 @@ class EvaluationContext:
         return span_tree
     
     
-    def get_evaluators(self, value: "Value") -> list["EvaluatorConfig"]:
+    def get_evaluators(self, value: "DataFlow") -> list["EvaluatorConfig"]:
         return match_value_to_evaluators(
             value,
             self.get_eval_span_tree(value.path[:-1]),
@@ -57,7 +57,7 @@ class EvaluationContext:
 
     async def evaluate_value(
         self,
-        test_value: "Value",
+        test_value: "DataFlow",
         test_span: "SpanTree",
     ) -> list[ValueEval]:
         """

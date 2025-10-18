@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..prompt.span_tree import Value, SpanTree
+    from ..prompt.span_tree import DataFlow, SpanTree
     from .models import EvaluatorConfig
 
 
@@ -73,7 +73,7 @@ def match_ltree_pattern(path: str, pattern: str) -> bool:
 
 
 def match_value_to_evaluators(
-    value: "Value",
+    value: "DataFlow",
     span: "SpanTree",
     evaluators: list["EvaluatorConfig"]
 ) -> list["EvaluatorConfig"]:

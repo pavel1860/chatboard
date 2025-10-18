@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from ..testing.test_models import TestCase, TestRun
-    from ..prompt.span_tree import Value
+    from ..prompt.span_tree import DataFlow
     from .models import EvaluatorConfig
     from ..prompt.fbp_process import EvaluatorController
 
@@ -37,7 +37,7 @@ class EvaluatorRegistry:
     def get(self, name: str) -> Callable | None:
         return self._evaluator_registry.get(name)
     
-    def instantiate(self, value: "Value", eval_config: "EvaluatorConfig", test_case: "TestCase", test_run: "TestRun") -> "EvaluatorController":
+    def instantiate(self, value: "DataFlow", eval_config: "EvaluatorConfig", test_case: "TestCase", test_run: "TestRun") -> "EvaluatorController":
         from ..prompt.fbp_process import EvaluatorController
         
         gen_func = self._evaluator_registry[eval_config.name]
@@ -53,7 +53,7 @@ evaluator_registry = EvaluatorRegistry()
 
 def evaluator(
     func: Callable[
-        [EvalCtx, "Value", "Value"],
+        [EvalCtx, "DataFlow", "DataFlow"],
         Awaitable[float | Tuple[float, dict]]
     ]
 ) -> Callable:
@@ -88,8 +88,8 @@ def evaluator(
     @wraps(func)
     async def wrapper(
         ctx: EvalCtx,
-        ref_value: "Value",
-        test_value: "Value"
+        ref_value: "DataFlow",
+        test_value: "DataFlow"
     ) -> Tuple[float, dict]:
         """Wrapper that ensures return value is always (score, metadata)."""
         result = await func(ctx, ref_value, test_value)

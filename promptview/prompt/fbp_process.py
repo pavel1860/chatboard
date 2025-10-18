@@ -881,7 +881,7 @@ import asyncio
 from promptview.model.versioning.models import ExecutionSpan
 
 if TYPE_CHECKING:
-    from .span_tree import SpanTree, Value
+    from .span_tree import SpanTree, DataFlow
     from promptview.block import Block
 
 
@@ -1620,7 +1620,7 @@ class StreamController(ObservableProcess):
         self._parser: Parser | None = None
         self._save_filepath: str | None = None
         self._load_filepath: str | None = None
-        self._stream_value: Value | None = None
+        self._stream_value: DataFlow | None = None
         
 
     async def on_start(self):
@@ -1821,7 +1821,7 @@ class PipeController(ObservableProcess):
         """
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
-        self._last_value: Value | None = None
+        self._last_value: DataFlow | None = None
         
 
     async def on_start(self):
