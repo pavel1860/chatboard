@@ -28,7 +28,7 @@ _curr_turn = contextvars.ContextVar("curr_turn", default=None)
 
 
 
-SpanTypeEnum = Literal["component", "stream", "llm"]
+SpanType = Literal["component", "stream", "llm", "evaluator"]
 ArtifactKindEnum = Literal["block", "span", "log", "model", "parameter", "list"]
 
 class TurnStatus(enum.StrEnum):
@@ -323,7 +323,7 @@ class Turn(Model):
     
     
     @asynccontextmanager
-    async def start_span(self, name: str, span_type: SpanTypeEnum):
+    async def start_span(self, name: str, span_type: SpanType):
         span = await ExecutionSpan(
             name=name,
             span_type=span_type,
@@ -908,7 +908,7 @@ class ExecutionSpan(VersionedModel):
     id: int = KeyField(primary_key=True)
     name: str = ModelField()  # Function/component name
     path: str = ModelField(db_type="LTREE")
-    span_type: SpanTypeEnum = ModelField()
+    span_type: SpanType = ModelField()
     parent_span_id: int | None = ModelField(foreign_key=True, self_ref=True)
     start_time: dt.datetime = ModelField(default_factory=dt.datetime.now)
     end_time: dt.datetime | None = ModelField(default=None)

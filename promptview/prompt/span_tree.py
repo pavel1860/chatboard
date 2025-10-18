@@ -3,7 +3,7 @@ import asyncio
 from typing import Any, Iterator, TYPE_CHECKING
 
 from ..utils.type_utils import SerializableType, serialize_value, type_to_str_or_none
-from ..model.versioning.models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
+from ..model.versioning.models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanType, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
 from ..block import BlockList, Block
 from ..model.block_models.block_log import insert_block, get_blocks
 
@@ -120,7 +120,7 @@ class SpanTree:
     def __init__(
         self,
         target: str | ExecutionSpan,
-        span_type: str = "component",
+        span_type: SpanType = "component",
         tags: list[str] = [],
         index: int = 0,
         children: "list[SpanTree] | None" = None,
@@ -787,7 +787,7 @@ class SpanTree:
 
     
     
-    async def add_child(self, name: str, span_type: str = "component", tags: list[str] = []):
+    async def add_child(self, name: str, span_type: SpanType = "component", tags: list[str] = []):
         """
         Add a child span to the current span by logging it as a span value.
         The child will be accessible via the computed 'children' property.

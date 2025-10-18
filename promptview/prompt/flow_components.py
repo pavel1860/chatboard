@@ -16,7 +16,7 @@ from lxml import etree
 
 from ..block import BlockSchema, Block
 if TYPE_CHECKING:
-    from ..model.versioning.models import ExecutionSpan, DataFlowNode, Log, SpanTypeEnum
+    from ..model.versioning.models import ExecutionSpan, DataFlowNode, Log, SpanType
 
 
 
@@ -467,7 +467,7 @@ class StreamController(BaseFbpComponent):
         gen_func, 
         name:str,
         tags: list[str] | None = None,
-        span_type: "SpanTypeEnum" = "stream",
+        span_type: "SpanType" = "stream",
         response_schema=None, 
         acc_factory=None,
         args=(),
@@ -762,7 +762,7 @@ class PipeController(BaseFbpComponent):
         self, 
         gen_func, 
         name: str, 
-        span_type: "SpanTypeEnum",
+        span_type: "SpanType",
         tags: list[str] | None = None,
         args = (),
         kwargs = {}

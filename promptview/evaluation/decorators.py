@@ -37,12 +37,12 @@ class EvaluatorRegistry:
     def get(self, name: str) -> Callable | None:
         return self._evaluator_registry.get(name)
     
-    def instantiate(self, value: "DataFlow", eval_config: "EvaluatorConfig", test_case: "TestCase", test_run: "TestRun") -> "EvaluatorController":
-        from ..prompt.fbp_process import EvaluatorController
+    # def instantiate(self, value: "DataFlow", eval_config: "EvaluatorConfig", test_case: "TestCase", test_run: "TestRun") -> "EvaluatorController":
+    #     from ..prompt.fbp_process import EvaluatorController
         
-        gen_func = self._evaluator_registry[eval_config.name]
-        ctx = EvalCtx(test_case, test_run, eval_config)
-        return EvaluatorController(gen_func, eval_config.name, span_type="evaluator", args=(), kwargs={"ctx": ctx, "ref_value": value, "test_value": value})
+    #     gen_func = self._evaluator_registry[eval_config.name]
+    #     ctx = EvalCtx(test_case, test_run, eval_config)
+    #     return EvaluatorController(gen_func, eval_config.name, span_type="evaluator", args=(), kwargs={"ctx": ctx, "ref_value": value, "test_value": value})
 
     def list(self) -> list[str]:
         return list(self._evaluator_registry.keys())

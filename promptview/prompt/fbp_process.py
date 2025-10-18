@@ -878,7 +878,8 @@ from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
 import json
 import asyncio
 
-from promptview.model.versioning.models import ExecutionSpan
+from promptview.evaluation.decorators import EvalCtx
+from promptview.model.versioning.models import ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
@@ -1295,12 +1296,14 @@ class ObservableProcess(Process):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: str = "component",
+        span_type: SpanType = "component",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
-        upstream: Process | None = None
+        upstream: Process | None = None,
+        should_log_inputs: bool = True
     ):
+        super().__init__(upstream)
         """
         Initialize ObservableProcess.
 
@@ -1327,7 +1330,12 @@ class ObservableProcess(Process):
         self._replay_inputs: list | None = None  # Saved inputs for replay mode
         self._replay_outputs: list | None = None  # Saved outputs for replay mode
         self._replay_index: int = 0  # Current position in replay buffer
-
+        self._start_event_type: str = f"{self._span_type}_start"
+        self._value_event_type: str = f"{self._span_type}_value"
+        self._stop_event_type: str = f"{self._span_type}_stop"
+        self._error_event_type: str = f"{self._span_type}_error"
+        self._should_log_inputs = should_log_inputs
+        
     @property
     def ctx(self):
         """Get current context."""
@@ -1382,9 +1390,9 @@ class ObservableProcess(Process):
             self.resolved_kwargs = kwargs
 
             # Log resolved kwargs as inputs
-            if self._span_tree:
+            if self._span_tree and self._should_log_inputs:
                 for key, value in kwargs.items():
-                    if value is not None and type(value) not in [LLM, LlmConfig]:
+                    if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx]:
                         await self._span_tree.log_value(value, io_kind="input", name=key)
                     
         if self._span_tree.outputs and not self._span_tree.need_to_replay:
@@ -1438,10 +1446,8 @@ class ObservableProcess(Process):
                     continue
                 value_attrs[key] = value
 
-        event_type = "stream_start" if self._span_type == "stream" else "span_start"
-
         return StreamEvent(
-            type=event_type,
+            type=self._start_event_type,
             name=self._name,
             attrs=value_attrs,
             payload=self.span,
@@ -1458,10 +1464,8 @@ class ObservableProcess(Process):
         """
         from .events import StreamEvent
 
-        event_type = "stream_delta" if self._span_type == "stream" else "span_event"
-
         return StreamEvent(
-            type=event_type,
+            type=self._value_event_type,
             name=self._name,
             payload=payload,
             span_id=str(self.span_id) if self.span_id else None,
@@ -1477,10 +1481,8 @@ class ObservableProcess(Process):
         """
         from .events import StreamEvent
 
-        event_type = "stream_end" if self._span_type == "stream" else "span_end"
-
         return StreamEvent(
-            type=event_type,
+            type=self._stop_event_type,
             name=self._name,
             span_id=str(self.span_id) if self.span_id else None,
             path=self.get_execution_path(),
@@ -1498,10 +1500,8 @@ class ObservableProcess(Process):
         """
         from .events import StreamEvent
 
-        event_type = "stream_error" if self._span_type == "stream" else "span_error"
-
         return StreamEvent(
-            type=event_type,
+            type=self._error_event_type,
             name=self._name,
             payload=error,
             error=str(error),
@@ -1596,7 +1596,7 @@ class StreamController(ObservableProcess):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: str = "stream",
+        span_type: SpanType = "stream",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1621,6 +1621,7 @@ class StreamController(ObservableProcess):
         self._save_filepath: str | None = None
         self._load_filepath: str | None = None
         self._stream_value: DataFlow | None = None
+        self._value_event_type: str = f"{self._span_type}_delta"
         
 
     async def on_start(self):
@@ -1801,7 +1802,7 @@ class PipeController(ObservableProcess):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: str = "component",
+        span_type: SpanType = "component",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1948,13 +1949,13 @@ class EvaluatorController(ObservableProcess):
         self, 
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: str = "component",
+        span_type: SpanType = "evaluator",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
         upstream: Process | None = None
     ):
-        super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
+        super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream, should_log_inputs=False)
         self._gen: AsyncGenerator | None = None
         self._did_start = False
         self._did_yield = False
@@ -1965,10 +1966,10 @@ class EvaluatorController(ObservableProcess):
     
     
     async def on_start(self):
-        return None
+        bound, kwargs = await self._resolve_dependencies()
+        # Call generator function with resolved kwargs
+        # self._gen = self._gen_func(*bound.args, **bound.kwargs)
     
-    async def on_value_event(self, value: Any):
-        return None
     
     async def on_stop(self):
         return None
@@ -1977,10 +1978,10 @@ class EvaluatorController(ObservableProcess):
         return None
 
     async def asend(self, value: Any = None):
-        return await self._gen.asend(value)
+        return await self._gen_func(**self.resolved_kwargs)
     
     async def __anext__(self):
-        return await self._gen.__anext__()
+        return await self._gen_func(**self.resolved_kwargs)
 
 
 # ============================================================================
@@ -2117,7 +2118,8 @@ class FlowRunner:
                             return event
                     continue
                 
-                await self._try_evaluate_value(process)
+                if not isinstance(process, EvaluatorController):
+                    await self._try_evaluate_value(process)
 
                 # Emit value event if needed
                 if self.should_output_events:
@@ -2163,23 +2165,30 @@ class FlowRunner:
 
         raise StopAsyncIteration
     
+    # async def _try_evaluate_value(self, process: Process):
+    #     """Try to evaluate value based on evaluation context."""
+    #     eval_ctx = self.ctx._evaluation_context
+    #     value = process._last_value if hasattr(process, '_last_value') else None
+    #     if eval_ctx is None or value is None:
+    #         return
+        
+    #     evaluator_controllers = eval_ctx.build_evaluator_controllers(value)
+    #     for evaluator_controller in reversed(evaluator_controllers):
+    #         self.push(evaluator_controller)        
+    #     return value
+    
     async def _try_evaluate_value(self, process: Process):
         """Try to evaluate value based on evaluation context."""
-        from ..evaluation.decorators import evaluator_registry
         eval_ctx = self.ctx._evaluation_context
         value = process._last_value if hasattr(process, '_last_value') else None
         if eval_ctx is None or value is None:
             return
         
-        evaluators = eval_ctx.get_evaluators(value)
-        for eval_config in evaluators:
-            evaluator_controller = evaluator_registry.instantiate(value, eval_config, eval_ctx.test_case, eval_ctx.test_run)
-            self.push(evaluator_controller)        
-        print(evaluators)
-        
-        return value
-        # evaluator = eval_context.get_evaluator(value)
-        # await eval_context.evaluate_value(value, self.ctx.current_span_tree)
+        for gen_func, ctx in eval_ctx.get_evaluator_handlers(value):
+            result = await gen_func(ctx, value, value)
+            print(result)
+
+
 
     async def try_build_start_event(self, process: Process, value: Any):
         """Try to build start event based on event_level."""

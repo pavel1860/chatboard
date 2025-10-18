@@ -1,14 +1,15 @@
 """Evaluation context for tracking evaluations during execution."""
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 from dataclasses import dataclass, field
 
 from .models import EvaluatorConfig, ValueEval, EvaluationFailure
-from .decorators import get_evaluator, EvalCtx
+from .decorators import get_evaluator, EvalCtx, evaluator_registry
 from .matching import match_value_to_evaluators
 
 if TYPE_CHECKING:
     from ..prompt.span_tree import DataFlow, SpanTree
+    from ..prompt.fbp_process import EvaluatorController
     from .models import TestCase, TestRun, TurnEval, TestTurn
 
 
@@ -36,8 +37,7 @@ class EvaluationContext:
     # Track evaluation results
     results: list[dict[str, Any]] = field(default_factory=list)
     value_evals: list[ValueEval] = field(default_factory=list)
-    
-    
+
     
     def get_eval_span_tree(self, path: list[int]) -> "SpanTree":
         span_tree = self.reference_span_trees[path[0]].get(path[1:])
@@ -53,6 +53,42 @@ class EvaluationContext:
             self.test_turn.evaluators
         )
         
+        
+    def get_evaluator_handlers(self, value: "DataFlow") -> list[tuple[Callable, EvalCtx]]:
+        evaluator_handlers = []
+        for evaluator_config in self.get_evaluators(value):
+            gen_func = evaluator_registry.get(evaluator_config.name)
+            if gen_func is None:
+                raise ValueError(f"Evaluator function not found for {evaluator_config.name}")
+            ctx = EvalCtx(
+                test_case=self.test_case,
+                test_run=self.test_run,
+                config=evaluator_config
+            )
+            evaluator_handlers.append((gen_func, ctx))
+        return evaluator_handlers
+    
+    
+    def build_evaluator_controllers(self, value: "DataFlow") -> list["EvaluatorController"]:
+        from ..prompt.fbp_process import EvaluatorController
+        evaluator_controllers = []
+        for evaluator_config in self.get_evaluators(value):
+            gen_func = evaluator_registry.get(evaluator_config.name)
+            if gen_func is None:
+                raise ValueError(f"Evaluator function not found for {evaluator_config.name}")
+            evaluator_controller = EvaluatorController(
+                gen_func, 
+                evaluator_config.name, 
+                span_type="evaluator", 
+                args=(), 
+                kwargs={
+                    "ctx": self, 
+                    "ref_value": value, 
+                    "test_value": value
+                }
+            )
+            evaluator_controllers.append(evaluator_controller)
+        return evaluator_controllers
 
 
     async def evaluate_value(

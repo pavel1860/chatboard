@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from ..auth.user_manager2 import AuthModel
 from ..model.model3 import Model
 from ..model.postgres2.pg_query_set import PgSelectQuerySet
-from ..model.versioning.models import Branch, ExecutionSpan, SpanTypeEnum, Turn, TurnStatus, VersionedModel, Artifact
+from ..model.versioning.models import Branch, ExecutionSpan, SpanType, Turn, TurnStatus, VersionedModel, Artifact
 from dataclasses import dataclass
 from ..utils.function_utils import call_function
 if TYPE_CHECKING:
