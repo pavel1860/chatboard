@@ -32,6 +32,7 @@ class DataFlow:
         self._is_span = span_value.kind == "span"
         # For single artifacts, check if it's a parameter
         self._container = container
+        self.path = [int(p) for p in span_value.path.split(".")]
             
     
     def _get_value(self, value: Any):
@@ -96,10 +97,10 @@ class DataFlow:
         """Get as SpanTree if this is a span value."""
         return self._value if self._is_span else None
 
-    @property
-    def path(self) -> list[int]:
-        """Get the LTREE path of this value."""
-        return [int(p) for p in self.span_value.path.split(".")]
+    # @property
+    # def path(self) -> list[int]:
+    #     """Get the LTREE path of this value."""
+    #     return [int(p) for p in self.span_value.path.split(".")]
     
     @property
     def str_path(self) -> str:
@@ -286,7 +287,7 @@ class SpanTree:
             return self.children[path[0]]
         return self.children[path[0]].get(path[1:])
 
-    def get_value_by_path(self, path: str) -> DataFlow | None:
+    def get_value_by_path(self, path: list[int]) -> DataFlow | None:
         """
         Get a value by its LTREE path string.
 
@@ -298,7 +299,7 @@ class SpanTree:
         """
         # Check if this is a value in the current span
         for value in self.values:
-            if value.span_value.path == path:
+            if value.path == path:
                 return value
 
         # Check children recursively

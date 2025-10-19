@@ -878,12 +878,13 @@ from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
 import json
 import asyncio
 
-from promptview.evaluation.decorators import EvalCtx
-from promptview.model.versioning.models import ExecutionSpan, SpanType
+from ..evaluation.decorators import EvalCtx
+from ..evaluation.models import ValueEval
+from ..model.versioning.models import ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
-    from promptview.block import Block
+    from ..block import Block
 
 
 class FlowException(Exception):
@@ -2185,8 +2186,26 @@ class FlowRunner:
             return
         
         for gen_func, ctx in eval_ctx.get_evaluator_handlers(value):
-            result = await gen_func(ctx, value, value)
-            print(result)
+            ref_value = eval_ctx.get_ref_value(value.path)
+            score, metadata = await gen_func(ctx, value, value)
+
+            value_eval = await ValueEval(
+                turn_eval_id=eval_ctx.turn_eval.id,
+                value_id=value.id,
+                path=value.path,
+                evaluator=ctx.config.name,
+                score=score,
+                metadata=metadata,
+                status="completed"
+            ).save()
+            eval_ctx.value_evals.append(value_eval)
+            eval_ctx.results.append({
+                "evaluator": ctx.config.name,
+                "score": score,
+                "path": value.path,
+                "metadata": metadata
+            })
+        
 
 
 

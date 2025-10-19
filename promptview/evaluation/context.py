@@ -45,6 +45,15 @@ class EvaluationContext:
             raise ValueError(f"Span tree not found for path {path}")
         return span_tree
     
+    def get_ref_value(self, path: list[int]) -> "DataFlow":
+        span_tree = self.reference_span_trees[path[0]]
+        if span_tree is None:
+            raise ValueError(f"Span tree not found for path {path}")
+        value = span_tree.get_value_by_path(path[1:])
+        if value is None:
+            raise ValueError(f"Value not found for path {path}")
+        return value
+    
     
     def get_evaluators(self, value: "DataFlow") -> list["EvaluatorConfig"]:
         return match_value_to_evaluators(
