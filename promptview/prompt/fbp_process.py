@@ -2163,6 +2163,10 @@ class FlowRunner:
                     return event
                 else:
                     raise e
+                
+                
+        if not self.stack:
+            result = await self._commit_evaluation()
 
         raise StopAsyncIteration
     
@@ -2178,6 +2182,12 @@ class FlowRunner:
     #         self.push(evaluator_controller)        
     #     return value
     
+    async def _commit_evaluation(self):
+        eval_ctx = self.ctx._evaluation_context
+        if eval_ctx is None:
+            return
+        return await eval_ctx.commit()
+    
     async def _try_evaluate_value(self, process: Process):
         """Try to evaluate value based on evaluation context."""
         eval_ctx = self.ctx._evaluation_context
@@ -2187,24 +2197,8 @@ class FlowRunner:
         
         for gen_func, ctx in eval_ctx.get_evaluator_handlers(value):
             ref_value = eval_ctx.get_ref_value(value.path)
-            score, metadata = await gen_func(ctx, value, value)
-
-            value_eval = await ValueEval(
-                turn_eval_id=eval_ctx.turn_eval.id,
-                value_id=value.id,
-                path=value.path,
-                evaluator=ctx.config.name,
-                score=score,
-                metadata=metadata,
-                status="completed"
-            ).save()
-            eval_ctx.value_evals.append(value_eval)
-            eval_ctx.results.append({
-                "evaluator": ctx.config.name,
-                "score": score,
-                "path": value.path,
-                "metadata": metadata
-            })
+            score, metadata = await gen_func(ctx, ref_value, value)
+            value_eval = await eval_ctx.log_value_eval(value, score, metadata, ctx.config)
         
 
 

@@ -647,6 +647,8 @@ class SpanTree:
                     artifact_id=artifact_id,
                     position=position,
                 ).save()
+                
+            value.artifacts = list_artifacts
 
             v = DataFlow(value, list_artifacts, container_artifact)
             self._values.append(v)
@@ -688,6 +690,7 @@ class SpanTree:
                 path=value_path,  # NEW: Set path
                 artifact_id=artifact_id,
             ))
+            value.artifacts = [target.artifact]
             await value.add(target.artifact)
             v = DataFlow(value, target)
             return self._append_value(value, target)

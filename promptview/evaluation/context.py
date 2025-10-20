@@ -46,10 +46,10 @@ class EvaluationContext:
         return span_tree
     
     def get_ref_value(self, path: list[int]) -> "DataFlow":
-        span_tree = self.reference_span_trees[path[0]]
+        span_tree = self.reference_span_trees[0]
         if span_tree is None:
             raise ValueError(f"Span tree not found for path {path}")
-        value = span_tree.get_value_by_path(path[1:])
+        value = span_tree.get_value_by_path(path)
         if value is None:
             raise ValueError(f"Value not found for path {path}")
         return value
@@ -77,6 +77,28 @@ class EvaluationContext:
             evaluator_handlers.append((gen_func, ctx))
         return evaluator_handlers
     
+    
+    async def log_value_eval(self, value: "DataFlow", score: float, metadata: dict, evaluator_config: "EvaluatorConfig"):
+        value_eval = await ValueEval(
+            turn_eval_id=self.turn_eval.id,
+            value_id=value.id,
+            path=value.str_path,
+            evaluator=evaluator_config.name,
+            score=score,
+            metadata=metadata,
+        ).save()
+        self.value_evals.append(value_eval)
+        self.results.append({
+            "evaluator": evaluator_config.name,
+            "score": score,
+            "path": value.str_path,
+            "metadata": metadata
+        })
+        return value_eval
+    
+    async def commit(self):
+       self.turn_eval.score = self.get_average_score()
+       await self.turn_eval.save()
     
     def build_evaluator_controllers(self, value: "DataFlow") -> list["EvaluatorController"]:
         from ..prompt.fbp_process import EvaluatorController
