@@ -686,6 +686,9 @@ class BlockTree(VersionedModel):
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
     nodes: List[BlockNode] = RelationField(foreign_key="tree_id")
     span_id: int | None = ModelField(foreign_key=True)
+    _block: "Block | None" = None
+    
+
 
 
 

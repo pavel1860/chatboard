@@ -1741,7 +1741,10 @@ class StreamController(ObservableProcess):
         # elif self._accumulator:
             # Normal mode: return accumulated values
             # return self._accumulator.result
-        return self._stream_value
+        # if self._stream_value is not None:
+        #     if self._stream_value.kind == "block":
+        #         return self._stream_value.value._block
+        #     return self._stream_value.value
         if self._parser:
             return self._parser.res_ctx.instance
         # return self.acc

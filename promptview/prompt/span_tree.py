@@ -636,7 +636,9 @@ class SpanTree:
             for position, item in enumerate(target):
                 item, kind, artifact_id = self._sanitize_target_value(item)
                 if kind == "block":
-                    item = await insert_block(item, self.branch_id, self.turn_id, self.id)
+                    block_item = await insert_block(item, self.branch_id, self.turn_id, self.id)
+                    block_item._block = item
+                    item = block_item
                     artifact_id = item.artifact_id
                 elif artifact_id is None:
                     await item.save()

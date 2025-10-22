@@ -122,8 +122,6 @@ def load_block_dump(dumps: list[dict]):
 
 
   
-    
-    
 
 async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int | None = None) -> BlockTree:
     """
