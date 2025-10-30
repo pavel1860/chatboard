@@ -849,6 +849,7 @@ class SpanTree:
                 "io_kind": v.io_kind,
                 "kind": v.kind,
                 "name": v.span_value.name,  # Kwarg name
+                "path": v.str_path,
                 "artifact_id": v.artifact_id,  # Container or single artifact
             }
 

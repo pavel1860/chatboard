@@ -114,7 +114,8 @@ def load_block_dump(dumps: list[dict]):
         block_lookup[dump["path"]] = blk
     
     root_blk = block_lookup.pop("0")
-    for p, blk in block_lookup.items():
+    for p in sorted(block_lookup.keys()):
+        blk = block_lookup[p]
         path = [int(p_i) for p_i in p.split(".")]
         root_blk.insert(blk, path[1:])
         

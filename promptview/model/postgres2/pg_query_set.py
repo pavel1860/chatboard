@@ -1065,6 +1065,15 @@ class PgInsertSet(RelationSet[MODEL]):
         self.ref_arg_list.append(ref_args)
         return self
     
+    def insert_many(self, data: list[dict[str, Any]]):
+        did_init_columns = False
+        for item in data:
+            self.insert(**item)
+            # if not did_init_columns:                
+            #     self.insert(**item)
+            #     did_init_columns = True
+        return self
+    
     def resulve_values(self):
         columns = []
         values = []

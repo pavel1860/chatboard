@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, Field
 
-from ..model import Model, ModelField, KeyField, RelationField, DataFlowNode, Turn
+from ..model import Model, ModelField, KeyField, RelationField, DataFlowNode, Turn, Branch
 
 
 
@@ -145,7 +145,7 @@ class TestCase(Model):
 
     title: str = ModelField(default="", description="Test case title")
     description: str = ModelField(default="", description="Test case description")
-    # branch_id: int = ModelField(default=1, foreign_key=True, description="Branch this test case belongs to", foreign_cls=Branch)
+    branch_id: int = ModelField(default=1, foreign_key=True, description="Branch this test case belongs to", foreign_cls=Branch)
     user_id: UUID = ModelField(description="User who created this test case")
 
     test_turns: List[TestTurn] = RelationField(foreign_key="test_case_id")

@@ -33,9 +33,11 @@ def create_test_router(context_cls: Type[Context] | None = None):
 
     # Additional custom endpoints
 
-    @router.get("/TestCase/{test_case_id}/details")
+    @router.get("/TestCase/{test_case_id}")
     async def get_test_case_with_turns(
+        request: Request,        
         test_case_id: int,
+        include: list[str] | None = Query(default=None, alias="include"),
         ctx = Depends(get_model_ctx)
     ):
         """
