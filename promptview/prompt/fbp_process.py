@@ -879,7 +879,6 @@ import json
 import asyncio
 
 from ..evaluation.decorators import EvalCtx
-from ..evaluation.models import ValueEval
 from ..model.versioning.models import ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
@@ -1350,6 +1349,13 @@ class ObservableProcess(Process):
     def span(self):
         """Get the execution span."""
         return self._span_tree.root if self._span_tree else None
+    
+    @property
+    def span_tree(self):
+        """Get the span tree."""
+        if self._span_tree is None:
+            raise ValueError("Span tree is not initialized")
+        return self._span_tree
 
     @property
     def span_id(self):
@@ -1451,9 +1457,10 @@ class ObservableProcess(Process):
             type=self._start_event_type,
             name=self._name,
             attrs=value_attrs,
-            payload=self.span,
+            payload=self.span_tree,
             span_id=str(self.span_id) if self.span_id else None,
             path=self.get_execution_path(),
+            value=self.span_tree.parent_value
         )
 
     async def on_value_event(self, payload: Any = None):
@@ -1623,7 +1630,7 @@ class StreamController(ObservableProcess):
         self._load_filepath: str | None = None
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
-        
+        self._load_delay: float | None = None
 
     async def on_start(self):
         """
@@ -1640,7 +1647,7 @@ class StreamController(ObservableProcess):
 
         # Wrap in Stream process and pipe through Accumulator
         if self._load_filepath is not None:
-            stream = Stream.load(self._load_filepath)        
+            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.0)        
         else:
             stream = Stream(gen_instance, name=f"{self._name}_stream")
         if self._save_filepath is not None:
@@ -1756,10 +1763,11 @@ class StreamController(ObservableProcess):
         self._save_filepath = filename
         return self
     
-    def load(self, filename: str):
+    def load(self, filename: str, delay: float = 0.0):
         if self._save_filepath is not None:
             raise FlowException("StreamController is already saved")
         self._load_filepath = filename
+        self._load_delay = delay
         return self
 
 

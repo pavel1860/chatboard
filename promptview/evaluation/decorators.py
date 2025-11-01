@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Callable, Awaitable, Tuple
 from dataclasses import dataclass
 
 if TYPE_CHECKING:
-    from ..testing.test_models import TestCase, TestRun
+    from ..model import TestCase, TestRun
     from ..prompt.span_tree import DataFlow
-    from .models import EvaluatorConfig
+    from ..model import EvaluatorConfig
     from ..prompt.fbp_process import EvaluatorController
 
 

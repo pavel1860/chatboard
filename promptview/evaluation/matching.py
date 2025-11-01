@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..prompt.span_tree import DataFlow, SpanTree
-    from .models import EvaluatorConfig
+    from ..model import EvaluatorConfig
 
 
 def match_ltree_pattern(path: str, pattern: str) -> bool:

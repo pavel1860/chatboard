@@ -3,14 +3,15 @@
 from typing import TYPE_CHECKING, Any, Callable
 from dataclasses import dataclass, field
 
-from .models import EvaluatorConfig, ValueEval, EvaluationFailure
+# from .models import EvaluatorConfig, ValueEval, EvaluationFailure
+from ..model import EvaluatorConfig, ValueEval, EvaluationFailure
 from .decorators import get_evaluator, EvalCtx, evaluator_registry
 from .matching import match_value_to_evaluators
 
 if TYPE_CHECKING:
     from ..prompt.span_tree import DataFlow, SpanTree
     from ..prompt.fbp_process import EvaluatorController
-    from .models import TestCase, TestRun, TurnEval, TestTurn
+    from ..model import TestCase, TestRun, TurnEval, TestTurn
 
 
 @dataclass

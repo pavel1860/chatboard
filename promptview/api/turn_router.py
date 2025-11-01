@@ -6,7 +6,7 @@ from ..model.query_url_params import parse_query_params, QueryListType
 from ..model import TurnStatus
 from .utils import query_filters
 from ..model.block_models.block_log import get_blocks
-from ..model.versioning.models import Turn, ExecutionSpan, DataFlowNode, Log, Artifact
+from ..model.versioning.models import Turn, ExecutionSpan, DataFlowNode, Log, Artifact, TestTurn
 from ..model.versioning.models import Branch
 from .utils import ListParams, get_list_params
 
@@ -51,6 +51,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
             turns = await (
                 Turn.query(include_branch_turn=True)
                 .include(Artifact)
+                .include(TestTurn)
                 .agg("forked_branches", Branch.query(["id", "forked_from_branch_id", "forked_from_turn_id", "forked_from_index"]), on=("id", "forked_from_turn_id"))
                 .where(status = TurnStatus.COMMITTED)
                 .limit(10)
@@ -66,6 +67,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                     "created_at": turn.created_at.isoformat() if turn.created_at else None,
                     "status": turn.status,
                     "branch_id": turn.branch_id,
+                    "test_turns": [t.model_dump() for t in turn.test_turns],
                     "forked_branches": [{
                         "id": b.id, 
                         "forkedFromBranchId": b.forked_from_branch_id, 

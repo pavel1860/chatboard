@@ -102,7 +102,8 @@ class StreamEvent:
             "request_id": self.request_id,
             "span_id": self.span_id,   
             "parent_event_id": self.parent_value_id,
-            "event": self.value.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.value else None,
+            # "event": self.value.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.value else None,
+            "value": self.value.to_dict() if self.value else None,
         }        
         if self.error:
             dump["error"] = self.error
