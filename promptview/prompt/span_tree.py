@@ -47,10 +47,14 @@ class DataFlow:
     
     @property
     def kind(self):
-        if self._is_list:
-            return [self.get_artifact_kind(v) for v in self.span_value.artifacts if v.kind != "list"]
-            
-        return self.span_value.artifacts[0].kind
+        try:
+            if self._is_list:
+                return [self.get_artifact_kind(v.artifact) for v in self.span_value.artifacts if v.artifact.kind != "list"]
+                
+            return self.span_value.artifacts[0].kind
+        except Exception as e:
+            print(f"Error getting kind: {e}")
+            raise e
 
     
     @property
@@ -113,6 +117,18 @@ class DataFlow:
 
     def __repr__(self):
         return f"DataFlow(id={self.id}, io_kind={self.io_kind}, artifact_id={self.artifact_id}, value={self.value})"
+    
+    
+    def to_dict(self) -> dict:
+        dump = {
+            "id": self.id,
+            "kind": self.kind,
+            "io_kind": self.io_kind,
+            "name": self.name,
+            "artifact_id": self.artifact_id,
+            "path": self.str_path,                                    
+        }        
+        return dump
 
 
 class SpanTree:
@@ -208,6 +224,12 @@ class SpanTree:
         if self.index is None:
             return self.parent.path
         return self.parent.path + [self.index]
+    
+    @property
+    def parent_value(self) -> DataFlow | None:
+        if self.parent is None:
+            return None
+        return self.parent.values[self.index]
     
     
     @property

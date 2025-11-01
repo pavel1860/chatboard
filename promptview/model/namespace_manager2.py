@@ -83,6 +83,8 @@ class NamespaceManager:
         start_time = time.time()
             
         await PgNamespace.install_extensions()
+        # from .versioning.models import Branch
+        # from ..evaluation.models import TestTurn
         # Branch.model_rebuild()
         # BlockNode.model_rebuild()
         cls.finalize()

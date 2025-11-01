@@ -221,7 +221,7 @@ class BlockLogQuery:
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
     ):
         self.limit = limit or 5
-        self.offset = offset
+        self._offset = offset
         self.direction = direction
         self.span_name = span_name
         self.statuses = statuses
@@ -239,6 +239,8 @@ class BlockLogQuery:
             span_query = self._build_span_query(self.span_name)
             spans = await span_query
             artifact_ids = [a.id for span in spans for sv in span.values for a in sv.artifacts]
+            if not artifact_ids:
+                return []
         def tree_to_block(tree):
             # print(tree)
             if not tree['nodes']:
@@ -246,7 +248,7 @@ class BlockLogQuery:
             return load_block_dump(tree['nodes'])
         if artifact_ids:
             query = query.where(lambda x: x.artifact_id.isin(artifact_ids))
-        query = query.parse(tree_to_block)
+        query = query.print().parse(tree_to_block)
         results = await query.json()
         
         if self.include_roles:
@@ -255,11 +257,25 @@ class BlockLogQuery:
             results = [b for b in results if b.role not in self.exclude_roles]
         return results
     
+    async def json(self) -> List[dict]:
+        query = self._build_block_query()
+        artifact_ids = []
+        if self.span_name:
+            span_query = self._build_span_query(self.span_name)
+            spans = await span_query
+            artifact_ids = [a.id for span in spans for sv in span.values for a in sv.artifacts]
+        if artifact_ids:
+            query = query.where(lambda x: x.artifact_id.isin(artifact_ids))
+        results = await query.json()
+        return results
+
+    
+    
     def _build_block_query(self):
         return BlockTree.query(
             alias="bt", 
             limit=self.limit, 
-            offset=self.offset, 
+            offset=self._offset, 
             direction=self.direction,
             statuses=self.statuses
         ).include(
@@ -272,6 +288,7 @@ class BlockLogQuery:
                 Artifact
             )
         ).where(name=name)
+        
 
         
     def where(self, span: str | None = None):
@@ -290,6 +307,10 @@ class BlockLogQuery:
     
     def last(self, limit: int):
         self.limit = limit
+        return self
+    
+    def offset(self, offset: int):
+        self._offset = offset
         return self
     
     def all(self):

@@ -462,6 +462,8 @@ class VersionedModel(Model):
         branch_id = Branch.resolve_target_id(branch)
         turn_id = Turn.resolve_target_id(turn)
         
+        span_id = ctx.current_span_tree.id if ctx.current_span_tree else None
+        
 
         # Resolve branch_id: explicit param > Context.branch > Branch.current()
         # if branch is not None:
@@ -490,7 +492,8 @@ class VersionedModel(Model):
             model_name=self.get_namespace_name(),
             version=version,
             branch_id=branch_id,
-            turn_id=turn_id
+            turn_id=turn_id,
+            span_id=span_id
         ).insert()
         dump = self.model_dump()
         dump["artifact_id"] = art_query.col("id")
