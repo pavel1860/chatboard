@@ -77,24 +77,24 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                     "span": None
                 }
 
-                try:
+                # try:
                     # Load span trees using SpanTree.from_turn()
                     # Returns list of top-level SpanTrees
-                    span_trees = await SpanTree.from_turn(turn.id, branch_id=turn.branch_id)
+                span_trees = await SpanTree.from_turn(turn.id, branch_id=turn.branch_id)
 
-                    # Convert SpanTrees to JSON-serializable format
-                    if len(span_trees) == 1:
-                        # Single top-level span - backward compatible format
-                        turn_data["span"] = span_trees[0].to_dict()
-                    else:
-                        # Multiple top-level spans - return as array
-                        turn_data["spans"] = [st.to_dict() for st in span_trees]
-                        turn_data["span"] = None
-                except Exception as e:
-                    # If turn has no spans, just skip
-                    print(f"Error loading span tree for turn {turn.id}: {e}")
+                # Convert SpanTrees to JSON-serializable format
+                if len(span_trees) == 1:
+                    # Single top-level span - backward compatible format
+                    turn_data["span"] = span_trees[0].to_dict()
+                else:
+                    # Multiple top-level spans - return as array
+                    turn_data["spans"] = [st.to_dict() for st in span_trees]
                     turn_data["span"] = None
-                    turn_data["spans"] = []
+                # except Exception as e:
+                #     # If turn has no spans, just skip
+                #     print(f"Error loading span tree for turn {turn.id}: {e}")
+                #     turn_data["span"] = None
+                #     turn_data["spans"] = []
 
                 result.append(turn_data)
 

@@ -188,10 +188,10 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int 
     
     
     
-async def get_blocks(art_ids: list[str], dump_models: bool = True) -> dict[str, Block]:
+async def get_blocks(art_ids: list[str], dump_models: bool = True, include_branch_turn: bool = False) -> dict[str, Block]:
     if not art_ids:
         return {}
-    block_trees = await BlockTree.query(alias="bt").select("*").include(
+    block_trees = await BlockTree.query(alias="bt", include_branch_turn=include_branch_turn).select("*").include(
             BlockNode.query(alias="bn").select("*").include(
                 BlockModel.query(alias="bm").select("*")
             )

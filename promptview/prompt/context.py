@@ -47,7 +47,7 @@ class StartTurn:
 @dataclass
 class StartEval:
     test_case_id: int
-
+    test_run_id: int | None = None
 
 class ContextError(Exception):
     pass
@@ -421,7 +421,7 @@ class Context(BaseModel):
         self._tasks.append(StartTurn(auto_commit=auto_commit))
         return self
 
-    def start_eval(self, test_case_id: int) -> "Context":
+    def start_eval(self, test_case_id: int, test_run_id: int | None = None) -> "Context":
         """
         Start evaluation mode for this context.
 
@@ -439,7 +439,7 @@ class Context(BaseModel):
             async with ctx.start_eval(test_case_id=1):
                 result = await my_agent("test input")
         """
-        self._tasks.append(StartEval(test_case_id=test_case_id))
+        self._tasks.append(StartEval(test_case_id=test_case_id, test_run_id=test_run_id))
         self._tasks.append(StartTurn())
         return self
 
@@ -447,13 +447,14 @@ class Context(BaseModel):
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
         return self
 
-    async def _setup_evaluation(self, test_case_id: int):
+    async def _setup_evaluation(self, test_case_id: int, test_run_id: int | None = None):
         """
         Setup evaluation context for the given test case.
 
         Loads reference data and creates evaluation tracking objects.
         """
-        from ..evaluation import TestCase, TestRun, TurnEval, TestTurn, EvaluationContext
+        from ..evaluation import EvaluationContext
+        from ..model import TestCase, TestRun, TurnEval, TestTurn
         from .span_tree import SpanTree
 
         # Load test case
@@ -471,11 +472,18 @@ class Context(BaseModel):
         if not isinstance(ref_span_trees, list):
             ref_span_trees = [ref_span_trees]
 
+        if test_run_id is not None:
+            test_run = await TestRun.get(test_run_id)
+            if test_run is None:
+                raise ValueError(f"Test run {test_run_id} not found")
+            if test_run.status != "pending":
+                raise ValueError(f"Test run {test_run_id} is not pending. start a new test run to evaluate this test case.")
+        else:
         # Create test run
-        test_run = await TestRun(
-            test_case_id=test_case_id,
-            status="running"
-        ).save()
+            test_run = await TestRun(
+                test_case_id=test_case_id,
+                status="running"
+            ).save()
 
         # Create turn evaluation
         turn_eval = await TurnEval(
@@ -549,7 +557,7 @@ class Context(BaseModel):
                 branch = await self._get_branch()
                 self._turn = await branch.create_turn(auto_commit=task.auto_commit)
             elif isinstance(task, StartEval):
-                await self._setup_evaluation(task.test_case_id)
+                await self._setup_evaluation(task.test_case_id, task.test_run_id)
 
 
         if self._branch is None and len(self._tasks) > 0:

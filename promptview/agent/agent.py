@@ -104,12 +104,18 @@ class Agent():
             agent_gen = self.stream_agent_with_context(context, args[0], serialize=True)
             return StreamingResponse(agent_gen, media_type="text/plain")
             
-        
-        # self.ingress_router.add_api_route(
-        #     path="/complete", 
-        #     endpoint=complete,
-        #     methods=["POST"],        
-        # )
+        @self.ingress_router.post("/evaluate")
+        async def evaluate(
+            request: Request,
+            payload: str = Depends(get_request_content),
+            ctx: dict = Depends(get_request_ctx),
+            auth: AuthModel = Depends(get_auth),
+        ):
+            content, options, state, files = payload
+            if not options.get("test_case_id"):
+                raise ValueError("test_case_id is required")
+            agent_gen = self.run_evaluate(options["test_case_id"])
+            return StreamingResponse(agent_gen, media_type="text/plain")
     
     def update_metadata(self, ctx: Context, index, events: list[StreamEvent],  event: StreamEvent):
         event.request_id = ctx.request_id
@@ -164,6 +170,17 @@ class Agent():
                 #         message = await turn.add(message)
                 #         await twilio.send_text_message(user.phone_number, message.content)
                 
+    async def run_evaluate(
+        self,
+        test_case_id: int,
+        test_run_id: int | None = None,
+        auth: AuthModel | None = None,
+    ):
+        ctx = Context(auth=auth)
+        async with ctx.start_eval(test_case_id=test_case_id, test_run_id=test_run_id) as ctx:
+            args = ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()
+            async for event in self.agent_component(*args).stream():
+                yield event
 
     async def run_debug(
         self,

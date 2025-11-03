@@ -49,7 +49,8 @@ class DataFlow:
     def kind(self):
         try:
             if self._is_list:
-                return [self.get_artifact_kind(v.artifact) for v in self.span_value.artifacts if v.artifact.kind != "list"]
+                return [a.kind for a in self.span_value.artifacts if a.kind != "list"]
+                # return [self.get_artifact_kind(v.artifact) for v in self.span_value.artifacts if v.artifact.kind != "list"]
                 
             return self.span_value.artifacts[0].kind
         except Exception as e:
@@ -364,10 +365,14 @@ class SpanTree:
                         raise ValueError("Container is not set")
                     items = []
                     for artifact in v.artifacts:
-                        if artifact.kind == "list":
-                            continue
-                        value = value_dict[artifact.model_name][artifact.id]
-                        items.append(value)
+                        try:
+                            if artifact.kind == "list":
+                                continue
+                            value = value_dict[artifact.model_name][artifact.id]
+                            items.append(value)
+                        except Exception as e:
+                            print(f"Error getting value")
+                            raise e
                     span._values.append(DataFlow(v, items, container))
                 elif v.kind == "span":
                     # Create SpanTree for child span (not just ExecutionSpan)
@@ -458,16 +463,16 @@ class SpanTree:
         # Load all models in batches by model_name
         for k in model_ids:
             if k == "list":
-                models = await Artifact.query(branch=branch_id).where(lambda a: a.id.isin(model_ids[k]))
+                models = await Artifact.query(branch=branch_id, include_branch_turn=True).where(lambda a: a.id.isin(model_ids[k]))
                 value_dict["list"] = {m.id: m for m in models}
             elif k == "block_trees":
-                models = await get_blocks(model_ids[k], dump_models=False)
+                models = await get_blocks(model_ids[k], dump_models=False, include_branch_turn=True)
                 value_dict[k] = models
             elif k == "execution_spans":
                 value_dict[k] = {s.artifact_id: s for s in spans}
             else:
                 ns = NamespaceManager.get_namespace(k)
-                models = await ns._model_cls.query(branch=branch_id).where(lambda m: m.artifact_id.isin(model_ids[k]))
+                models = await ns._model_cls.query(branch=branch_id, include_branch_turn=True).where(lambda m: m.artifact_id.isin(model_ids[k]))
                 value_dict[k] = {m.artifact_id: m for m in models}
 
         return value_dict

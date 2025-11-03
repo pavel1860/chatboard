@@ -4,7 +4,7 @@ from typing import Type, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from .model_router import create_model_router
 from ..prompt.context import Context
-from ..model import TestCase, TestRun, TestTurn, TurnEval, ValueEval
+from ..model import Branch, TestCase, TestRun, TestTurn, TurnEval, ValueEval, Turn
 from .utils import ListParams, get_list_params
 
 
@@ -84,9 +84,39 @@ def create_test_router(context_cls: Type[Context] | None = None):
         )
 
         return [run.model_dump() for run in test_runs]
+    
+    
+    
+    @router.post("/TestRun/create_pending")
+    async def create_test_run(
+        request: Request,
+        ctx = Depends(get_model_ctx)
+    ):
+        """
+        Create a new test run.
+        """
+        payload = await request.json()
+        if not payload.get("test_case_id"):
+            raise HTTPException(status_code=400, detail="test_case_id is required")
+        test_case = await TestCase.query().include(TestTurn).where(lambda tc: tc.id == payload["test_case_id"]).first()
+        
+        turns = await Turn.query().where(lambda t: t.id.isin([turn.turn_id for turn in test_case.test_turns])).order_by("-index")
+        
+        if not test_case or not turns:
+            raise HTTPException(status_code=404, detail="Test case not found")
+        test_case_branch = await Branch.get(test_case.branch_id)
+        if not test_case_branch:
+            raise HTTPException(status_code=404, detail="Branch not found")
+        test_run_branch = await test_case_branch.fork_branch(turns[0])
+        test_run = TestRun(
+            test_case_id=test_case.id,
+            branch_id=test_run_branch.id,
+        )
+        await test_run.save()
+        return test_run.model_dump()
 
 
-    @router.get("/TestRun/{test_run_id}/details")
+    @router.get("/TestRun/{test_run_id}")
     async def get_test_run_with_evaluations(
         test_run_id: int,
         ctx = Depends(get_model_ctx)

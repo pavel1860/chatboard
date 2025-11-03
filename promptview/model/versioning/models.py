@@ -1024,8 +1024,8 @@ class TestRun(Model):
     branch_id: int = ModelField(default=1, description="Branch this test run belongs to")
 
     score: float | None = ModelField(default=None, description="Overall score of the test run")
-    status: Literal["running", "success", "failure"] = ModelField(
-        default="running",
+    status: Literal["pending", "running", "success", "failure"] = ModelField(
+        default="pending",
         description="Status of the test run"
     )
 
