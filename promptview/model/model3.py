@@ -9,7 +9,8 @@ from promptview.model.base.types import VersioningStrategy
 
 from .model_meta import ModelMeta
 if TYPE_CHECKING:
-    from .postgres2.pg_query_set import PgSelectQuerySet
+    # from .postgres2.pg_query_set import PgSelectQuerySet
+    from .sql2.pg_query_builder import PgQueryBuilder
     from .base.base_namespace import BaseNamespace
 
 MODEL = TypeVar("MODEL", bound="Model")
@@ -21,7 +22,7 @@ class Modelable(Protocol, Generic[MODEL]):
         ...
         
     @classmethod
-    def query(cls) -> "PgSelectQuerySet[MODEL]":
+    def query(cls) -> "PgQueryBuilder[MODEL]":
         ...
 
 
@@ -250,21 +251,14 @@ class Model(BaseModel, metaclass=ModelMeta):
         alias: str | None = None, 
         use_ctx: bool = True,
         **kwargs
-    ) -> "PgSelectQuerySet[Self]":
-        from .postgres2.pg_query_set import PgSelectQuerySet
-        query = PgSelectQuerySet(cls, alias=alias).select(*fields if fields else "*")
-        # if use_ctx:
-        #     where_keys = cls._get_context_fields()
-        #     if where_keys:
-        #         query.where(**where_keys)
+    ) -> "PgQueryBuilder[Self]":
+        # from .postgres2.pg_query_set import PgSelectQuerySet
+        # query = PgSelectQuerySet(cls, alias=alias).select(*fields if fields else "*")
+        from .sql2.pg_query_builder import select
+        query = select(cls)
         return query
-        # if not fields:
-        #     return PgSelectQuerySet(cls, alias=alias).select("*")
-        # return PgSelectQuerySet(cls, alias=alias).select(*fields)
-
-
-
-
-
-
-
+        
+        
+    @classmethod
+    def q(cls) -> "PgQueryBuilder[Self]":
+        return cls.query()

@@ -16,10 +16,20 @@ class RelField:
         self.is_query = is_query
 
     def __repr__(self):
-        return f"RelField({self.source.name}.{self.name})"
+        # Handle case where source is an Expression (from select_expr)
+        if hasattr(self.source, 'name'):
+            return f"RelField({self.source.name}.{self.name})"
+        else:
+            # Source is an expression, just show the field name
+            return f"RelField({self.name}: {type(self.source).__name__})"
 
     def __str__(self):
-        return f"{self.source.name}.{self.name}"
+        # Handle case where source is an Expression (from select_expr)
+        if hasattr(self.source, 'name'):
+            return f"{self.source.name}.{self.name}"
+        else:
+            # Source is an expression, just show the field name
+            return f"{self.name}"
 
     # Comparison operators
     def __eq__(self, other):
