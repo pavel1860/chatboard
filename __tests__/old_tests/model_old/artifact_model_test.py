@@ -9,7 +9,7 @@ from promptview.model import Model, ArtifactModel, RepoModel, ModelField, Relati
 import datetime as dt
 from promptview.model.fields import KeyField, RelationField, ModelField
 from promptview.model.namespace_manager import NamespaceManager
-from promptview.model.context import Context
+from promptview.prompt import Context
 from promptview.model.postgres.builder import SQLBuilder
 
 

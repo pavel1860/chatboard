@@ -35,8 +35,8 @@ class StreamEvent:
     name: str | None = None
     attrs: dict | None = None
     depth: int = 0
-    parent_event_id: int | None = None
-    event: Any | None = None
+    parent_value_id: int | None = None
+    value: Any | None = None
     payload: Any | None = None    
     created_at: dt.datetime | None = None
     error: str | None = None
@@ -54,7 +54,16 @@ class StreamEvent:
             return self.payload.to_dict()
         else:
             return self.payload
-        
+    
+    def attrs_to_dict(self):
+        if self.attrs is None:
+            return None
+        if hasattr(self.attrs, "model_dump"):
+            return self.attrs.model_dump()
+        elif hasattr(self.attrs, "to_dict"):
+            return self.attrs.to_dict()
+        else:
+            return self.attrs
         
     @staticmethod
     def _json_default(obj):
@@ -80,19 +89,21 @@ class StreamEvent:
         raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
         
     def to_json(self):
-        payload = self.payload_to_dict()        
+        payload = self.payload_to_dict()   
+        attrs = self.attrs_to_dict()
         dump = {
             "type": self.type,
             "path": self.path,
             "name": self.name,
             "index": self.index,
-            "attrs": self.attrs,
+            "attrs": attrs,
             "depth": self.depth,
             "payload": payload,            
             "request_id": self.request_id,
             "span_id": self.span_id,   
-            "parent_event_id": self.parent_event_id,
-            "event": self.event.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.event else None,
+            "parent_event_id": self.parent_value_id,
+            # "event": self.value.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.value else None,
+            "value": self.value.to_dict() if self.value else None,
         }        
         if self.error:
             dump["error"] = self.error

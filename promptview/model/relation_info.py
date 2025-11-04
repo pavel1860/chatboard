@@ -102,4 +102,9 @@ class RelationInfo:
             self.junction_keys[1]: foreign_key,
         })
         return self.relation_model(**kwargs)
+    
+    
+    def get_foreign_key_value(self, primary_model: "Model") -> Any:
+        return {self.foreign_key: getattr(primary_model, self.primary_key)}
+    
         

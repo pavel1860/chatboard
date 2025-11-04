@@ -32,7 +32,8 @@ setup(
         "PyJWT==2.10.1",
         "google-auth[requests]==2.40.1",
         "google==3.0.0",
-        "authlib==1.5.2"
+        "authlib==1.5.2",
+        "pycryptodome==3.23.0"
     ],    
     classifiers=[
         # Classifiers help users find your project by categorizing it.

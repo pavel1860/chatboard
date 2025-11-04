@@ -13,7 +13,7 @@ from promptview.model.fields import ModelField, KeyField, RelationField
 from promptview.model import Model, VersionedModel, ArtifactModel
 from promptview.model.relation_model import RelationModel
 from promptview.model.postgres2.pg_query_set import select
-from promptview.model.context import Context
+from promptview.prompt.context import Context
 from promptview.model.versioning.models import Branch, Turn, TurnStatus
 import datetime as dt
 
@@ -82,4 +82,51 @@ async def test_artifact_model_update(setup_db):
             assert post.text == "Hello World2!!!"
     
     assert post.text == "Hello World2!!!"
+
+
+@pytest.mark.asyncio
+async def test_model_liniage(setup_db):
+    branch = await Branch.get_main()
+
+
+    with branch:
+        async with branch.start_turn() as turn1:
+            post1 = await Post(text="Hello, world!").save()
+            
+        async with branch.start_turn() as turn2:
+            post2 = await Post(text="I like cats!").save()
+            
+        async with branch.start_turn() as turn3:
+            post3 = await Post(text="I dont like cucumbers!").save()
+            
     
+    branch2 = await branch.fork_branch(turn2)
+    
+    
+
+    with branch2:
+        async with branch2.start_turn() as turn1_2:
+            post1_2 = await Post(text="I like dogs!").save()
+            
+    turns = await Turn.query()
+    assert len(turns) == 4
+            
+    with branch:
+        turns = await Turn.query()
+        assert len(turns) == 3
+    with branch2:
+        turns = await Turn.query()
+        assert len(turns) == 2
+        
+    with branch:
+        posts = await Post.query()
+        assert len(posts) == 3
+        assert posts[0].text == "Hello, world!"
+        assert posts[1].text == "I like cats!"
+        assert posts[2].text == "I dont like cucumbers!"
+    with branch2:
+        posts = await Post.query()
+        assert len(posts) == 2
+        assert posts[0].text == "Hello, world!"
+        assert posts[1].text == "I like dogs!"
+        

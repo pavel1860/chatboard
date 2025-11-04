@@ -9,4 +9,4 @@ class VersioningStrategy(str, Enum):
     EVENT_SOURCED = "event_sourced"  # New artifact per change (user models)
     
     
-ArtifactKind = Literal["model", "block", "span", "log"]
+ArtifactKind = Literal["model", "block", "span", "log", "parameter"]

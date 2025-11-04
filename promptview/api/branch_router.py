@@ -1,8 +1,8 @@
 from typing import Type
 from ..model import Branch, Turn
 from .model_router import create_model_router
-from ..model.context import Context
-from fastapi import Request, Depends, Query
+from ..prompt.context import Context
+from fastapi import Request, Depends, Query, Body
 from ..model.query_url_params import parse_query_params, QueryListType
 from .utils import query_filters
 
@@ -33,5 +33,19 @@ def create_branch_router(context_cls: Type[Context] | None = None):
             model_query.query.where(condition)
         instances = await model_query.json()
         return [instance for instance in instances]
+    
+    @branch_router.post("/fork")
+    async def fork_branch(
+        from_branch_id: int= Body(...),
+        from_turn_id: int= Body(...),
+        ctx: Context = Depends(get_model_ctx)
+    ):
+        branch = await Branch.get(from_branch_id)
+        turn = await Turn.get(from_turn_id)
+        forked_branch =await branch.fork_branch(turn)        
+        return forked_branch
 
     return branch_router
+
+
+
