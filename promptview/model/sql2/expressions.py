@@ -262,6 +262,28 @@ class JsonAgg(AggregateFunction):
         self.expr = expr
 
 
+class JsonbAgg(AggregateFunction):
+    """
+    jsonb_agg() aggregate function - collects values into JSONB array.
+
+    Similar to JsonAgg but returns jsonb type instead of json type.
+    Use this when you need type consistency with jsonb_build_object.
+
+    Example:
+        JsonbAgg(JsonBuildObject({
+            "id": comments.get("id"),
+            "text": comments.get("text")
+        }))
+    """
+
+    def __init__(self, expr):
+        """
+        Args:
+            expr: Expression to aggregate into JSONB array
+        """
+        self.expr = expr
+
+
 class Count(AggregateFunction):
     """COUNT() aggregate function"""
 

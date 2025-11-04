@@ -2,7 +2,7 @@ from .relational_queries import QuerySet, SelectQuerySet, Relation
 from .relations import Source, RelField
 from .expressions import (
     Expression, BinaryExpression, And, Or, Not, IsNull, IsNotNull,
-    In, NotIn, Between, Like, ILike, Value, JsonBuildObject, JsonAgg,
+    In, NotIn, Between, Like, ILike, Value, JsonBuildObject, JsonAgg, JsonbAgg,
     Count, Sum, Avg, Min, Max, AggregateFunction, Coalesce
 )
 import textwrap
@@ -182,6 +182,26 @@ class Compiler:
             else:
                 inner_sql = self.compile_expr(expr.expr)
                 return f"json_agg({inner_sql})"
+
+        elif isinstance(expr, JsonbAgg):
+            # jsonb_agg(expression) - same as json_agg but returns jsonb type
+            # Check if the inner expression is complex (JsonBuildObject)
+            if isinstance(expr.expr, JsonBuildObject):
+                # Increase indent for nested content
+                self.indent_level += 1
+                inner_sql = self.compile_expr(expr.expr)
+                self.indent_level -= 1
+
+                # Format with newlines if JsonBuildObject was multi-line
+                if '\n' in inner_sql:
+                    indent = "    " * (self.indent_level + 1)
+                    inner_sql_indented = textwrap.indent(inner_sql, indent)
+                    return f"jsonb_agg(\n{inner_sql_indented}\n{' ' * (self.indent_level * 4)})"
+                else:
+                    return f"jsonb_agg({inner_sql})"
+            else:
+                inner_sql = self.compile_expr(expr.expr)
+                return f"jsonb_agg({inner_sql})"
 
         elif isinstance(expr, Count):
             # COUNT(*) or COUNT(DISTINCT expr)
