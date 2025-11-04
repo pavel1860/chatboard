@@ -3,7 +3,8 @@ from .relations import Source, RelField
 from .expressions import (
     Expression, BinaryExpression, And, Or, Not, IsNull, IsNotNull,
     In, NotIn, Between, Like, ILike, Value, JsonBuildObject, JsonAgg, JsonbAgg,
-    Count, Sum, Avg, Min, Max, AggregateFunction, Coalesce
+    Count, Sum, Avg, Min, Max, AggregateFunction, Coalesce,
+    LtreeNlevel, LtreeSubpath, LtreeLca
 )
 import textwrap
 
@@ -247,6 +248,25 @@ class Compiler:
                     # Regular expression
                     values_sql.append(self.compile_expr(value))
             return f"COALESCE({', '.join(values_sql)})"
+
+        # LTREE Functions
+        elif isinstance(expr, LtreeNlevel):
+            # nlevel(ltree) - returns number of labels in path
+            field_sql = self.compile_expr(expr.field)
+            return f"nlevel({field_sql})"
+
+        elif isinstance(expr, LtreeSubpath):
+            # subpath(ltree, offset [, len])
+            field_sql = self.compile_expr(expr.field)
+            if expr.length is not None:
+                return f"subpath({field_sql}, {expr.offset}, {expr.length})"
+            else:
+                return f"subpath({field_sql}, {expr.offset})"
+
+        elif isinstance(expr, LtreeLca):
+            # lca(ltree, ltree, ...) - lowest common ancestor
+            fields_sql = [self.compile_expr(field) for field in expr.fields]
+            return f"lca({', '.join(fields_sql)})"
 
         else:
             raise ValueError(f"Unknown expression type: {type(expr)}")

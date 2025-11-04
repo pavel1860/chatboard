@@ -74,11 +74,77 @@ class RelField:
     def ilike(self, pattern: str):
         from .expressions import ILike
         return ILike(self, pattern)
-    
-    
 
-    
-    
+    # LTREE methods (PostgreSQL ltree extension)
+
+    def ancestor_of(self, subpath):
+        """
+        Check if this ltree path is an ancestor of subpath.
+        Uses LTREE @> operator.
+
+        Example: categories.get("path").ancestor_of("Top.Science.Astronomy")
+        SQL: path @> 'Top.Science.Astronomy'
+        """
+        from .expressions import LtreeAncestor
+        return LtreeAncestor(self, subpath)
+
+    def descendant_of(self, path):
+        """
+        Check if this ltree path is a descendant of path.
+        Uses LTREE <@ operator.
+
+        Example: categories.get("path").descendant_of("Top.Science")
+        SQL: path <@ 'Top.Science'
+        """
+        from .expressions import LtreeDescendant
+        return LtreeDescendant(self, path)
+
+    def ltree_match(self, pattern):
+        """
+        Check if this ltree path matches lquery pattern.
+        Uses LTREE ~ operator.
+
+        Example: categories.get("path").ltree_match("*.Science.*")
+        SQL: path ~ '*.Science.*'
+        """
+        from .expressions import LtreeMatch
+        return LtreeMatch(self, pattern)
+
+    def ltree_concat(self, other):
+        """
+        Concatenate this ltree path with another.
+        Uses LTREE || operator.
+
+        Example: categories.get("path").ltree_concat("NewLevel")
+        SQL: path || 'NewLevel'
+        """
+        from .expressions import LtreeConcat
+        return LtreeConcat(self, other)
+
+    def nlevel(self):
+        """
+        Get the number of levels in this ltree path.
+        Uses nlevel() function.
+
+        Example: categories.get("path").nlevel()
+        SQL: nlevel(path)
+        """
+        from .expressions import LtreeNlevel
+        return LtreeNlevel(self)
+
+    def subpath(self, offset: int, length: int | None = None):
+        """
+        Extract a subpath from this ltree path.
+        Uses subpath() function.
+
+        Example: categories.get("path").subpath(0, 2)
+        SQL: subpath(path, 0, 2)
+        """
+        from .expressions import LtreeSubpath
+        return LtreeSubpath(self, offset, length)
+
+
+
 class RelationProtocol(Protocol):
     # alias: str | None
     # name: str

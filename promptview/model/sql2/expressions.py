@@ -23,6 +23,25 @@ class Expression:
         """Negate expression with NOT"""
         return Not(self)
 
+    # Comparison operators
+    def __eq__(self, other):
+        return Eq(self, other)
+
+    def __ne__(self, other):
+        return Neq(self, other)
+
+    def __gt__(self, other):
+        return Gt(self, other)
+
+    def __ge__(self, other):
+        return Gte(self, other)
+
+    def __lt__(self, other):
+        return Lt(self, other)
+
+    def __le__(self, other):
+        return Lte(self, other)
+
 
 class Value(Expression):
     """Represents a literal value or parameter"""
@@ -174,6 +193,91 @@ class ILike(Expression):
     def __init__(self, value, pattern: str):
         self.value = value
         self.pattern = param(pattern)
+
+
+# LTREE Operators (PostgreSQL ltree extension)
+
+class LtreeAncestor(BinaryExpression):
+    """
+    LTREE @> operator - ancestor of (path contains subpath).
+
+    Returns true if left path is an ancestor of right path.
+    Example: 'Top.Science' @> 'Top.Science.Astronomy'
+    """
+    def __init__(self, left, right):
+        super().__init__(left, '@>', right)
+
+
+class LtreeDescendant(BinaryExpression):
+    """
+    LTREE <@ operator - descendant of (subpath is contained by path).
+
+    Returns true if left path is a descendant of right path.
+    Example: 'Top.Science.Astronomy' <@ 'Top.Science'
+    """
+    def __init__(self, left, right):
+        super().__init__(left, '<@', right)
+
+
+class LtreeMatch(BinaryExpression):
+    """
+    LTREE ~ operator - matches lquery pattern.
+
+    Returns true if ltree matches lquery pattern.
+    Example: path ~ '*.Science.*'
+    """
+    def __init__(self, left, right):
+        super().__init__(left, '~', right)
+
+
+class LtreeConcat(BinaryExpression):
+    """
+    LTREE || operator - concatenation.
+
+    Concatenates two ltree paths.
+    Example: 'Top' || 'Science' = 'Top.Science'
+    """
+    def __init__(self, left, right):
+        super().__init__(left, '||', right)
+
+
+# LTREE Functions
+
+class LtreeNlevel(Expression):
+    """
+    nlevel(ltree) function - returns number of labels in path.
+
+    Example: nlevel('Top.Science.Astronomy') = 3
+    """
+    def __init__(self, ltree_field):
+        self.field = ltree_field
+
+
+class LtreeSubpath(Expression):
+    """
+    subpath(ltree, offset, len) function - extract subpath.
+
+    Returns subpath starting at offset with length len.
+    If len is negative, counts from end.
+    Example: subpath('Top.Science.Astronomy', 0, 2) = 'Top.Science'
+    """
+    def __init__(self, ltree_field, offset: int, length: int | None = None):
+        self.field = ltree_field
+        self.offset = offset
+        self.length = length
+
+
+class LtreeLca(Expression):
+    """
+    lca(ltree, ltree, ...) function - lowest common ancestor.
+
+    Returns the longest common prefix of paths.
+    Example: lca('Top.Science.Astronomy', 'Top.Science.Physics') = 'Top.Science'
+    """
+    def __init__(self, *ltree_fields):
+        if len(ltree_fields) < 2:
+            raise ValueError("lca requires at least 2 ltree arguments")
+        self.fields = ltree_fields
 
 
 class WhereClause:
