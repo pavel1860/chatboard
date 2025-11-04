@@ -24,12 +24,13 @@ T_co = TypeVar("T_co", covariant=True)
 
 
 class QuerySetSingleAdapter(Generic[T_co]):
-    def __init__(self, queryset: "PgQueryBuilder[T_co]"):
+    def __init__(self, queryset: "PgQueryBuilder[T_co]", parse: bool = True):
         self.queryset = queryset
+        self.parse = parse
 
     def __await__(self) -> Generator[Any, None, T_co]:
         async def await_query():
-            results = await self.queryset.execute()
+            results = await self.queryset.execute(parse=self.parse)
             if results:
                 return results[0]
             return None
@@ -43,8 +44,9 @@ class QuerySetSingleAdapter(Generic[T_co]):
 class PgQueryBuilder(Generic[Ts]):
     def __init__(self):
         self._query = None
-        
-    
+        self._return_json = False  # Flag to return dicts instead of Model instances
+
+
     @property
     def query(self):
         if self._query is None:
@@ -86,8 +88,19 @@ class PgQueryBuilder(Generic[Ts]):
     def order_by(self, *fields: str):
         self.query.order_by(*fields)
         return self
-    
-    
+
+    def json(self) -> "PgQueryBuilder[Ts]":
+        """
+        Configure the query to return dicts instead of Model instances.
+
+        Usage:
+            posts = await select(Post).include(Comment).json()
+            # posts[0] is a dict
+        """
+        self._return_json = True
+        return self
+
+
     def first(self) -> "QuerySetSingleAdapter[Ts]":
         """
         Get the first record based on the default_order_field.
@@ -252,25 +265,71 @@ class PgQueryBuilder(Generic[Ts]):
     
     def __await__(self):
         return self.execute().__await__()
-    
-    
-    # def parse_row(self, row: dict[str, Any]) -> MODEL:
-    #     # Convert scalar columns first
-    #     data = dict(row)        
-    #     data = self.namespace.deserialize(data)
 
-    #     obj = self.model_class(**data)
-    #     if self.parser:
-    #         obj = self.parser(obj)
-    #     return obj
-            
-        
-    async def execute(self):
+
+    def parse_row(self, row: dict[str, Any]) -> dict[str, Any] | Ts:
+        """
+        Parse a database row, deserializing JSON fields from included relations.
+
+        By default returns a Model instance. Use .json() to get dicts instead.
+        """
+        import json
+        from .expressions import Expression
+
+        parsed = {}
+
+        # Iterate over projected fields to know what to parse
+        for field in self.query.iter_projection_fields():
+            field_name = field.name
+            if field_name not in row:
+                continue
+
+            value = row[field_name]
+
+            # Check if this field is from an expression (like include())
+            if isinstance(field.source, Expression):
+                # Deserialize JSON strings from included relations
+                if isinstance(value, str) and value:
+                    try:
+                        value = json.loads(value)
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Keep as-is if not valid JSON
+                parsed[field_name] = value
+            else:
+                # Regular field - deserialize using field info from namespace
+                source_namespace = field.source.base.namespace
+                if source_namespace.has_field(field_name):
+                    field_info = source_namespace.get_field(field_name)
+                    parsed[field_name] = field_info.deserialize(value)
+                else:
+                    parsed[field_name] = value
+
+        # Return dict if json() was called, otherwise return Model instance
+        if self._return_json:
+            return parsed
+        else:
+            # Get the model class from the first source namespace
+            first_source = self.query.sources[0]
+            namespace = first_source.base.namespace
+            model_cls = namespace._model_cls
+            if not model_cls:
+                raise ValueError("Model class not set on namespace")
+            return model_cls(**parsed)
+
+
+    async def execute(self, parse: bool = True):
+        """
+        Execute the query and return results.
+
+        Args:
+            parse: If True, parse JSON fields from included relations (default: True)
+        """
         sql, params = self.render()
         rows = await PGConnectionManager.fetch(sql, *params)
+
+        if parse:
+            return [self.parse_row(row) for row in rows]
         return rows
-        # return [self.parse_row(row) for row in rows]
-        # return [self.query.parse_row(row) for row in rows]
         
 
 
