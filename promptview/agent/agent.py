@@ -170,17 +170,28 @@ class Agent():
                 #         message = await turn.add(message)
                 #         await twilio.send_text_message(user.phone_number, message.content)
                 
-    async def run_evaluate(
+    # async def run_evaluate(
+    #     self,
+    #     test_case_id: int,
+    #     test_run_id: int | None = None,
+    #     auth: AuthModel | None = None,
+    # ):
+    #     ctx = Context(auth=auth)
+    #     async with ctx.start_eval(test_case_id=test_case_id, test_run_id=test_run_id) as ctx:
+    #         args = ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()
+    #         async for event in self.agent_component(*args).stream():
+    #             yield event
+    
+    def run_evaluate(
         self,
         test_case_id: int,
         test_run_id: int | None = None,
         auth: AuthModel | None = None,
     ):
         ctx = Context(auth=auth)
-        async with ctx.start_eval(test_case_id=test_case_id, test_run_id=test_run_id) as ctx:
-            args = ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()
-            async for event in self.agent_component(*args).stream():
-                yield event
+        ctx.start_eval(test_case_id=test_case_id, test_run_id=test_run_id)
+        # args = ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()
+        return self.agent_component().stream(ctx=ctx, load_eval_args=True)
 
     async def run_debug(
         self,

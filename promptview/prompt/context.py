@@ -93,6 +93,7 @@ class Context(BaseModel):
         self._branch = branch
         self._turn = turn
         self._auth = auth
+        self._initialized = False
         
     @property
     def request_id(self):
@@ -577,12 +578,17 @@ class Context(BaseModel):
             else:
                 models.append(model)
         return v_models, models
-                
-        
-    async def __aenter__(self):
-        # Set this context as the current context
-        _context_var.set(self)
-
+    
+    
+    def is_set(self) -> bool:
+        return _context_var.get() is not None
+    
+    
+    async def initialize(self, safe: bool = False):
+        if self._initialized:
+            if safe:
+                return
+            raise ValueError("Context already initialized")
         if self._auth is not None:
             auth = self._auth.__enter__()
         branch = await self._handle_tasks()
@@ -596,9 +602,34 @@ class Context(BaseModel):
             await self._turn.__aenter__()
         for model in v_models:
             model.__enter__()
+        self._initialized = True
+
+                
+        
+    async def __aenter__(self):
+        # Set this context as the current context
+        _context_var.set(self)
+        await self.initialize(safe=True)
+
+        # if self._auth is not None:
+        #     auth = self._auth.__enter__()
+        # branch = await self._handle_tasks()
+        # v_models, models = self.get_models()
+        # for model in models:
+        #     model.__enter__()
+        # # Only enter branch context if we have a branch
+        # if branch is not None:
+        #     branch.__enter__()
+        # if self._turn is not None:
+        #     await self._turn.__aenter__()
+        # for model in v_models:
+        #     model.__enter__()
         return self
     
-    async def __aexit__(self, exc_type, exc_value, traceback):
+    
+    async def finalize(self, exc_type, exc_value, traceback):
+        if not self._initialized:
+            raise ValueError("Context not initialized")
         v_models, models = self.get_models()
         for model in reversed(v_models):
             model.__exit__(exc_type, exc_value, traceback)
@@ -611,6 +642,25 @@ class Context(BaseModel):
             model.__exit__(exc_type, exc_value, traceback)
         if self._auth is not None:
             self._auth.__exit__(exc_type, exc_value, traceback)
+
+        
+        
+        
+        
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        # v_models, models = self.get_models()
+        # for model in reversed(v_models):
+        #     model.__exit__(exc_type, exc_value, traceback)
+        # if self._turn is not None:
+        #     await self._turn.__aexit__(exc_type, exc_value, traceback)
+        # # Only exit branch context if we have a branch
+        # if self._branch is not None:
+        #     self._branch.__exit__(exc_type, exc_value, traceback)
+        # for model in reversed(models):
+        #     model.__exit__(exc_type, exc_value, traceback)
+        # if self._auth is not None:
+        #     self._auth.__exit__(exc_type, exc_value, traceback)
+        await self.finalize(exc_type, exc_value, traceback)
 
         # Clear the context
         _context_var.set(None)

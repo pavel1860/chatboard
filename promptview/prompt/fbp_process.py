@@ -884,6 +884,7 @@ from ..model.versioning.models import ExecutionSpan, SpanType
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
     from ..block import Block
+    from .context import Context
 
 
 class FlowException(Exception):
@@ -1335,11 +1336,15 @@ class ObservableProcess(Process):
         self._stop_event_type: str = f"{self._span_type}_stop"
         self._error_event_type: str = f"{self._span_type}_error"
         self._should_log_inputs = should_log_inputs
+        self._ctx: "Context | None" = None
+        self._load_eval_args: bool = False
         
     @property
     def ctx(self):
         """Get current context."""
         from .context import Context
+        if self._ctx:
+            return self._ctx
         ctx = Context.current()
         if ctx is None:
             raise ValueError("StreamController requires Context. Use 'async with Context():'")
@@ -1379,8 +1384,15 @@ class ObservableProcess(Process):
             span_type=self._span_type,
             tags=self._tags
         )
-        
-        if self._span_tree.inputs:            
+        if self._load_eval_args:
+            self._replay_inputs = self.ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()        
+            bound, kwargs = await resolve_dependencies_kwargs(
+                self._gen_func,
+                args=self._replay_inputs,
+                kwargs={}
+            )
+            self.resolved_kwargs = kwargs
+        elif self._span_tree.inputs:            
             self._replay_inputs = [v.value for v in self._span_tree.inputs]
             bound, kwargs = await resolve_dependencies_kwargs(
                 self._gen_func,
@@ -1532,7 +1544,7 @@ class ObservableProcess(Process):
             current = current.parent if hasattr(current, 'parent') else None
         return path
 
-    def stream(self, event_level=None):
+    def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False):
         """
         Return a FlowRunner that streams events from this process.
 
@@ -1553,7 +1565,9 @@ class ObservableProcess(Process):
         from .flow_components import EventLogLevel
         if event_level is None:
             event_level = EventLogLevel.chunk
-        return FlowRunner(self, event_level=event_level).stream_events()
+        self._ctx = ctx
+        self._load_eval_args = load_eval_args
+        return FlowRunner(self, ctx=ctx, event_level=event_level).stream_events()
 
     def get_response(self):
         """
@@ -2019,7 +2033,7 @@ class FlowRunner:
         ...     print(f"Event: {event.type} - {event.name}")
     """
 
-    def __init__(self, root_process: Process, event_level=None):
+    def __init__(self, root_process: Process, ctx: "Context | None" = None, event_level=None):
         """
         Initialize FlowRunner.
 
@@ -2036,7 +2050,7 @@ class FlowRunner:
         self._event_level = event_level
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
-        self.ctx = Context.current()
+        self.ctx = ctx or Context.current()
 
     @property
     def current(self) -> Process:
@@ -2076,6 +2090,23 @@ class FlowRunner:
     def __aiter__(self):
         """Make FlowRunner async iterable."""
         return self
+    
+    
+    async def enter_context(self):
+        if not self.ctx:
+            raise ValueError("Context is not set")
+        if self.ctx.is_set():
+            return self
+        await self.ctx.__aenter__()
+        return self
+
+    async def exit_context(self):
+        if not self.ctx:
+            raise ValueError("Context is not set")
+        if not self.ctx.is_set():
+            return self
+        await self.ctx.__aexit__(None, None, None)
+        return self
 
     async def __anext__(self):
         """
@@ -2084,6 +2115,7 @@ class FlowRunner:
         Returns:
             StreamEvent if emitting events, otherwise the value from current process
         """
+        await self.enter_context()
         while self.stack:
             try:
                 # First, check if we have a pending child to push
@@ -2130,8 +2162,8 @@ class FlowRunner:
                             return event
                     continue
                 
-                if not isinstance(process, EvaluatorController):
-                    await self._try_evaluate_value(process)
+                # if not isinstance(process, EvaluatorController):
+                #     await self._try_evaluate_value(process)
 
                 # Emit value event if needed
                 if self.should_output_events:
@@ -2145,6 +2177,8 @@ class FlowRunner:
             except StopAsyncIteration:
                 # Process exhausted, pop from stack
                 process = self.pop()
+                                
+                await self._try_evaluate_value(process)
 
                 # Get the response from the completed process
                 if hasattr(process, 'get_response'):
@@ -2178,7 +2212,7 @@ class FlowRunner:
                 
         if not self.stack:
             result = await self._commit_evaluation()
-
+        await self.exit_context()
         raise StopAsyncIteration
     
     # async def _try_evaluate_value(self, process: Process):
