@@ -50,7 +50,8 @@ class Compiler:
             # Compile the CTE based on its type
             if isinstance(cte, RawRelation):
                 # Raw SQL CTE - use the SQL directly
-                cte_sql = cte.sql.strip()
+                # Dedent to remove common leading whitespace, then strip
+                cte_sql = textwrap.dedent(cte.sql).strip()
             else:
                 # QuerySet CTE - compile it
                 cte_sql, _ = self.compile(cte)  # Unpack tuple (sql, params)
@@ -367,7 +368,9 @@ class Compiler:
                 sql += f"FROM {cte_name} AS {first_source.final_name}\n"
             else:
                 # Inline raw SQL in parentheses
-                raw_sql = textwrap.indent(first_source.base.sql.strip(), "    ")
+                # Dedent to remove common leading whitespace, then strip and re-indent
+                raw_sql = textwrap.dedent(first_source.base.sql).strip()
+                raw_sql = textwrap.indent(raw_sql, "    ")
                 sql += f"FROM (\n{raw_sql}\n) AS {first_source.final_name}\n"
         else:
             # Regular table
@@ -407,7 +410,9 @@ class Compiler:
                     sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
                 else:
                     # Inline raw SQL in parentheses
-                    raw_sql = textwrap.indent(source.base.sql.strip(), "    ")
+                    # Dedent to remove common leading whitespace, then strip and re-indent
+                    raw_sql = textwrap.dedent(source.base.sql).strip()
+                    raw_sql = textwrap.indent(raw_sql, "    ")
                     sql += f"{source.join_type} JOIN (\n{raw_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
             else:
                 # Regular table JOIN
