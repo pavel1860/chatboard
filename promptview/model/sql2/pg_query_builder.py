@@ -128,15 +128,20 @@ class PgQueryBuilder(Generic[Ts]):
         self.query.with_cte(cte.query, alias=alias)
         return self
     
+    def join_cte(self, cte: "PgQueryBuilder[Ts]", alias: str | None = None, on: tuple[str, str] | None = None):
+        self.use_cte(cte, alias=alias)
+        self.join(cte, on=on)
+        return self
+    
     def join(self, target: "PgQueryBuilder[Ts]", on: tuple[str, str] | None = None):
         if on is None:
             rel = self._infer_relation(target)            
             if rel is None:
-                raise ValueError(f"No relation found for {target}")
-            self.query.join(rel, on=(rel.primary_key, rel.foreign_key))
+                raise ValueError(f"No relation found for {target}")            
+            on = (rel.primary_key, rel.foreign_key)
+        self.query.join(target.query, on=on)
+        return self
             
-
-
     def first(self) -> "QuerySetSingleAdapter[Ts]":
         """
         Get the first record based on the default_order_field.
@@ -264,11 +269,12 @@ class PgQueryBuilder(Generic[Ts]):
         
     def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Ts]"):
         if isinstance(target, PgQueryBuilder):
-            ns = target.query.namespace
-            if ns is None:
-                raise ValueError("Namespace is not set")
-            for source in self.query.sources:
-                if isinstance(source.base, RawRelation):
+            rel = None
+            for source in target.query.sources:
+                ns = source.base.namespace
+                if ns is None:
+                    raise ValueError("Namespace is not set")
+                for source in self.query.sources:                    
                     if source.base.namespace is None:
                         continue
                     return source.base.namespace.get_relation_for_namespace(ns)

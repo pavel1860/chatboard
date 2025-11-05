@@ -52,6 +52,22 @@ class Compiler:
                 # Raw SQL CTE - use the SQL directly
                 # Dedent to remove common leading whitespace, then strip
                 cte_sql = textwrap.dedent(cte.sql).strip()
+            elif isinstance(cte, QuerySet) and len(cte.sources) == 1 and isinstance(cte.sources[0].base, RawRelation):
+                # QuerySet wrapping a single RawRelation with no modifications
+                # Check if it's unmodified (no projections, no WHERE, no GROUP BY, etc.)
+                if (cte.projection_fields is None and
+                    not cte.where_clause.condition and
+                    not cte.group_by_fields and
+                    not cte.order_by_fields and
+                    cte.limit_value is None and
+                    cte.offset_value is None and
+                    not cte.distinct_enabled):
+                    # Use the raw SQL directly instead of wrapping in SELECT
+                    raw_relation = cte.sources[0].base
+                    cte_sql = textwrap.dedent(raw_relation.sql).strip()
+                else:
+                    # QuerySet has modifications, compile it normally
+                    cte_sql, _ = self.compile(cte)
             else:
                 # QuerySet CTE - compile it
                 cte_sql, _ = self.compile(cte)  # Unpack tuple (sql, params)
