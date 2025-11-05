@@ -369,7 +369,11 @@ class Compiler:
             if id(first_source.base) in self.cte_map:
                 # Reference the CTE by name
                 cte_name = self.cte_map[id(first_source.base)]
-                sql += f"FROM {cte_name} AS {first_source.final_name}\n"
+                # Omit redundant "AS alias" if the alias matches the CTE name
+                if cte_name == first_source.final_name:
+                    sql += f"FROM {cte_name}\n"
+                else:
+                    sql += f"FROM {cte_name} AS {first_source.final_name}\n"
             else:
                 # Inline subquery
                 sub_sql, _ = self.compile(first_source.base)
@@ -381,7 +385,11 @@ class Compiler:
             if id(first_source.base) in self.cte_map:
                 # Reference the CTE by name
                 cte_name = self.cte_map[id(first_source.base)]
-                sql += f"FROM {cte_name} AS {first_source.final_name}\n"
+                # Omit redundant "AS alias" if the alias matches the CTE name
+                if cte_name == first_source.final_name:
+                    sql += f"FROM {cte_name}\n"
+                else:
+                    sql += f"FROM {cte_name} AS {first_source.final_name}\n"
             else:
                 # Inline raw SQL in parentheses
                 # Dedent to remove common leading whitespace, then strip and re-indent
@@ -411,7 +419,11 @@ class Compiler:
                 if id(source.base) in self.cte_map:
                     # Reference the CTE by name
                     cte_name = self.cte_map[id(source.base)]
-                    sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
+                    # Omit redundant "AS alias" if the alias matches the CTE name
+                    if cte_name == source.final_name:
+                        sql += f"{source.join_type} JOIN {cte_name} ON {source.get_on_clause()}\n"
+                    else:
+                        sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
                 else:
                     # Inline subquery for JOIN
                     sub_sql, _ = self.compile(source.base)
@@ -423,7 +435,11 @@ class Compiler:
                 if id(source.base) in self.cte_map:
                     # Reference the CTE by name
                     cte_name = self.cte_map[id(source.base)]
-                    sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
+                    # Omit redundant "AS alias" if the alias matches the CTE name
+                    if cte_name == source.final_name:
+                        sql += f"{source.join_type} JOIN {cte_name} ON {source.get_on_clause()}\n"
+                    else:
+                        sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
                 else:
                     # Inline raw SQL in parentheses
                     # Dedent to remove common leading whitespace, then strip and re-indent

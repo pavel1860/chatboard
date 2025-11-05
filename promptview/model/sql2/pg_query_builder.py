@@ -52,6 +52,11 @@ class PgQueryBuilder(Generic[Ts]):
         if self._query is None:
             raise ValueError("Query is not set")
         return self._query
+    
+    
+    def alias(self, alias: str):
+        self.query.alias = alias
+        return self
         
     def select(self, *targets: Type[Ts]):
         from ..model3 import Model
@@ -108,7 +113,7 @@ class PgQueryBuilder(Generic[Ts]):
         self._return_json = True
         return self
 
-    def use_cte(self, cte: "PgQueryBuilder[Ts]", alias: str | None = None) -> "PgQueryBuilder[Ts]":
+    def use_cte(self, cte: "PgQueryBuilder[Ts]", cte_name: str | None = None) -> "PgQueryBuilder[Ts]":
         """
         Add a CTE (Common Table Expression) to this query.
 
@@ -125,21 +130,21 @@ class PgQueryBuilder(Generic[Ts]):
             # Use it in main query with custom name
             results = await select(Post).use_cte(popular_posts, alias="popular")
         """
-        self.query.with_cte(cte.query, alias=alias)
+        self.query.with_cte(cte.query, alias=cte_name)
         return self
     
-    def join_cte(self, cte: "PgQueryBuilder[Ts]", alias: str | None = None, on: tuple[str, str] | None = None):
-        self.use_cte(cte, alias=alias)
-        self.join(cte, on=on)
+    def join_cte(self, cte: "PgQueryBuilder[Model]", cte_name: str | None = None, on: tuple[str, str] | None = None, alias: str | None = None):
+        self.use_cte(cte, cte_name=cte_name)
+        self.join(cte, on=on, alias=alias)
         return self
     
-    def join(self, target: "PgQueryBuilder[Ts]", on: tuple[str, str] | None = None):
+    def join(self, target: "PgQueryBuilder[Model]", on: tuple[str, str] | None = None, alias: str | None = None):
         if on is None:
             rel = self._infer_relation(target)            
             if rel is None:
                 raise ValueError(f"No relation found for {target}")            
             on = (rel.primary_key, rel.foreign_key)
-        self.query.join(target.query, on=on)
+        self.query.join(target.query, on=on, alias=alias)
         return self
             
     def first(self) -> "QuerySetSingleAdapter[Ts]":
@@ -267,7 +272,7 @@ class PgQueryBuilder(Generic[Ts]):
         return self
     
         
-    def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Ts]"):
+    def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Model]"):
         if isinstance(target, PgQueryBuilder):
             rel = None
             for source in target.query.sources:
