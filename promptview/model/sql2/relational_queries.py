@@ -283,6 +283,9 @@ class QuerySet(Relation):
         """
         Add a CTE (Common Table Expression) to this query.
 
+        If the CTE itself has nested CTEs, they will be flattened and merged into this query's CTE list,
+        since SQL doesn't support nested WITH clauses.
+
         Args:
             cte: The QuerySet to use as a CTE
             alias: Optional custom name for the CTE. If not provided, uses cte.alias or generates a default name.
@@ -293,7 +296,20 @@ class QuerySet(Relation):
         if alias:
             # Set the alias on the CTE
             cte.alias = alias
-        self.ctes.append(cte)
+
+        # If the CTE itself has CTEs, merge them into this query first (flatten nested CTEs)
+        if cte.ctes:
+            for nested_cte in cte.ctes:
+                # Avoid duplicates - only add if not already in our CTE list
+                if nested_cte not in self.ctes:
+                    self.ctes.append(nested_cte)
+            # Clear the CTEs from the nested query since they're now at the top level
+            cte.ctes = []
+
+        # Add the CTE itself (avoid duplicates)
+        if cte not in self.ctes:
+            self.ctes.append(cte)
+
         return self
     
     def iter_projection_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:

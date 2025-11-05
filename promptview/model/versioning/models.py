@@ -282,7 +282,12 @@ class Turn(Model):
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
-        query = PgSelectQuerySet(cls, alias=alias)           
+        from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
+        query = select(cls)           
+        if fields:
+            query.select(*fields)
+        if alias:
+            query.alias(alias)
             # .where(lambda t: (t.index <= branch_cte.get_field("start_turn_index")))
         branch_id = Branch.resolve_target_id_or_none(branch)
         if branch_id is not None:
@@ -426,8 +431,8 @@ class Artifact(Model):
         if turn_cte is not None:
             query.use_cte(
                 turn_cte,
-                name="turn_liniage",
-                alias="tl",
+                "turn_liniage",
+                # alias="tl",
             )            
         return query
                        
