@@ -100,6 +100,26 @@ class PgQueryBuilder(Generic[Ts]):
         self._return_json = True
         return self
 
+    def use_cte(self, cte: "PgQueryBuilder[Ts]", alias: str | None = None) -> "PgQueryBuilder[Ts]":
+        """
+        Add a CTE (Common Table Expression) to this query.
+
+        Args:
+            cte: The query builder to use as a CTE
+            alias: Optional custom name for the CTE
+
+        Usage:
+            # Create a CTE for popular posts
+            popular_posts = SelectQuerySet(posts_rel)
+            popular_posts.select("posts.id", "posts.title")
+            popular_posts.where(posts_rel.get("views") > 1000)
+
+            # Use it in main query with custom name
+            results = await select(Post).use_cte(popular_posts, alias="popular")
+        """
+        self.query.with_cte(cte.query, alias=alias)
+        return self
+
 
     def first(self) -> "QuerySetSingleAdapter[Ts]":
         """

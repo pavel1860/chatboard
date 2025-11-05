@@ -19,16 +19,17 @@ class Compiler:
         self.params = []
         self.param_counter = 1
         self.indent_level = 0  # Track current indentation level for nested expressions
+        self.cte_map = {}  # Map QuerySet id -> CTE name for detecting CTE references
 
     def compile(self, query: QuerySet):
-    
+
         cte_sql = self.compile_ctes(query)
-        sql = ""        
+        sql = ""
         if isinstance(query, SelectQuerySet):
             sql = self.compile_select_query(query)
         else:
             raise ValueError(f"Unknown query type: {type(query)}")
-            
+
         sql = cte_sql + sql
         return sql, self.params
 
@@ -37,9 +38,17 @@ class Compiler:
             return ""
         ctes_sql = []
         for cte in query.ctes:
-            cte_sql = self.compile(cte)
+            # Use alias if provided, otherwise generate name from final_name
+            if cte.alias:
+                cte_name = cte.alias
+            else:
+                cte_name = cte.final_name + "_cte"
+
+            # Register this CTE so we can reference it later
+            self.cte_map[id(cte)] = cte_name
+
+            cte_sql, _ = self.compile(cte)  # Unpack tuple (sql, params)
             cte_sql = "\n" + textwrap.indent(cte_sql, "    ")
-            cte_name = cte.final_name + "_cte"
             ctes_sql.append(f"{cte_name} AS ({cte_sql})")
         return "WITH " + ", ".join(ctes_sql) + "\n"
             
@@ -296,7 +305,9 @@ class Compiler:
             # Regular query: compile projection fields with aliases
             for field in query.iter_projection_fields():
                 if field.is_query:
-                    # Subquery field (from include)
+                    # Subquery field (from include or select_subquery)
+                    # Compile the subquery - it will automatically use CTE references
+                    # if its FROM source is a registered CTE
                     sub_sql, _ = self.compile(field.source)
                     sub_sql = textwrap.indent(sub_sql, "  ")
                     sub_sql = f"(\n{sub_sql}\n) AS {field.name},\n"
@@ -322,10 +333,16 @@ class Compiler:
 
         # Check if first source is a subquery
         if isinstance(first_source.base, QuerySet):
-            # Compile subquery
-            sub_sql = self.compile(first_source.base)
-            sub_sql = textwrap.indent(sub_sql, "    ")
-            sql += f"FROM (\n{sub_sql}\n) AS {first_source.final_name}\n"
+            # Check if this is a CTE reference
+            if id(first_source.base) in self.cte_map:
+                # Reference the CTE by name
+                cte_name = self.cte_map[id(first_source.base)]
+                sql += f"FROM {cte_name} AS {first_source.final_name}\n"
+            else:
+                # Inline subquery
+                sub_sql, _ = self.compile(first_source.base)
+                sub_sql = textwrap.indent(sub_sql, "    ")
+                sql += f"FROM (\n{sub_sql}\n) AS {first_source.final_name}\n"
         else:
             sql += f"FROM {first_source.final_name}\n"
 
@@ -339,10 +356,16 @@ class Compiler:
 
             # Check if source is a subquery
             if isinstance(source.base, QuerySet):
-                # Compile subquery for JOIN
-                sub_sql = self.compile(source.base)
-                sub_sql = textwrap.indent(sub_sql, "    ")
-                sql += f"{source.join_type} JOIN (\n{sub_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
+                # Check if this is a CTE reference
+                if id(source.base) in self.cte_map:
+                    # Reference the CTE by name
+                    cte_name = self.cte_map[id(source.base)]
+                    sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
+                else:
+                    # Inline subquery for JOIN
+                    sub_sql, _ = self.compile(source.base)
+                    sub_sql = textwrap.indent(sub_sql, "    ")
+                    sql += f"{source.join_type} JOIN (\n{sub_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
             else:
                 # Regular table JOIN
                 sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"

@@ -19,7 +19,7 @@ def join(
 
     Args:
         left_rel: Left side of the join (can be NsRelation, Relation, or Source)
-        right_rel: Right side of the join (usually NsRelation)
+        right_rel: Right side of the join (usually NsRelation or QuerySet)
         on: Tuple of (left_field, right_field) names
         join_type: Type of join (INNER, LEFT, RIGHT, FULL)
         alias: Optional alias for the right source
@@ -37,15 +37,19 @@ def join(
         left_sources = left_rel.sources
     elif isinstance(left_rel, Source):
         # Left is a Source wrapper
-        left_sources = [left_rel]
+        left_sources = (left_rel,)
     else:
         # Left is a leaf relation (NsRelation, QuerySet, etc.)
         # Wrap it in a Source
-        left_sources = [Source(base=left_rel)]
+        left_sources = (Source(base=left_rel),)
 
     # Create Source for the right side with join information
-    # If r_source is already a Source, use its base
-    base_relation = r_source.base if isinstance(r_source, Source) else r_source
+    # If right_rel is a QuerySet (including CTEs), use it directly as the base
+    if isinstance(right_rel, QuerySet):
+        base_relation = right_rel
+    else:
+        # Otherwise, extract the base from the resolved source
+        base_relation = r_source.base if isinstance(r_source, Source) else r_source
 
     right_source = Source(
         base=base_relation,
@@ -56,7 +60,7 @@ def join(
 
     # Combine and return new Relation
     return Relation(
-        sources=left_sources + [right_source],
+        sources=list(left_sources + (right_source,)),
         alias=left_rel.alias if isinstance(left_rel, Relation) else None
     )
     
@@ -103,7 +107,12 @@ class QuerySet(Relation):
         r_source, r_field = target.get_source_and_field(on[1])
 
         # Create Source for the right side with join information
-        base_relation = r_source.base if isinstance(r_source, Source) else r_source
+        # If target is a QuerySet (including CTEs), use it directly as the base
+        if isinstance(target, QuerySet):
+            base_relation = target
+        else:
+            # Otherwise, extract the base from the resolved source
+            base_relation = r_source.base if isinstance(r_source, Source) else r_source
 
         right_source = Source(
             base=base_relation,
@@ -113,17 +122,46 @@ class QuerySet(Relation):
         )
 
         # Add to sources
-        self.sources = self.sources + [right_source]
+        self.sources = self.sources + (right_source,)
         return self
     
     # projection
     def select(self, *fields: str):
-        """Select fields by name (e.g., 'posts.id', 'posts.title')"""
+        """
+        Select fields by name.
+
+        Examples:
+            query.select('posts.id', 'posts.title')  # Select specific fields
+            query.select('posts.*')  # Select all fields from posts
+            query.select('posts.*', 'comments.*')  # Select all from multiple sources
+        """
         if self.projection_fields is None:
             self.projection_fields = {}
+
         for f in fields:
-            self.get(f)
-            self.projection_fields[f] = {}
+            if f.endswith('.*'):
+                # Wildcard selection: select all fields from this source
+                source_name = f[:-2]  # Remove '.*'
+
+                # Find the source
+                target_source = None
+                for source in self.sources:
+                    if source.name == source_name or source.final_name == source_name:
+                        target_source = source
+                        break
+
+                if not target_source:
+                    raise ValueError(f"Source {source_name} not found")
+
+                # Add all fields from this source
+                for field in target_source.iter_fields():
+                    qualified_name = f"{target_source.final_name}.{field.name}"
+                    self.projection_fields[qualified_name] = {}
+            else:
+                # Regular field selection
+                self.get(f)  # Validate field exists
+                self.projection_fields[f] = {}
+
         return self
 
     def select_expr(self, expr: Expression, alias: str):
@@ -131,6 +169,29 @@ class QuerySet(Relation):
         if self.projection_fields is None:
             self.projection_fields = {}
         self.projection_fields[alias] = {"expr": expr}
+        return self
+
+    def select_subquery(self, subquery: "QuerySet", alias: str):
+        """
+        Select a subquery with an alias.
+
+        Use this to include subqueries (including CTEs) as fields.
+
+        Example:
+            # Create a CTE
+            filtered_comments = SelectQuerySet(comments_rel).where(...)
+
+            # Create subquery that selects from CTE
+            cte_subquery = SelectQuerySet(filtered_comments)
+            cte_subquery.select_scalar(JsonAgg(...))
+
+            # Use it in main query
+            main.with_cte(filtered_comments)
+            main.select_subquery(cte_subquery, alias="comments")
+        """
+        if self.projection_fields is None:
+            self.projection_fields = {}
+        self.projection_fields[alias] = {"subquery": subquery}
         return self
 
     def select_scalar(self, expr: Expression):
@@ -218,7 +279,20 @@ class QuerySet(Relation):
         self.projection_fields[alias] = {"subquery": target}
         return self
     
-    def with_cte(self, cte: "QuerySet"):
+    def with_cte(self, cte: "QuerySet", alias: str | None = None):
+        """
+        Add a CTE (Common Table Expression) to this query.
+
+        Args:
+            cte: The QuerySet to use as a CTE
+            alias: Optional custom name for the CTE. If not provided, uses cte.alias or generates a default name.
+
+        Example:
+            main.with_cte(filtered_posts, alias="my_posts")
+        """
+        if alias:
+            # Set the alias on the CTE
+            cte.alias = alias
         self.ctes.append(cte)
         return self
     

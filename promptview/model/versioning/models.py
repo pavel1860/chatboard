@@ -22,7 +22,6 @@ from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
     from ...block import Block
-    from ...evaluation.models import TestTurn
 
 # ContextVars for current branch/turn
 _curr_branch = contextvars.ContextVar("curr_branch", default=None)
@@ -407,9 +406,13 @@ class Artifact(Model):
         include_branch_turn: bool = False,
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
-        from ..postgres2.pg_query_set import PgSelectQuerySet
+        # from ..postgres2.pg_query_set import PgSelectQuerySet
         
-        query = PgSelectQuerySet(cls, alias=alias).select(*fields if fields else "*")
+        from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
+        query = select(cls)
+        
+        if fields:
+            query.select(*fields)
         
         if turn_cte is None and use_liniage:
             turn_cte = Turn.query(branch=branch, to_select=True, include_branch_turn=include_branch_turn)

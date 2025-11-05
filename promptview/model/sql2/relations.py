@@ -65,7 +65,7 @@ class RelField:
         from .expressions import IsNotNull
         return IsNotNull(self)
 
-    def in_(self, values: list):
+    def isin(self, values: list):
         from .expressions import In
         return In(self, values)
 
@@ -353,10 +353,12 @@ class Relation:
     Each source (except the first) contains join metadata.
     """
 
+    sources: tuple[Source, ...]  # Type annotation for the attribute
+
     def __init__(self, sources: list[Source], alias: str | None = None):
         if not sources:
             raise ValueError("Relation must have at least one source")
-        self.sources = sources
+        self.sources = tuple(sources)  # Store as tuple
         self.alias = alias
 
     @property
