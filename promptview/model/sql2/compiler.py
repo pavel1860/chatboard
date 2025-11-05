@@ -36,6 +36,10 @@ class Compiler:
     def compile_ctes(self, query: QuerySet):
         if not query.ctes:
             return ""
+
+        # Check if any CTE is recursive
+        has_recursive = query.recursive_cte
+
         ctes_sql = []
         for cte in query.ctes:
             # Use alias if provided, otherwise generate name from final_name
@@ -74,7 +78,10 @@ class Compiler:
 
             cte_sql = "\n" + textwrap.indent(cte_sql, "    ")
             ctes_sql.append(f"{cte_name} AS ({cte_sql})")
-        return "WITH " + ", ".join(ctes_sql) + "\n"
+
+        # Use WITH RECURSIVE if any CTE is recursive
+        with_keyword = "WITH RECURSIVE" if has_recursive else "WITH"
+        return with_keyword + " " + ", ".join(ctes_sql) + "\n"
             
             
             

@@ -30,7 +30,7 @@ class QuerySetSingleAdapter(Generic[T_co]):
 
     def __await__(self) -> Generator[Any, None, T_co]:
         async def await_query():
-            results = await self.queryset.execute(parse=self.parse)
+            results = await self.queryset.execute()
             if results:
                 return results[0]
             return None
@@ -74,6 +74,7 @@ class PgQueryBuilder(Generic[Ts]):
                 self._query = SelectQuerySet(source)
             else:
                 self.query.join(source, on=(source.primary_key, source.foreign_key))
+            self.query.select(f"{source.final_name}.*")
             
         return self
     
@@ -86,7 +87,40 @@ class PgQueryBuilder(Generic[Ts]):
         return self
     
     
-    def where(self, condition: Expression):
+    def where(self, condition: Expression | None = None, **kwargs):
+        """
+        Add WHERE conditions to the query.
+
+        Args:
+            condition: An Expression object (e.g., posts_rel.get("id") == 1)
+            **kwargs: Field=value pairs for equality conditions (e.g., id=1, status="published")
+
+        Usage:
+            .where(posts_rel.get("id") > 5)  # Expression
+            .where(id=1)                      # Keyword argument
+            .where(id=1, status="active")     # Multiple keyword arguments
+            .where(posts_rel.get("id") > 5, status="active")  # Both combined
+        """
+        from .expressions import Eq, And
+
+        if kwargs:
+            # Need to resolve field names to RelField objects
+            if not self.query.sources:
+                raise ValueError("Query has no sources to resolve fields from")
+
+            for field_name, value in kwargs.items():
+                # Get the RelField object from the query
+                field = self.query.get(field_name)
+
+                # Create equality expression with the RelField
+                if condition is None:
+                    condition = Eq(field, value)
+                else:
+                    condition = condition & Eq(field, value)
+
+        if condition is None:
+            raise ValueError("Condition is not set")
+
         self.query.where(condition)
         return self
     
@@ -113,28 +147,39 @@ class PgQueryBuilder(Generic[Ts]):
         self._return_json = True
         return self
 
-    def use_cte(self, cte: "PgQueryBuilder[Ts]", cte_name: str | None = None) -> "PgQueryBuilder[Ts]":
+    def use_cte(self, cte: "PgQueryBuilder[Ts]", cte_name: str | None = None, recursive: bool = False) -> "PgQueryBuilder[Ts]":
         """
         Add a CTE (Common Table Expression) to this query.
 
         Args:
             cte: The query builder to use as a CTE
-            alias: Optional custom name for the CTE
+            cte_name: Optional custom name for the CTE
+            recursive: If True, marks the CTE as recursive (for self-referencing CTEs)
 
         Usage:
-            # Create a CTE for popular posts
-            popular_posts = SelectQuerySet(posts_rel)
-            popular_posts.select("posts.id", "posts.title")
-            popular_posts.where(posts_rel.get("views") > 1000)
+            # Regular CTE
+            popular_posts = select(Post).where(views__gt=1000)
+            results = await select(Comment).use_cte(popular_posts, cte_name="popular")
 
-            # Use it in main query with custom name
-            results = await select(Post).use_cte(popular_posts, alias="popular")
+            # Recursive CTE (for hierarchies, graphs, etc.)
+            hierarchy = PgQueryBuilder().raw(sql="...", name="tree", namespace=Node.get_namespace())
+            results = await select(Node).use_cte(hierarchy, cte_name="tree", recursive=True)
         """
-        self.query.with_cte(cte.query, alias=cte_name)
+        self.query.with_cte(cte.query, alias=cte_name, recursive=recursive)
         return self
     
-    def join_cte(self, cte: "PgQueryBuilder[Model]", cte_name: str | None = None, on: tuple[str, str] | None = None, alias: str | None = None):
-        self.use_cte(cte, cte_name=cte_name)
+    def join_cte(self, cte: "PgQueryBuilder[Model]", cte_name: str | None = None, on: tuple[str, str] | None = None, alias: str | None = None, recursive: bool = False):
+        """
+        Add a CTE and immediately join it to this query.
+
+        Args:
+            cte: The query builder to use as a CTE
+            cte_name: Optional custom name for the CTE
+            on: Join condition as (left_field, right_field) tuple
+            alias: Optional alias for the joined CTE (different from cte_name)
+            recursive: If True, marks the CTE as recursive
+        """
+        self.use_cte(cte, cte_name=cte_name, recursive=recursive)
         self.join(cte, on=on, alias=alias)
         return self
     
@@ -146,6 +191,31 @@ class PgQueryBuilder(Generic[Ts]):
             on = (rel.primary_key, rel.foreign_key)
         self.query.join(target.query, on=on, alias=alias)
         return self
+    
+        
+    def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Model]"):
+        if isinstance(target, PgQueryBuilder):
+            rel = None
+            for source in target.query.sources:
+                ns = source.base.namespace
+                if ns is None:
+                    raise ValueError("Namespace is not set")
+                for source in self.query.sources:                    
+                    if source.base.namespace is None:
+                        continue
+                    return source.base.namespace.get_relation_for_namespace(ns)
+        else:
+            ns = target.get_namespace()
+            for source in self.query.sources: 
+                rel = source.base.namespace.get_relation_for_namespace(ns)
+                if rel is not None:
+                    return rel
+        return None
+
+    
+    def one(self) -> "QuerySetSingleAdapter[Ts]":
+        self.query.limit(1)
+        return QuerySetSingleAdapter[Ts](self)
             
     def first(self) -> "QuerySetSingleAdapter[Ts]":
         """
@@ -272,24 +342,6 @@ class PgQueryBuilder(Generic[Ts]):
         return self
     
         
-    def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Model]"):
-        if isinstance(target, PgQueryBuilder):
-            rel = None
-            for source in target.query.sources:
-                ns = source.base.namespace
-                if ns is None:
-                    raise ValueError("Namespace is not set")
-                for source in self.query.sources:                    
-                    if source.base.namespace is None:
-                        continue
-                    return source.base.namespace.get_relation_for_namespace(ns)
-        else:
-            ns = target.get_namespace()
-            for source in self.query.sources: 
-                rel = source.base.namespace.get_relation_for_namespace(ns)
-                if rel is not None:
-                    return rel
-        return None
     
     def _build_json_query(self, relation: "RelationProtocol", alias: str):
         query = SelectQuerySet(relation)
@@ -373,9 +425,15 @@ class PgQueryBuilder(Generic[Ts]):
             if not model_cls:
                 raise ValueError("Model class not set on namespace")
             return model_cls(**parsed)
+        
+        
+    async def json(self) -> list[dict[str, Any]]:
+        sql, params = self.render()
+        rows = await PGConnectionManager.fetch(sql, *params)
+        return [self.parse_row(row) for row in rows]
 
 
-    async def execute(self, parse: bool = True):
+    async def execute(self) -> list[Ts]:
         """
         Execute the query and return results.
 
@@ -385,8 +443,8 @@ class PgQueryBuilder(Generic[Ts]):
         sql, params = self.render()
         rows = await PGConnectionManager.fetch(sql, *params)
 
-        if parse:
-            return [self.parse_row(row) for row in rows]
+        
+        return [self.parse_row(row) for row in rows]
         return rows
         
 
@@ -394,5 +452,5 @@ class PgQueryBuilder(Generic[Ts]):
 
 
 
-def select(*targets: Type[Ts])->PgQueryBuilder[Ts]:
+def select(*targets: Type[Ts], fields: list[str] | str | None = "*")->PgQueryBuilder[Ts]:
     return PgQueryBuilder().select(*targets)

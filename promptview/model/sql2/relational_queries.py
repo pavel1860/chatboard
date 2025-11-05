@@ -279,7 +279,7 @@ class QuerySet(Relation):
         self.projection_fields[alias] = {"subquery": target}
         return self
     
-    def with_cte(self, cte: "QuerySet | RawRelation", alias: str | None = None):
+    def with_cte(self, cte: "QuerySet | RawRelation", alias: str | None = None, recursive: bool = False):
         """
         Add a CTE (Common Table Expression) to this query.
 
@@ -289,13 +289,21 @@ class QuerySet(Relation):
         Args:
             cte: The QuerySet or RawRelation to use as a CTE
             alias: Optional custom name for the CTE. If not provided, uses cte.alias or generates a default name.
+            recursive: If True, marks the CTE as recursive (for self-referencing CTEs)
 
         Example:
             main.with_cte(filtered_posts, alias="my_posts")
+            main.with_cte(hierarchy, alias="tree", recursive=True)
         """
         if alias:
             # Set the alias on the CTE
             cte.alias = alias
+
+        # Mark as recursive if specified
+        if recursive and isinstance(cte, QuerySet):
+            cte.recursive_cte = True
+            # If this CTE is recursive, mark the parent query as having recursive CTEs
+            self.recursive_cte = True
 
         # If the CTE is a QuerySet and has nested CTEs, merge them (flatten nested CTEs)
         # RawRelation doesn't have CTEs, so skip this check for them
@@ -304,6 +312,9 @@ class QuerySet(Relation):
                 # Avoid duplicates - only add if not already in our CTE list
                 if nested_cte not in self.ctes:
                     self.ctes.append(nested_cte)
+            # If any nested CTE is recursive, mark this query as recursive
+            if cte.recursive_cte:
+                self.recursive_cte = True
             # Clear the CTEs from the nested query since they're now at the top level
             cte.ctes = []
 

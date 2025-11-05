@@ -352,19 +352,13 @@ class Turn(Model):
         branch_id = Branch.resolve_target_id_or_none(branch)
         if branch_id is not None:
             branch_cte = Branch.recursive_query(branch_id)
-            # col = branch_cte.get("start_turn_index")
-            # start_turn_value = RawValue[int]("bh.start_turn_index - 1" if not include_branch_turn else "bh.start_turn_index")
-            # start_turn_value = Raw("bh.start_turn_index - 1" if not include_branch_turn else "bh.start_turn_index")
             query = (
                 query 
-                .where(Raw(f"t.index <= bh.start_turn_index{' - 1' if not include_branch_turn else ''}"))
-                .use_cte(branch_cte, "branch_hierarchy")
-                .join(branch_cte, on=("branch_id", "id"))
-                # .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))                                
-                # .where(lambda t: (t.index <= start_turn_value))
+                .where(Raw(f"turns.index <= bh.start_turn_index{' - 1' if not include_branch_turn else ''}"))
+                .join_cte(branch_cte, "branch_hierarchy", on=("branch_id", "id"), alias="bh", recursive=True)
             )
-        if to_select:
-            query = query.select(*fields if fields else "*")
+        # if to_select:
+            # query = query.select(*fields if fields else "*")
         return query
         # return cls.query_extra(query, **kwargs)
 
@@ -486,30 +480,21 @@ class Artifact(Model):
         if turn_cte is None and use_liniage:
             turn_cte = Turn.query(branch=branch, to_select=True, include_branch_turn=include_branch_turn)
             if statuses:
-                turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
+                # turn_cte = turn_cte.where(lambda t: t.status.isin(statuses))
+                turn_cte = turn_cte.where(Turn.status.isin(statuses))
             if limit:
                 turn_cte = turn_cte.limit(limit)
                 turn_cte = turn_cte.order_by(f"-index" if direction == "desc" else "index")
             if offset:
                 turn_cte = turn_cte.offset(offset) 
         if turn_cte is not None:
-            query.use_cte(
+            query.join_cte(
                 turn_cte,
                 "turn_liniage",
                 # alias="tl",
             )            
         return query
                        
-        # return (
-        #     PgSelectQuerySet(cls, alias=alias) \
-        #     .use_cte(
-        #         turn_cte,
-        #         name="turn_liniage",
-        #         alias="tl",
-        #     )
-        #     .select(*fields if fields else "*")
-        #     # .join(turn_cte, on=("turn_id", "id")).use_cte(turn_cte, name="committed_turns", alias="ct")
-        # )
         
 
 
