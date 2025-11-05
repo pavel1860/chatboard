@@ -127,6 +127,14 @@ class PgQueryBuilder(Generic[Ts]):
         """
         self.query.with_cte(cte.query, alias=alias)
         return self
+    
+    def join(self, target: "PgQueryBuilder[Ts]", on: tuple[str, str] | None = None):
+        if on is None:
+            rel = self._infer_relation(target)            
+            if rel is None:
+                raise ValueError(f"No relation found for {target}")
+            self.query.join(rel, on=(rel.primary_key, rel.foreign_key))
+            
 
 
     def first(self) -> "QuerySetSingleAdapter[Ts]":
@@ -252,13 +260,24 @@ class PgQueryBuilder(Generic[Ts]):
             )
             # self.query.join(json_query.sources[0], on=(rel.primary_key, rel.foreign_key), join_type="LEFT")
         return self
+    
         
-    def _infer_relation(self, target: "Type[Model]"):
-        ns = target.get_namespace()
-        for source in self.query.sources: 
-            rel = source.base.namespace.get_relation_for_namespace(ns)
-            if rel is not None:
-                return rel
+    def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Ts]"):
+        if isinstance(target, PgQueryBuilder):
+            ns = target.query.namespace
+            if ns is None:
+                raise ValueError("Namespace is not set")
+            for source in self.query.sources:
+                if isinstance(source.base, RawRelation):
+                    if source.base.namespace is None:
+                        continue
+                    return source.base.namespace.get_relation_for_namespace(ns)
+        else:
+            ns = target.get_namespace()
+            for source in self.query.sources: 
+                rel = source.base.namespace.get_relation_for_namespace(ns)
+                if rel is not None:
+                    return rel
         return None
     
     def _build_json_query(self, relation: "RelationProtocol", alias: str):

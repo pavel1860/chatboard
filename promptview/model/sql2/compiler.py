@@ -371,7 +371,12 @@ class Compiler:
                 sql += f"FROM (\n{raw_sql}\n) AS {first_source.final_name}\n"
         else:
             # Regular table
-            sql += f"FROM {first_source.final_name}\n"
+            if first_source.alias:
+                # Table with alias: "FROM table_name AS alias"
+                sql += f"FROM {first_source.name} AS {first_source.final_name}\n"
+            else:
+                # Table without alias
+                sql += f"FROM {first_source.final_name}\n"
 
         # Rest are JOINs
         for source in query.sources[1:]:
@@ -406,7 +411,12 @@ class Compiler:
                     sql += f"{source.join_type} JOIN (\n{raw_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
             else:
                 # Regular table JOIN
-                sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"
+                if source.alias:
+                    # Table with alias: "INNER JOIN table_name AS alias"
+                    sql += f"{source.join_type} JOIN {source.name} AS {source.final_name} ON {source.get_on_clause()}\n"
+                else:
+                    # Table without alias
+                    sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"
 
         # Add WHERE clause if present
         if query.where_clause:

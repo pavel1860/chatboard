@@ -336,7 +336,7 @@ class QuerySet(Relation):
                 else:
                     # Regular field - find it in the sources
                     for field in self.iter_fields(include_sources):
-                        qualified_name = f"{field.source.name}.{field.name}"
+                        qualified_name = f"{field.source.final_name}.{field.name}"
                         if field.name == proj_name or qualified_name == proj_name:
                             yield field
                             break

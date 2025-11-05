@@ -367,17 +367,20 @@ class Source:
 
     def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
         """Iterate over fields, wrapping them to reference this Source"""
-        # Check if base is a QuerySet (subquery)
+        # Check if base is a QuerySet (subquery/CTE)
         from .relational_queries import QuerySet
         is_subquery = isinstance(self.base, QuerySet)
 
         if is_subquery:
-            # For subqueries, yield a single field representing the subquery itself
-            yield RelField(
-                source=self.base,
-                name=self.final_name,
-                is_query=True
-            )
+            # For QuerySets (CTEs/subqueries), iterate over their projected fields
+            for field in self.base.iter_projection_fields(include_sources):
+                yield RelField(
+                    source=self,
+                    name=field.name,
+                    field_info=field.field_info,
+                    alias=field.alias,
+                    is_query=field.is_query
+                )
         else:
             # For regular relations, proxy to base fields
             for field in self.base.iter_fields(include_sources):
@@ -391,15 +394,22 @@ class Source:
 
     def get(self, field_name: str) -> RelField:
         """Get a field by name, wrapping it to reference this Source"""
-        # Check if base is a QuerySet (subquery)
+        # Check if base is a QuerySet (subquery/CTE)
         from .relational_queries import QuerySet
         is_subquery = isinstance(self.base, QuerySet)
 
         if is_subquery:
-            # For subqueries, the field_name should match the alias
-            if field_name == self.final_name:
-                return RelField(source=self.base, name=self.final_name, is_query=True)
-            raise ValueError(f"Field {field_name} not found. Subquery only exposes '{self.final_name}'")
+            # For QuerySets, find the field in projected fields
+            for field in self.base.iter_projection_fields():
+                if field.name == field_name:
+                    return RelField(
+                        source=self,
+                        name=field.name,
+                        field_info=field.field_info,
+                        alias=field.alias,
+                        is_query=field.is_query
+                    )
+            raise ValueError(f"Field {field_name} not found in QuerySet projection")
         else:
             # For regular relations, proxy to base
             field = self.base.get(field_name)
@@ -413,15 +423,22 @@ class Source:
 
     def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
         """Resolve field and return self as the source"""
-        # Check if base is a QuerySet (subquery)
+        # Check if base is a QuerySet (subquery/CTE)
         from .relational_queries import QuerySet
         is_subquery = isinstance(self.base, QuerySet)
 
         if is_subquery:
-            # For subqueries, return the subquery field
-            if field_name == self.final_name:
-                return self.base, RelField(source=self.base, name=self.final_name, is_query=True)
-            raise ValueError(f"Field {field_name} not found. Subquery only exposes '{self.final_name}'")
+            # For QuerySets, find the field in projected fields
+            for field in self.base.iter_projection_fields():
+                if field.name == field_name:
+                    return self, RelField(
+                        source=self,
+                        name=field.name,
+                        field_info=field.field_info,
+                        alias=field.alias,
+                        is_query=field.is_query
+                    )
+            raise ValueError(f"Field {field_name} not found in QuerySet projection")
         else:
             # For regular relations, proxy to base
             _, field = self.base.get_source_and_field(field_name)
