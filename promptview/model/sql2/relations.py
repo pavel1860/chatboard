@@ -224,8 +224,109 @@ class NsRelation:
     
     def print(self):
         return f"NS({self.name})"
-    
-    
+
+
+class RawRelation:
+    """
+    Raw SQL relation escape hatch.
+
+    Use this when you need to use raw SQL as a source, CTE, or subquery.
+    Useful for complex SQL that the query builder doesn't support yet.
+
+    Examples:
+        # With namespace (gets field metadata automatically)
+        complex_posts = RawRelation(
+            sql='''
+                SELECT * FROM posts
+                WHERE jsonb_array_length(tags) > 5
+            ''',
+            name="tagged_posts",
+            namespace=Post.get_namespace()
+        )
+
+        # Without namespace (explicit field list)
+        user_stats = RawRelation(
+            sql='''
+                SELECT user_id, COUNT(*) as post_count
+                FROM posts
+                WHERE created_at > NOW() - INTERVAL '30 days'
+                GROUP BY user_id
+            ''',
+            name="user_stats",
+            fields=["user_id", "post_count"]
+        )
+    """
+
+    def __init__(
+        self,
+        sql: str,
+        name: str,
+        namespace: BaseNamespace | None = None,
+        fields: list[str] | None = None,
+        alias: str | None = None
+    ):
+        """
+        Create a raw SQL relation.
+
+        Args:
+            sql: Raw SQL SELECT query (without wrapping parentheses)
+            name: Name for this relation (used in generated SQL)
+            namespace: Optional namespace to get field metadata from
+            fields: List of field names this query exposes (if no namespace provided)
+            alias: Optional alias for the relation
+        """
+        self.sql = sql
+        self._name = name
+        self.namespace = namespace
+        self.field_names = fields or []
+        self.alias = alias
+
+    @property
+    def sources(self) -> tuple[RelationProtocol, ...]:
+        return (self,)
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def final_name(self) -> str:
+        return self.alias or self._name
+
+    def get(self, field_name: str) -> RelField:
+        """Get a field by name."""
+        # If we have a namespace, get field info from it
+        if self.namespace:
+            field_info = self.namespace.get_field(field_name)
+            return RelField(self, field_info.name, field_info)
+        else:
+            # No namespace, use explicit field list or allow any field
+            if self.field_names and field_name not in self.field_names:
+                raise ValueError(f"Field {field_name} not in declared fields: {self.field_names}")
+            return RelField(self, field_name, field_info=None)
+
+    def iter_fields(self, include_sources: set[str] | None = None) -> Iterator[RelField]:
+        """Iterate over fields."""
+        if include_sources is not None and self._name not in include_sources:
+            return
+
+        # If we have a namespace, iterate its fields
+        if self.namespace:
+            for field_info in self.namespace.iter_fields():
+                yield RelField(self, field_info.name, field_info)
+        elif self.field_names:
+            # Use explicit field list
+            for field_name in self.field_names:
+                yield RelField(self, field_name, field_info=None)
+        # If neither namespace nor fields, can't iterate (must use * or explicit get)
+
+    def get_source_and_field(self, field_name: str) -> tuple[RelationProtocol, RelField]:
+        return self, self.get(field_name)
+
+    def print(self):
+        return f"RAW({self.name})"
+
+
 class Source:
     """
     Wraps a relation (table/subquery) with optional join metadata.

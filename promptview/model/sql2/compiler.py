@@ -1,8 +1,8 @@
 from .relational_queries import QuerySet, SelectQuerySet, Relation
-from .relations import Source, RelField
+from .relations import Source, RelField, RawRelation
 from .expressions import (
     Expression, BinaryExpression, And, Or, Not, IsNull, IsNotNull,
-    In, NotIn, Between, Like, ILike, Value, JsonBuildObject, JsonAgg, JsonbAgg,
+    In, NotIn, Between, Like, ILike, Value, Raw, JsonBuildObject, JsonAgg, JsonbAgg,
     Count, Sum, Avg, Min, Max, AggregateFunction, Coalesce,
     LtreeNlevel, LtreeSubpath, LtreeLca
 )
@@ -47,7 +47,14 @@ class Compiler:
             # Register this CTE so we can reference it later
             self.cte_map[id(cte)] = cte_name
 
-            cte_sql, _ = self.compile(cte)  # Unpack tuple (sql, params)
+            # Compile the CTE based on its type
+            if isinstance(cte, RawRelation):
+                # Raw SQL CTE - use the SQL directly
+                cte_sql = cte.sql.strip()
+            else:
+                # QuerySet CTE - compile it
+                cte_sql, _ = self.compile(cte)  # Unpack tuple (sql, params)
+
             cte_sql = "\n" + textwrap.indent(cte_sql, "    ")
             ctes_sql.append(f"{cte_name} AS ({cte_sql})")
         return "WITH " + ", ".join(ctes_sql) + "\n"
@@ -59,6 +66,14 @@ class Compiler:
         if isinstance(expr, RelField):
             # Field reference
             return f"{expr.source.final_name}.{expr.name}"
+
+        elif isinstance(expr, Raw):
+            # Raw SQL escape hatch
+            # Compile any parameters that were passed
+            for param in expr.params:
+                self.compile_expr(param)
+            # Return the raw SQL string as-is
+            return expr.sql
 
         elif isinstance(expr, Value):
             # Literal value or parameter
@@ -331,7 +346,7 @@ class Compiler:
         # First source is the FROM clause (should have no join_on)
         first_source = query.sources[0]
 
-        # Check if first source is a subquery
+        # Check if first source is a QuerySet (subquery)
         if isinstance(first_source.base, QuerySet):
             # Check if this is a CTE reference
             if id(first_source.base) in self.cte_map:
@@ -343,7 +358,19 @@ class Compiler:
                 sub_sql, _ = self.compile(first_source.base)
                 sub_sql = textwrap.indent(sub_sql, "    ")
                 sql += f"FROM (\n{sub_sql}\n) AS {first_source.final_name}\n"
+        # Check if first source is a RawRelation
+        elif isinstance(first_source.base, RawRelation):
+            # Check if this RawRelation is a registered CTE
+            if id(first_source.base) in self.cte_map:
+                # Reference the CTE by name
+                cte_name = self.cte_map[id(first_source.base)]
+                sql += f"FROM {cte_name} AS {first_source.final_name}\n"
+            else:
+                # Inline raw SQL in parentheses
+                raw_sql = textwrap.indent(first_source.base.sql.strip(), "    ")
+                sql += f"FROM (\n{raw_sql}\n) AS {first_source.final_name}\n"
         else:
+            # Regular table
             sql += f"FROM {first_source.final_name}\n"
 
         # Rest are JOINs
@@ -354,7 +381,7 @@ class Compiler:
             if source.join_on is None:
                 raise ValueError(f"Source {source.name} is missing join information")
 
-            # Check if source is a subquery
+            # Check if source is a QuerySet (subquery)
             if isinstance(source.base, QuerySet):
                 # Check if this is a CTE reference
                 if id(source.base) in self.cte_map:
@@ -366,6 +393,17 @@ class Compiler:
                     sub_sql, _ = self.compile(source.base)
                     sub_sql = textwrap.indent(sub_sql, "    ")
                     sql += f"{source.join_type} JOIN (\n{sub_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
+            # Check if source is a RawRelation
+            elif isinstance(source.base, RawRelation):
+                # Check if this RawRelation is a registered CTE
+                if id(source.base) in self.cte_map:
+                    # Reference the CTE by name
+                    cte_name = self.cte_map[id(source.base)]
+                    sql += f"{source.join_type} JOIN {cte_name} AS {source.final_name} ON {source.get_on_clause()}\n"
+                else:
+                    # Inline raw SQL in parentheses
+                    raw_sql = textwrap.indent(source.base.sql.strip(), "    ")
+                    sql += f"{source.join_type} JOIN (\n{raw_sql}\n) AS {source.final_name} ON {source.get_on_clause()}\n"
             else:
                 # Regular table JOIN
                 sql += f"{source.join_type} JOIN {source.final_name} ON {source.get_on_clause()}\n"

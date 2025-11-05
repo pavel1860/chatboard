@@ -1,4 +1,4 @@
-from .relations import RelationProtocol, Relation, RelField, TypeRelationInput, Source, NsRelation
+from .relations import RelationProtocol, Relation, RelField, TypeRelationInput, Source, NsRelation, RawRelation
 from .expressions import Expression, WhereClause
 from typing import Iterator
 
@@ -279,7 +279,7 @@ class QuerySet(Relation):
         self.projection_fields[alias] = {"subquery": target}
         return self
     
-    def with_cte(self, cte: "QuerySet", alias: str | None = None):
+    def with_cte(self, cte: "QuerySet | RawRelation", alias: str | None = None):
         """
         Add a CTE (Common Table Expression) to this query.
 
@@ -287,7 +287,7 @@ class QuerySet(Relation):
         since SQL doesn't support nested WITH clauses.
 
         Args:
-            cte: The QuerySet to use as a CTE
+            cte: The QuerySet or RawRelation to use as a CTE
             alias: Optional custom name for the CTE. If not provided, uses cte.alias or generates a default name.
 
         Example:
@@ -297,8 +297,9 @@ class QuerySet(Relation):
             # Set the alias on the CTE
             cte.alias = alias
 
-        # If the CTE itself has CTEs, merge them into this query first (flatten nested CTEs)
-        if cte.ctes:
+        # If the CTE is a QuerySet and has nested CTEs, merge them (flatten nested CTEs)
+        # RawRelation doesn't have CTEs, so skip this check for them
+        if isinstance(cte, QuerySet) and cte.ctes:
             for nested_cte in cte.ctes:
                 # Avoid duplicates - only add if not already in our CTE list
                 if nested_cte not in self.ctes:

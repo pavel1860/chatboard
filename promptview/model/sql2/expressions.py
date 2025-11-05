@@ -43,6 +43,36 @@ class Expression:
         return Lte(self, other)
 
 
+class Raw(Expression):
+    """
+    Raw SQL expression escape hatch.
+
+    Use this when you need PostgreSQL features not yet supported by the query builder.
+    Be careful with SQL injection - use parameterized values when including user input.
+
+    Examples:
+        # Simple raw expression
+        Raw("array_agg(DISTINCT tags ORDER BY tags)")
+
+        # With parameters (safe from SQL injection)
+        Raw("created_at > NOW() - INTERVAL '7 days'")
+        Raw("metadata @> $1", Value({"status": "active"}))
+
+        # Complex PostgreSQL functions
+        Raw("to_tsvector('english', title || ' ' || content) @@ to_tsquery($1)", Value("search"))
+    """
+    def __init__(self, sql: str, *params):
+        """
+        Create a raw SQL expression.
+
+        Args:
+            sql: Raw SQL string (can include $1, $2, etc. for parameters)
+            *params: Expression objects (typically Value(...)) to be used as parameters
+        """
+        self.sql = sql
+        self.params = params
+
+
 class Value(Expression):
     """Represents a literal value or parameter"""
 

@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, Any, Generator, Generic, Type, TypeVar
-from .relations import RelationProtocol, Source, NsRelation, RelField, Relation
+from .relations import RawRelation, RelationProtocol, Source, NsRelation, RelField, Relation
 from .relational_queries import join, SelectQuerySet, QuerySet, Relation, NsRelation, Expression
 from .expressions import Coalesce, JsonBuildObject, JsonAgg, Value
 from .compiler import Compiler
@@ -70,6 +70,14 @@ class PgQueryBuilder(Generic[Ts]):
             else:
                 self.query.join(source, on=(source.primary_key, source.foreign_key))
             
+        return self
+    
+    
+    def raw(self, sql: str, name: str, namespace: "BaseNamespace"):
+        if not self._query is None:
+            raise ValueError("Query is already set")
+        raw_rel = RawRelation(sql, name, namespace)
+        self._query = SelectQuerySet(raw_rel)
         return self
     
     

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, AsyncGenerator, Callable, List, Literal, Type,
 from pydantic import BaseModel, Field
 
 from promptview.model.base.types import ArtifactKind
+from promptview.model.sql2.expressions import Raw
+from promptview.model.sql2.relations import RawRelation
 from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
 
 
@@ -22,6 +24,7 @@ from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
     from ...block import Block
+    from promptview.model.sql2.relational_queries import SelectQuerySet
 
 # ContextVars for current branch/turn
 _curr_branch = contextvars.ContextVar("curr_branch", default=None)
@@ -152,37 +155,94 @@ class Branch(Model):
         
 
     
-    @classmethod
-    def recursive_query(cls, branch_id: int) -> PgSelectQuerySet["Branch"]:
-        sql = f"""
-            SELECT
-                id,
-                name,
-                forked_from_index,
-                forked_from_branch_id,
-                current_index AS start_turn_index
-            FROM branches
-            WHERE id = {branch_id}
+    # @classmethod
+    # def recursive_query(cls, branch_id: int) -> PgSelectQuerySet["Branch"]:
+    #     sql = f"""
+    #         SELECT
+    #             id,
+    #             name,
+    #             forked_from_index,
+    #             forked_from_branch_id,
+    #             current_index AS start_turn_index
+    #         FROM branches
+    #         WHERE id = {branch_id}
 
-            UNION ALL
+    #         UNION ALL
 
-            SELECT
-                b.id,
-                b.name,
-                b.forked_from_index,
-                b.forked_from_branch_id,
-                bh.forked_from_index AS start_turn_index
-            FROM branches b
-            JOIN branch_hierarchy bh ON b.id = bh.forked_from_branch_id
-        """
-        return PgSelectQuerySet(Branch, alias="branch_hierarchy", recursive=True).raw_sql(sql, [
-            "id", 
-            "name", 
-            "forked_from_index", 
-            "forked_from_branch_id", 
-            ("current_index", "start_turn_index")
-        ])
+    #         SELECT
+    #             b.id,
+    #             b.name,
+    #             b.forked_from_index,
+    #             b.forked_from_branch_id,
+    #             bh.forked_from_index AS start_turn_index
+    #         FROM branches b
+    #         JOIN branch_hierarchy bh ON b.id = bh.forked_from_branch_id
+    #     """
+    #     return PgSelectQuerySet(Branch, alias="branch_hierarchy", recursive=True).raw_sql(sql, [
+    #         "id", 
+    #         "name", 
+    #         "forked_from_index", 
+    #         "forked_from_branch_id", 
+    #         ("current_index", "start_turn_index")
+    #     ])
         # return RowsetNode("branch_hierarchy", RawSQL(sql), model=Branch, key="id", recursive=True)
+
+    @classmethod
+    def recursive_query(cls, branch_id: int) -> "SelectQuerySet":
+        from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
+        from promptview.model.sql2.relational_queries import SelectQuerySet
+        
+        return PgQueryBuilder().raw(
+            sql=f"""
+                SELECT
+                    id,
+                    name,
+                    forked_from_index,
+                    forked_from_branch_id,
+                    current_index AS start_turn_index
+                FROM branches
+                WHERE id = {branch_id}
+
+                UNION ALL
+
+                SELECT
+                    b.id,
+                    b.name,
+                    b.forked_from_index,
+                    b.forked_from_branch_id,
+                    bh.forked_from_index AS start_turn_index
+                FROM branches b
+                JOIN branch_hierarchy bh ON b.id = bh.forked_from_branch_id
+            """,
+            name="branch_hierarchy",
+            namespace=cls.get_namespace()            
+        )
+        # rel = RawRelation(
+        #     sql=f"""
+        #         SELECT
+        #             id,
+        #             name,
+        #             forked_from_index,
+        #             forked_from_branch_id,
+        #             current_index AS start_turn_index
+        #         FROM branches
+        #         WHERE id = {branch_id}
+
+        #         UNION ALL
+
+        #         SELECT
+        #             b.id,
+        #             b.name,
+        #             b.forked_from_index,
+        #             b.forked_from_branch_id,
+        #             bh.forked_from_index AS start_turn_index
+        #         FROM branches b
+        #         JOIN branch_hierarchy bh ON b.id = bh.forked_from_branch_id
+        #     """,
+        #     name="branch_hierarchy",
+        #     namespace=cls.get_namespace()
+        # )
+        # return SelectQuerySet(rel)
 
     
 
@@ -292,12 +352,16 @@ class Turn(Model):
         branch_id = Branch.resolve_target_id_or_none(branch)
         if branch_id is not None:
             branch_cte = Branch.recursive_query(branch_id)
-            col = branch_cte.get_field("start_turn_index")
-            start_turn_value = RawValue[int]("bh.start_turn_index - 1" if not include_branch_turn else "bh.start_turn_index")
+            # col = branch_cte.get("start_turn_index")
+            # start_turn_value = RawValue[int]("bh.start_turn_index - 1" if not include_branch_turn else "bh.start_turn_index")
+            # start_turn_value = Raw("bh.start_turn_index - 1" if not include_branch_turn else "bh.start_turn_index")
             query = (
                 query 
-                .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))                
-                .where(lambda t: (t.index <= start_turn_value))
+                .where(Raw(f"t.index <= bh.start_turn_index{' - 1' if not include_branch_turn else ''}"))
+                .use_cte(branch_cte, "branch_hierarchy")
+                .join(branch_cte, on=("branch_id", "id"))
+                # .use_cte(branch_cte, name="branch_hierarchy", alias="bh", on=("branch_id", "id"))                                
+                # .where(lambda t: (t.index <= start_turn_value))
             )
         if to_select:
             query = query.select(*fields if fields else "*")
