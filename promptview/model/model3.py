@@ -208,7 +208,7 @@ class Model(BaseModel, metaclass=ModelMeta):
         if not relation:
             raise ValueError(f"Relation model not found for type: {field}")
         if relation.is_one_to_one:
-            result = await relation.foreign_cls.query().where(**{relation.foreign_key: getattr(self, relation.primary_key)}).print().one()
+            result = await relation.foreign_cls.query().where(**{relation.foreign_key: getattr(self, relation.primary_key)}).one()
         # elif relation.is_many_to_many:
         #     result = await relation.foreign_cls.query().where(**{relation.foreign_key: self.primary_id})
         else:

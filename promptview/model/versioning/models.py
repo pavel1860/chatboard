@@ -25,6 +25,7 @@ from ...utils.db_connections import PGConnectionManager
 if TYPE_CHECKING:
     from ...block import Block
     from promptview.model.sql2.relational_queries import SelectQuerySet
+    from promptview.model.sql2.pg_query_builder import PgQueryBuilder
 
 # ContextVars for current branch/turn
 _curr_branch = contextvars.ContextVar("curr_branch", default=None)
@@ -340,7 +341,7 @@ class Turn(Model):
         to_select: bool = True,
         include_branch_turn: bool = False,
         **kwargs
-    ) -> "PgSelectQuerySet[Self]":
+    ) -> "PgQueryBuilder[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
         from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
         query = select(cls)           
@@ -468,7 +469,7 @@ class Artifact(Model):
         direction: Literal["asc", "desc"] = "desc",
         include_branch_turn: bool = False,
         **kwargs
-    ) -> "PgSelectQuerySet[Self]":
+    ) -> "PgQueryBuilder[Self]":
         # from ..postgres2.pg_query_set import PgSelectQuerySet
         
         from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
@@ -610,8 +611,9 @@ class VersionedModel(Model):
         direction: Literal["asc", "desc"] = "desc",
         include_branch_turn: bool = False,
         **kwargs
-    ) -> "PgSelectQuerySet[Self]":
+    ) -> "PgQueryBuilder[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
+        from ..sql2.pg_query_builder import select
         
         # if turn_cte is None:
         #     turn_cte = Turn.query(branch=branch, to_select=True)
@@ -633,15 +635,18 @@ class VersionedModel(Model):
             turn_cte=turn_cte,
             include_branch_turn=include_branch_turn
         )
-        return (
-            PgSelectQuerySet(cls, alias=alias) \
-            .use_cte(
-                art_cte,
-                name="artifact_cte",
-                alias="ac",
-            )
-            .select(*fields if fields else "*")
-        )
+        return select(cls).join_cte(art_cte, "artifact_cte", alias="ac")
+        
+        
+        # return (
+        #     PgSelectQuerySet(cls, alias=alias) \
+        #     .use_cte(
+        #         art_cte,
+        #         name="artifact_cte",
+        #         alias="ac",
+        #     )
+        #     .select(*fields if fields else "*")
+        # )
         
         
     
@@ -739,7 +744,7 @@ class BlockNode(Model):
         ], alias="bn") \
         .use_cte(cte,"tree_cte", alias="btc") \
         .join(BlockModel.query(["content", "json_content"], alias="bsm"), on=("block_id", "id")) \
-        .where(lambda b: (b.tree_id == RawValue("btc.id"))).print().json()
+        .where(lambda b: (b.tree_id == RawValue("btc.id"))).json()
         return pack_block(records)
      
         

@@ -463,7 +463,7 @@ class SpanTree:
         # Load all models in batches by model_name
         for k in model_ids:
             if k == "list":
-                models = await Artifact.query(branch=branch_id, include_branch_turn=True).where(lambda a: a.id.isin(model_ids[k]))
+                models = await Artifact.query(branch=branch_id, include_branch_turn=True).where(Artifact.id.isin(model_ids[k]))
                 value_dict["list"] = {m.id: m for m in models}
             elif k == "block_trees":
                 models = await get_blocks(model_ids[k], dump_models=False, include_branch_turn=True)
@@ -472,7 +472,7 @@ class SpanTree:
                 value_dict[k] = {s.artifact_id: s for s in spans}
             else:
                 ns = NamespaceManager.get_namespace(k)
-                models = await ns._model_cls.query(branch=branch_id, include_branch_turn=True).where(lambda m: m.artifact_id.isin(model_ids[k]))
+                models = await ns._model_cls.query(branch=branch_id, include_branch_turn=True).where(ns._model_cls.artifact_id.isin(model_ids[k]))
                 value_dict[k] = {m.artifact_id: m for m in models}
 
         return value_dict
@@ -492,7 +492,7 @@ class SpanTree:
         
         spans_query = (
             ExecutionSpan.query(
-                turn_cte = Turn.query(branch=branch_id).where(lambda t: t.id.isin([turn_id])),                
+                turn_cte = Turn.query(branch=branch_id).where(Turn.id.isin([turn_id])),                
             )
             .include(Artifact)             
             .order_by("artifact_id")
@@ -500,10 +500,10 @@ class SpanTree:
         if span_id is not None:
             target_span = await ExecutionSpan.query(branch=branch_id).where(id=span_id).one()
             spans_query = (
-                spans_query.where(lambda s: s.artifact_id <= target_span.artifact_id)
+                spans_query.where(Turn.artifact_id <= target_span.artifact_id)
                 .include(
                     DataFlowNode.query()
-                    .where(lambda v: v.artifact_id <= target_span.artifact_id)
+                    .where(DataFlowNode.artifact_id <= target_span.artifact_id)
                     .include(Artifact)
                 )
             )

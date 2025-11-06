@@ -20,6 +20,13 @@ def json_agg(query: "SelectQuerySet", alias: str):
     query.select_scalar(j_agg)
     return query
 
+
+def json_object(query: "SelectQuerySet", alias: str):
+    """Return a single JSON object (for one-to-one relations)."""
+    json_obj = JsonBuildObject({field.name: field for field in query.iter_fields()})
+    query.select_scalar(json_obj)
+    return query
+
 T_co = TypeVar("T_co", covariant=True)
 
 
@@ -319,17 +326,49 @@ class PgQueryBuilder(Generic[Ts]):
 
         target_rel = NsRelation(rel.foreign_namespace)
         if rel.is_many_to_many:
-            raise NotImplementedError("Many-to-many relations are not supported yet")
-            # select(rel.relation_model)
-            # target_query.where(target_rel.get(rel.primary_key) == target_rel.get(rel.foreign_key))
-            # json_query = json_agg(target_query, rel.name)
+            # Many-to-many: Need to join through junction table
+            # Example: Post.tags -> Post -> PostTag -> Tag
+
+            # Get the junction table relation
+            junction_rel = NsRelation(rel.relation_model.get_namespace())
+
+            # Create subquery that joins target with junction
+            target_query = SelectQuerySet(target_rel)
+
+            # Join junction table to target table
+            # junction_keys[0] = primary_id (e.g., post_id)
+            # junction_keys[1] = foreign_id (e.g., tag_id)
+            target_query.join(
+                junction_rel,
+                on=(rel.foreign_key, rel.junction_keys[1]),  # Tag.id = PostTag.tag_id
+                join_type="INNER"
+            )
+
+            # Correlate with primary table
+            # Where junction.primary_id = primary_table.primary_key
+            # Example: WHERE PostTag.post_id = Post.id
+            primary_source = self.query.sources[0]
+            target_query.where(
+                junction_rel.get(rel.junction_keys[0]) == primary_source.get(rel.primary_key)
+            )
+
+            # Aggregate into JSON
+            json_query = json_agg(target_query, rel.name)
             self.query.select_expr(
                 Coalesce(json_query, Value("'[]'", inline=True)),
                 alias=rel.name
             )
 
         elif rel.is_one_to_one:
-            raise NotImplementedError("One-to-one relations are not supported yet")
+            # One-to-one: Similar to one-to-many but returns single object, not array
+            target_query = SelectQuerySet(target_rel)
+            target_query.where(target_rel.get(rel.foreign_key) == self.query.get(rel.primary_key))
+            target_query.limit(1)  # Ensure single result
+            json_query = json_object(target_query, rel.name)
+            self.query.select_expr(
+                Coalesce(json_query, Value("'null'", inline=True)),  # null, not []
+                alias=rel.name
+            )
         else:
             target_query = SelectQuerySet(target_rel)
             target_query.where(target_rel.get(rel.primary_key) == target_rel.get(rel.foreign_key))
