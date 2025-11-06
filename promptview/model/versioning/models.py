@@ -987,6 +987,7 @@ class ExecutionSpan(VersionedModel):
     depth: int = ModelField(default=0)  # Nesting level
     metadata: dict[str, Any] = ModelField(default={})
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
+    turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
     
     # Relations
     values: List["DataFlowNode"] = RelationField([], foreign_key="span_id")

@@ -15,7 +15,23 @@ Ts = TypeVar("Ts", bound="Model")
 
 
 def json_agg(query: "SelectQuerySet", alias: str):
-    json_obj = JsonBuildObject({field.name: field for field in query.iter_fields()})
+    from .expressions import Expression
+
+    # If query has projection fields (e.g., from nested includes), use those
+    # Otherwise use base table fields
+    if query.projection_fields is not None:
+        fields = {}
+        for field in query.iter_projection_fields():
+            # If the field's source is an Expression (e.g., from nested include),
+            # use the expression directly. Otherwise use the field.
+            if isinstance(field.source, Expression):
+                fields[field.name] = field.source
+            else:
+                fields[field.name] = field
+    else:
+        fields = {field.name: field for field in query.iter_fields()}
+
+    json_obj = JsonBuildObject(fields)
     j_agg = JsonAgg(json_obj)
     query.select_scalar(j_agg)
     return query
@@ -23,7 +39,23 @@ def json_agg(query: "SelectQuerySet", alias: str):
 
 def json_object(query: "SelectQuerySet", alias: str):
     """Return a single JSON object (for one-to-one relations)."""
-    json_obj = JsonBuildObject({field.name: field for field in query.iter_fields()})
+    from .expressions import Expression
+
+    # If query has projection fields (e.g., from nested includes), use those
+    # Otherwise use base table fields
+    if query.projection_fields is not None:
+        fields = {}
+        for field in query.iter_projection_fields():
+            # If the field's source is an Expression (e.g., from nested include),
+            # use the expression directly. Otherwise use the field.
+            if isinstance(field.source, Expression):
+                fields[field.name] = field.source
+            else:
+                fields[field.name] = field
+    else:
+        fields = {field.name: field for field in query.iter_fields()}
+
+    json_obj = JsonBuildObject(fields)
     query.select_scalar(json_obj)
     return query
 
@@ -192,32 +224,38 @@ class PgQueryBuilder(Generic[Ts]):
     
     def join(self, target: "PgQueryBuilder[Model]", on: tuple[str, str] | None = None, alias: str | None = None):
         if on is None:
-            rel = self._infer_relation(target)            
+            rel, source = self._infer_relation(target)
             if rel is None:
-                raise ValueError(f"No relation found for {target}")            
+                raise ValueError(f"No relation found for {target}")
             on = (rel.primary_key, rel.foreign_key)
         self.query.join(target.query, on=on, alias=alias)
         return self
     
         
     def _infer_relation(self, target: "Type[Model] | PgQueryBuilder[Model]"):
+        """
+        Infer the relation to the target model from the query sources.
+        Returns a tuple of (relation, source) where source is the Source object that has the relation.
+        """
         if isinstance(target, PgQueryBuilder):
             rel = None
             for source in target.query.sources:
                 ns = source.base.namespace
                 if ns is None:
                     raise ValueError("Namespace is not set")
-                for source in self.query.sources:                    
-                    if source.base.namespace is None:
+                for src in self.query.sources:
+                    if src.base.namespace is None:
                         continue
-                    return source.base.namespace.get_relation_for_namespace(ns)
+                    rel = src.base.namespace.get_relation_for_namespace(ns)
+                    if rel is not None:
+                        return (rel, src)
         else:
             ns = target.get_namespace()
-            for source in self.query.sources: 
+            for source in self.query.sources:
                 rel = source.base.namespace.get_relation_for_namespace(ns)
                 if rel is not None:
-                    return rel
-        return None
+                    return (rel, source)
+        return (None, None)
 
     
     def one(self) -> "QuerySetSingleAdapter[Ts]":
@@ -309,8 +347,16 @@ class PgQueryBuilder(Generic[Ts]):
         return self
     
     
-    def include(self, target: "Type[Model]") -> "PgQueryBuilder[Ts]":
-        rel = self._infer_relation(target)
+    def include(self, target: "Type[Model] | PgQueryBuilder") -> "PgQueryBuilder[Ts]":
+        # Check if target is already a query builder with nested includes
+        if isinstance(target, PgQueryBuilder):
+            # Extract model type from the query builder's first source
+            target_query_builder = target
+            # We'll use the existing query instead of creating a fresh one
+        else:
+            target_query_builder = None
+
+        rel, relation_source = self._infer_relation(target)
         if rel is None:
             raise ValueError(f"No relation found for {target}")
 
@@ -333,7 +379,11 @@ class PgQueryBuilder(Generic[Ts]):
             junction_rel = NsRelation(rel.relation_model.get_namespace())
 
             # Create subquery that joins target with junction
-            target_query = SelectQuerySet(target_rel)
+            # Use existing query if provided (for nested includes)
+            if target_query_builder:
+                target_query = target_query_builder.query
+            else:
+                target_query = SelectQuerySet(target_rel)
 
             # Join junction table to target table
             # junction_keys[0] = primary_id (e.g., post_id)
@@ -344,12 +394,11 @@ class PgQueryBuilder(Generic[Ts]):
                 join_type="INNER"
             )
 
-            # Correlate with primary table
-            # Where junction.primary_id = primary_table.primary_key
+            # Correlate with the source that has the relation
+            # Where junction.primary_id = relation_source.primary_key
             # Example: WHERE PostTag.post_id = Post.id
-            primary_source = self.query.sources[0]
             target_query.where(
-                junction_rel.get(rel.junction_keys[0]) == primary_source.get(rel.primary_key)
+                junction_rel.get(rel.junction_keys[0]) == relation_source.get(rel.primary_key)
             )
 
             # Aggregate into JSON
@@ -361,8 +410,14 @@ class PgQueryBuilder(Generic[Ts]):
 
         elif rel.is_one_to_one:
             # One-to-one: Similar to one-to-many but returns single object, not array
-            target_query = SelectQuerySet(target_rel)
-            target_query.where(target_rel.get(rel.foreign_key) == self.query.get(rel.primary_key))
+            # Use existing query if provided (for nested includes)
+            if target_query_builder:
+                target_query = target_query_builder.query
+            else:
+                target_query = SelectQuerySet(target_rel)
+
+            # Correlate with the source that has the relation
+            target_query.where(target_rel.get(rel.foreign_key) == relation_source.get(rel.primary_key))
             target_query.limit(1)  # Ensure single result
             json_query = json_object(target_query, rel.name)
             self.query.select_expr(
@@ -370,14 +425,21 @@ class PgQueryBuilder(Generic[Ts]):
                 alias=rel.name
             )
         else:
-            target_query = SelectQuerySet(target_rel)
-            target_query.where(target_rel.get(rel.primary_key) == target_rel.get(rel.foreign_key))
+            # One-to-many: Default case for regular relations
+            # Use existing query if provided (for nested includes)
+            if target_query_builder:
+                target_query = target_query_builder.query
+            else:
+                target_query = SelectQuerySet(target_rel)
+
+            # Correlate with the source that has the relation
+            # Where target.foreign_key = relation_source.primary_key
+            target_query.where(target_rel.get(rel.foreign_key) == relation_source.get(rel.primary_key))
             json_query = json_agg(target_query, rel.name)
             self.query.select_expr(
                 Coalesce(json_query, Value("'[]'", inline=True)),
                 alias=rel.name
             )
-            # self.query.join(json_query.sources[0], on=(rel.primary_key, rel.foreign_key), join_type="LEFT")
         return self
     
         
