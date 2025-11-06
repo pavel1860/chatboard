@@ -8,7 +8,7 @@ from promptview.model.base.types import VersioningStrategy
 
 from .base_field_info import BaseFieldInfo
 from ..relation_info import RelationInfo
-
+from ..db_types import ContainerType
 if TYPE_CHECKING:
     from ..model3 import Model
     from ..field_parser import FieldParser
@@ -125,7 +125,8 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         is_one_to_one: bool = False,
         relation_model: Optional[Type[MODEL]] = None,
         junction_keys: Optional[list[str]] = None,
-        is_reverse: bool = False
+        is_reverse: bool = False,
+        container_type: Optional[ContainerType] = None
     ) -> RelationInfo:
         if not self._model_cls:
             raise ValueError("Model class must be set before adding a relation")
@@ -142,7 +143,8 @@ class BaseNamespace(Generic[MODEL, FIELD]):
             is_one_to_one=is_one_to_one,
             relation_model=relation_model,
             junction_keys=junction_keys,
-            is_reverse=is_reverse
+            is_reverse=is_reverse,
+            container_type=container_type
         )
         self._relations[name] = rel_info
         return rel_info

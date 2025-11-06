@@ -6,6 +6,7 @@
 
 from typing import Any, Dict, ForwardRef, get_args, get_origin, List, Union
 from pydantic.fields import FieldInfo
+from .db_types import Tree
 
 def unpack_extra(field_info: FieldInfo) -> dict[str, Any]:
     extra_json = field_info.json_schema_extra
@@ -28,7 +29,7 @@ def resolve_annotation(ann, globalns):
     args = get_args(ann)
 
     # Handle List[ForwardRef]
-    if origin in (list, List) and args:
+    if origin in (list, List, Tree) and args:
         resolved_args = tuple(resolve_annotation(a, globalns) for a in args)
         return origin[resolved_args[0]]  # rebuild List[T] type
 

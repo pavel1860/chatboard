@@ -17,6 +17,7 @@ _extensions_registry = set()
 class NamespaceManager:
     _initialized = False
     _registry: Dict[tuple[str, str], Any] = {}
+    _str2model: Dict[str, Type] = {}
     _model_to_namespace: Dict[Type, Any] = {}
     _main_branch: "Branch | None" = None
 
@@ -51,7 +52,11 @@ class NamespaceManager:
         cls._model_to_namespace[model_cls] = namespace
 
     @classmethod
-    def get_namespace_for_model(cls, model_cls: Type):
+    def get_namespace_for_model(cls, model_cls: Type | str):
+        if isinstance(model_cls, str):
+            model_cls = cls._str2model.get(model_cls)
+            if model_cls is None:
+                raise ValueError(f"Model {model_cls} not found.")
         ns = cls._model_to_namespace.get(model_cls)
         if ns is None:
             raise ValueError(f"Namespace for model {model_cls} not found.")
@@ -176,6 +181,7 @@ class NamespaceManager:
                         raise ValueError(f"Primary key '{rev_rel.primary_key}' of '{rev_rel.name}' ({rev_rel.primary_cls.__name__}) does not match foreign key '{rel.foreign_key}' of '{rel.name}' ({rel.primary_cls.__name__})")
                     if rev_rel.foreign_key != rel.primary_key:
                         raise ValueError(f"Foreign key '{rev_rel.foreign_key}' ({rev_rel.foreign_cls.__name__}) of '{rev_rel.name}' does not match primary key '{rel.primary_key}' of '{rel.name}' ({rel.foreign_cls.__name__})")
+        cls._str2model = globalns
 
 
     @classmethod

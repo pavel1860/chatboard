@@ -1,7 +1,12 @@
 from typing import TYPE_CHECKING, Type, Dict, Any, get_origin, get_args, List, Union
 from pydantic.fields import FieldInfo
+
+from .util import resolve_annotation
+
+from .db_types import Tree
 from .base.base_namespace import BaseNamespace
 from .base.base_field_info import BaseFieldInfo
+from .db_types import ContainerType
 
 if TYPE_CHECKING:
     from .relation_info import RelationInfo
@@ -47,10 +52,17 @@ class RelationParser:
                 annotation = next(a for a in args if a is not type(None))
 
             # Now detect if it's a list
+            container_type = None
             origin = get_origin(annotation)
+            if origin and issubclass(origin, ContainerType):
+                container_type = origin
             args = get_args(annotation)
+            # for a in args:
+            #     if isinstance(a, ForwardRef):
+            #         a = resolve_annotation(a, globalns)
             is_list = origin in (list, List)
-            related_cls = args[0] if is_list and args else annotation
+            is_tree = origin in (Tree, Tree[Any])
+            related_cls = args[0] if (is_list or is_tree) and args else annotation
             if not isinstance(related_cls, Type) or not issubclass(related_cls, Model):
                 raise ValueError(f"Related class {related_cls} is not a subclass of Model")
             rel_ns = related_cls.get_namespace()
@@ -66,9 +78,10 @@ class RelationParser:
                 foreign_cls=related_cls,  # May be forward ref
                 on_delete=extra.get("on_delete", "CASCADE"),
                 on_update=extra.get("on_update", "CASCADE"),
-                is_one_to_one=not is_list,
+                is_one_to_one=not is_list and not container_type,
                 relation_model=junction_model,
-                junction_keys=junction_keys
+                junction_keys=junction_keys,
+                container_type=container_type
             )
             self.relations[field_name] = rel_info
 

@@ -1,7 +1,7 @@
 # promptview/model/base/relation_info.py
 from typing import TYPE_CHECKING, Any, Literal, Optional, Type, ForwardRef
 
-
+from .db_types import ContainerType
 
 if TYPE_CHECKING:
     from .model3 import Model
@@ -20,7 +20,8 @@ class RelationInfo:
         is_one_to_one: bool = False,
         relation_model: Optional[Type["Model"]] = None,
         junction_keys: Optional[list[str]] = None,
-        is_reverse: bool = False
+        is_reverse: bool = False,
+        container_type: Optional[ContainerType] = None
     ):
         self.name = name
         if primary_key is None:

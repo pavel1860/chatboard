@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, AsyncGenerator, Callable, List, Literal, Type,
 from pydantic import BaseModel, Field
 
 from promptview.model.base.types import ArtifactKind
+from promptview.model.db_types import Tree
 from promptview.model.sql2.expressions import Raw
 from promptview.model.sql2.relations import RawRelation
 from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
@@ -260,9 +261,9 @@ class Turn(Model):
     trace_id: str | None = ModelField(default=None)
     metadata: dict | None = ModelField(default=None)
     artifacts: List["Artifact"] = RelationField(foreign_key="turn_id")
-    spans: List["ExecutionSpan"] = RelationField(foreign_key="turn_id")
+    spans: Tree["ExecutionSpan"] = RelationField(foreign_key="turn_id")
     block_trees: List["BlockTree"] = RelationField(foreign_key="turn_id")
-    values: List["DataFlowNode"] = RelationField(foreign_key="turn_id")  # Turn-level values
+    values: Tree["DataFlowNode"] = RelationField(foreign_key="turn_id")  # Turn-level values
     test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")
     # test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")
     
