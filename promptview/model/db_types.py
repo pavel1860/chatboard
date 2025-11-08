@@ -43,10 +43,27 @@ class Tree(Generic[FOREIGN_MODEL]):
     def __iter__(self) -> Iterator[FOREIGN_MODEL]:
         return iter(self.items.values())
     
-    def print(self):
+    def print(self, show_input: bool = False):
         for path, item in self.items.items():
+            if not show_input and path.endswith(".input"):
+                continue
             print(f"{path}: {item}")
+            
+    def print_values(self, show_input: bool = False):
+        for path, item in self.items.items():
+            if not show_input and path.endswith(".input"):
+                continue
+            print(f"{path}: {item.kind} {item.artifact_id}")
     
+    def __repr__(self):
+        s = "Tree(\n"
+        for path, item in self.items.items():
+            s += f"  {path}: {item},\n"
+        s += ")"
+        return s
+    
+    def __str__(self):
+        return self.__repr__()
     
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:

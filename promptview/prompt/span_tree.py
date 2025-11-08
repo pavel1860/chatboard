@@ -32,7 +32,7 @@ class DataFlow:
         self._is_span = span_value.kind == "span"
         # For single artifacts, check if it's a parameter
         self._container = container
-        self.path = [int(p) for p in span_value.path.split(".")]
+        self.path = [int(p) for p in span_value.path.split(".") if p.isdigit()]
             
     
     def _get_value(self, value: Any):
@@ -635,7 +635,9 @@ class SpanTree:
             value_path = f"{self.root.path}.{self._value_index}"
             self._value_index += 1  # Increment for next value
         elif io_kind == "input":
-            value_path = self.root.path
+            value_path = self.root.path + ".input"
+            if name is not None:
+                value_path += "." + name
         else:
             raise ValueError(f"Invalid io_kind: {io_kind}")
 

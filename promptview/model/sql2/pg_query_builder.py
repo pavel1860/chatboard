@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Generator, Generic, Type, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generator, Generic, Literal, Type, TypeVar
 from .relations import RawRelation, RelationProtocol, Source, NsRelation, RelField, Relation
 from .relational_queries import join, SelectQuerySet, QuerySet, Relation, NsRelation, Expression
 from .expressions import Coalesce, JsonBuildObject, JsonAgg, Value
@@ -65,7 +65,6 @@ T_co = TypeVar("T_co", covariant=True)
 class QuerySetSingleAdapter(Generic[T_co]):
     def __init__(self, queryset: "PgQueryBuilder[T_co]", parse: bool = True):
         self.queryset = queryset
-        self.parse = parse
 
     def __await__(self) -> Generator[Any, None, T_co]:
         async def await_query():
@@ -84,6 +83,9 @@ class PgQueryBuilder(Generic[Ts]):
     def __init__(self):
         self._query = None
         self._return_json = False  # Flag to return dicts instead of Model instances
+        self._parse = None
+        self._parse_rows = None
+        self._parse_models: Callable[[list[Ts]], Awaitable[list[Ts]]] | None = None
 
 
     @property
@@ -123,6 +125,16 @@ class PgQueryBuilder(Generic[Ts]):
             raise ValueError("Query is already set")
         raw_rel = RawRelation(sql, name, namespace)
         self._query = SelectQuerySet(raw_rel)
+        return self
+    
+    
+    def parse(self, func: Callable[[Ts], Any], target: Literal["rows", "models"] = "models"):
+        if target == "rows":
+            self._parse_rows = func
+        elif target == "models":
+            self._parse_models = func
+        else:
+            raise ValueError(f"Invalid target: {target}")
         return self
     
     
@@ -476,6 +488,13 @@ class PgQueryBuilder(Generic[Ts]):
     
     def __await__(self):
         return self.execute().__await__()
+    
+    
+    def get_cls(self) -> Type[Ts]:
+        first_source = self.query.sources[0]
+        namespace = first_source.base.namespace
+        model_cls = namespace._model_cls
+        return model_cls
 
 
     def parse_row(self, row: dict[str, Any]) -> dict[str, Any] | Ts:
@@ -544,8 +563,10 @@ class PgQueryBuilder(Generic[Ts]):
         sql, params = self.render()
         rows = await PGConnectionManager.fetch(sql, *params)
 
-        
-        return [self.parse_row(row) for row in rows]
+        model_cls = self.get_cls()
+        rows = [self.parse_row(row) for row in rows]
+        if self._parse_models is not None:
+            rows = await self._parse_models(rows)
         return rows
         
 

@@ -11,6 +11,7 @@ from promptview.model.base.types import ArtifactKind
 from promptview.model.db_types import Tree
 from promptview.model.sql2.expressions import Raw
 from promptview.model.sql2.relations import RawRelation
+from promptview.model.versioning.artifact_log import ArtifactLog
 from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
 
 
@@ -331,6 +332,47 @@ class Turn(Model):
             return False
         return True
     
+    # @classmethod
+    # async def _parse_executions(cls, turns: List["Turn"]):
+    #     from collections import defaultdict
+    #     from ..namespace_manager2 import NamespaceManager
+    #     def kind2table(k: str):
+    #         if k == "parameter":
+    #             return "parameters"
+    #         return k
+
+    #     models_to_load = defaultdict(list)
+
+    #     for turn in turns:
+    #         for span in turn.spans:
+    #             print(span.id, span.name)
+    #             for value in span.values:
+    #                 if value.kind != "span":
+    #                     print(value.path, value.kind, value.artifact_id)
+    #                     models_to_load[value.kind].append(value.artifact_id)
+                    
+    #     model_lookup = {"span": {s.artifact_id: s for turn in turns for s in turn.spans}}
+    #     for k in models_to_load:
+    #         if k == "list":
+    #             models = await Artifact.query(include_branch_turn=True).where(Artifact.id.isin(models_to_load[k]))
+    #             model_lookup["list"] = {m.id: m for m in models}
+    #         elif k == "block_trees":
+    #             models = await get_blocks(models_to_load[k], dump_models=False, include_branch_turn=True)
+    #             model_lookup[k] = models
+    #         # elif k == "execution_spans":
+    #         #     value_dict[k] = {s.artifact_id: s for s in spans}
+    #         else:
+    #             ns = NamespaceManager.get_namespace(kind2table(k))
+    #             models = await ns._model_cls.query(include_branch_turn=True).where(ns._model_cls.artifact_id.isin(models_to_load[k]))
+    #             model_lookup[k] = {m.artifact_id: m for m in models}
+
+    #     for turn in turns:
+    #         for span in turn.spans:
+    #             for value in span.values:
+    #                 value._value = model_lookup[value.kind][value.artifact_id]
+                    
+    #     return turns
+    
     
     @classmethod
     def query(
@@ -341,6 +383,7 @@ class Turn(Model):
         branch: Branch | int | None = None,
         to_select: bool = True,
         include_branch_turn: bool = False,
+        include_executions: bool = False,
         **kwargs
     ) -> "PgQueryBuilder[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
@@ -359,6 +402,16 @@ class Turn(Model):
                 .where(Raw(f"turns.index <= bh.start_turn_index{' - 1' if not include_branch_turn else ''}"))
                 .join_cte(branch_cte, "branch_hierarchy", on=("branch_id", "id"), alias="bh", recursive=True)
             )
+        if include_executions:
+            query.include(
+                ExecutionSpan.query()
+                .include(Artifact)
+                .include(
+                    DataFlowNode.query()
+                    .include(Artifact)
+                )
+            )
+            query.parse(ArtifactLog.populate_turns, target="models")
         # if to_select:
             # query = query.select(*fields if fields else "*")
         return query
@@ -967,6 +1020,19 @@ class DataFlowNode(Model):
     )
     alias: str | None = ModelField(default=None)
     name: str | None = ModelField(default=None)  # Keyword argument name (e.g., "count", "items")
+    
+    
+    _value: Any | None = None
+    
+    
+    @property
+    def value(self) -> Any:
+        if self._value is None:
+            raise ValueError(f"Artifact is not set for {self.id}")
+        if self.kind == "parameter":
+            return self._value.value
+        return self._value
+
 
     @property
     def index(self) -> int:
@@ -997,6 +1063,13 @@ class ExecutionSpan(VersionedModel):
     block_trees: List[BlockTree] = RelationField(foreign_key="span_id")
     
 
+    @property
+    def inputs(self) -> dict[str, "DataFlowNode"]:
+        return {v.path.split(".")[-1]: v.value for v in self.values if v.io_kind == "input"}
+    
+    @property
+    def outputs(self) -> list["DataFlowNode"]:
+        return [v.value for v in self.values if v.io_kind == "output"]
 
 
 
