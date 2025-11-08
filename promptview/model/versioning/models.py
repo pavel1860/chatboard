@@ -408,7 +408,7 @@ class Turn(Model):
                 .include(Artifact)
                 .include(
                     DataFlowNode.query()
-                    .include(Artifact)
+                    .include(DataArtifact)
                 )
             )
             query.parse(ArtifactLog.populate_turns, target="models")
@@ -992,6 +992,7 @@ class DataArtifact(Model):
     id: int = KeyField(primary_key=True)  # Auto-increment ID
     value_id: int = ModelField(foreign_key=True)
     artifact_id: int = ModelField(foreign_key=True, foreign_cls=Artifact)
+    kind: ArtifactKindEnum = ModelField()
     position: int | None = ModelField(default=None)  # For lists/tuples - index in collection
     name: str | None = ModelField(default=None)  # For dicts - key name
     
@@ -1014,6 +1015,10 @@ class DataFlowNode(Model):
         foreign_key="id",
         junction_model=DataArtifact,
     )
+    data_artifacts: list[DataArtifact] = RelationField(
+        primary_key="id",
+        foreign_key="value_id",
+    )
     value_artifacts: list[DataArtifact] = RelationField(
         primary_key="id",
         foreign_key="value_id",
@@ -1023,6 +1028,7 @@ class DataFlowNode(Model):
     
     
     _value: Any | None = None
+    _container_value: Artifact | None = None
     
     
     @property
@@ -1031,6 +1037,8 @@ class DataFlowNode(Model):
             raise ValueError(f"Artifact is not set for {self.id}")
         if self.kind == "parameter":
             return self._value.value
+        # elif self.kind == "list":
+            # return [v for v in self._value]
         return self._value
 
 

@@ -47,10 +47,18 @@ class DataFlow:
     
     @property
     def kind(self):
+        from ..model.versioning.models import BlockTree
         try:
             if self._is_list:
-                return [a.kind for a in self.span_value.artifacts if a.kind != "list"]
-                # return [self.get_artifact_kind(v.artifact) for v in self.span_value.artifacts if v.artifact.kind != "list"]
+                kinds = []
+                for a in self.span_value.artifacts:
+                    if isinstance(a, BlockTree):
+                        return "block"
+                    if a.kind != "list":
+                        kinds.append(self.get_artifact_kind(a))
+                return kinds
+                # return [a.kind for a in self.span_value.artifacts if a.kind != "list"]
+                # return [self.get_artifact_kind(v) for v in self.span_value.artifacts if v.kind != "list"]
                 
             return self.span_value.artifacts[0].kind
         except Exception as e:
@@ -659,7 +667,7 @@ class SpanTree:
                 artifact_id=container_artifact.id,
             ))
 
-            await value.add(container_artifact)
+            await value.add(container_artifact, kind="list")
             
             list_artifacts = []
             for position, item in enumerate(target):
@@ -676,6 +684,7 @@ class SpanTree:
                 va = await DataArtifact(
                     value_id=value.id,
                     artifact_id=artifact_id,
+                    kind=kind,
                     position=position,
                 ).save()
                 
@@ -705,7 +714,7 @@ class SpanTree:
                     path=value_path,  # NEW: Set path
                     artifact_id=artifact_id,
                 ))
-                await value.add(artifact)
+                await value.add(artifact, kind=kind)
                 v = DataFlow(value, target)
                 return self._append_value(value, target)
             elif artifact_id is None:
@@ -722,7 +731,7 @@ class SpanTree:
                 artifact_id=artifact_id,
             ))
             value.artifacts = [target.artifact]
-            await value.add(target.artifact)
+            await value.add(target.artifact, kind=kind)
             v = DataFlow(value, target)
             return self._append_value(value, target)
             
