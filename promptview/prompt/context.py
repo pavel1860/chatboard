@@ -1,15 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, AsyncGenerator, Iterator, Type
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterator, Type
 
 from pydantic import BaseModel
-
-from promptview.model.versioning.artifact_log import ArtifactLog
 from ..auth.user_manager2 import AuthModel
 from ..model.model3 import Model
 from ..model.postgres2.pg_query_set import PgSelectQuerySet
-from ..model.versioning.models import Branch, ExecutionSpan, SpanType, Turn, TurnStatus, VersionedModel, Artifact
+from ..model.versioning.models import Branch, ExecutionSpan, SpanType, Turn, TurnStatus, ValueIOKind, VersionedModel, Artifact
 from dataclasses import dataclass
 from ..utils.function_utils import call_function
 if TYPE_CHECKING:
@@ -66,7 +64,7 @@ class Context(BaseModel):
     _execution_stack: list = []
     _replay_span_trees: list["ExecutionSpan"] = []  # Top-level span trees to replay from
     _execution_path: list[int] = []  # Current execution path like [0, 1, 2]
-    _top_level_span_count: int = 0  # Counter for top-level spans in current turn
+    _top_level_span_count: int = 1  # Counter for top-level spans in current turn
     _top_level_spans: list["ExecutionSpan"] = []  # All top-level spans in this turn
     _evaluation_context: "EvaluationContext | None" = None  # Evaluation context if in eval mode
     
@@ -96,13 +94,6 @@ class Context(BaseModel):
         self._turn = turn
         self._auth = auth
         self._initialized = False
-        self._artifact_log: ArtifactLog | None = None
-        
-    @property
-    def artifact_log(self) -> ArtifactLog:
-        if self._artifact_log is None:
-            raise ValueError("Artifact log not set")
-        return self._artifact_log
         
     @property
     def request_id(self):
@@ -132,7 +123,7 @@ class Context(BaseModel):
         return self._execution_stack[-1] if self._execution_stack else None
 
     @property
-    def current_span_tree(self) -> "ExecutionSpan | None":
+    def current_span(self) -> "ExecutionSpan | None":
         """Get the current span tree from the current component."""
         if self.current_component and hasattr(self.current_component, '_span_tree'):
             return self.current_component._span_tree
@@ -228,6 +219,7 @@ class Context(BaseModel):
         self._top_level_span_count += 1
         return index
 
+
     async def start_span(
         self,
         component,
@@ -251,7 +243,7 @@ class Context(BaseModel):
         Returns:
             SpanTree instance for this component (either from replay or newly created)
         """
-
+        from ..model.versioning.artifact_log import ArtifactLog
         tags = tags or []
 
         # Check if we should use a span from replay tree
@@ -286,20 +278,30 @@ class Context(BaseModel):
                 path=top_level_path,
                 parent_span_id=None  # Top-level, no parent
             ).save()
+            
+            await ArtifactLog.log_value(span_tree, ctx=self)
 
             # Add to top-level spans list
             self._top_level_spans.append(span_tree)
         else:
             # Child component - create child span
-            parent_span = self.current_span_tree
+            parent_span = self.current_span
             if parent_span is None:
                 raise ValueError("Parent component has no span tree")
 
-            span_tree = await parent_span.add_child(
+            # span_tree = await parent_span.add_child(
+            #     name=name,
+            #     span_type=span_type,
+            #     tags=tags
+            # )
+            span_tree = await ExecutionSpan(
                 name=name,
                 span_type=span_type,
-                tags=tags
-            )
+                tags=tags,
+                path=parent_span.path + f".{len(parent_span.outputs) + 1}",
+                parent_span_id=parent_span.id
+            ).save()
+            await ArtifactLog.log_value(span_tree, ctx=self)
 
         # Attach span_tree to component
         component._span_tree = span_tree
@@ -598,7 +600,6 @@ class Context(BaseModel):
             auth = self._auth.__enter__()
         branch = await self._handle_tasks()
         v_models, models = self.get_models()
-        self._artifact_log = ArtifactLog(self.branch, self.turn)
         for model in models:
             model.__enter__()
         # Only enter branch context if we have a branch

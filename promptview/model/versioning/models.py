@@ -265,6 +265,7 @@ class Turn(Model):
     metadata: dict | None = ModelField(default=None)
     artifacts: List["Artifact"] = RelationField(foreign_key="turn_id")
     spans: Tree["ExecutionSpan"] = RelationField(foreign_key="turn_id")
+    data: Tree["DataFlowNode"] = RelationField(foreign_key="turn_id")
     test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")    
 
     _auto_commit: bool = True
@@ -558,7 +559,7 @@ class VersionedModel(Model):
         branch_id = Branch.resolve_target_id(branch)
         turn_id = Turn.resolve_target_id(turn)
         
-        span_id = ctx.current_span_tree.id if ctx.current_span_tree else None
+        span_id = ctx.current_span.id if ctx.current_span else None
         
 
         # Resolve branch_id: explicit param > Context.branch > Branch.current()
@@ -1015,7 +1016,7 @@ class DataFlowNode(Model):
     @property
     def value(self) -> Any:
         if self._value is None:
-            raise ValueError(f"Artifact is not set for {self.id}")
+            raise ValueError(f"no value for DataFlowNode {self.id}")
         if self.kind == "parameter":
             return self._value.value
         # elif self.kind == "list":
@@ -1077,35 +1078,36 @@ class ExecutionSpan(VersionedModel):
     
     
     async def log_value(self, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
-        from ...prompt.context import Context
-        return await self.ctx.artifact_log.log_value(self, target, alias, io_kind, name)
+        # from ...prompt.context import Context
+        from ...model.versioning.artifact_log import ArtifactLog
+        return await ArtifactLog.log_value(target, alias, io_kind, name)
     
     
     
-    async def add_child(self, name: str, span_type: SpanType = "component", tags: list[str] = []):
-        """
-        Add a child span to the current span by logging it as a span value.
-        The child will be accessible via the computed 'children' property.
-        """
-        # Compute child path
-        from ...prompt.context import Context
-        child_index = len(self.children)
-        child_path = f"{self.path}.{child_index}"        
+    # async def add_child(self, name: str, span_type: SpanType = "component", tags: list[str] = []):
+    #     """
+    #     Add a child span to the current span by logging it as a span value.
+    #     The child will be accessible via the computed 'children' property.
+    #     """
+    #     # Compute child path
+    #     from ...prompt.context import Context
+    #     child_index = len(self.children)
+    #     child_path = f"{self.path}.{child_index}"        
         
 
-        # Create child ExecutionSpan directly
-        child_span = await ExecutionSpan(
-            name=name,
-            span_type=span_type,
-            tags=tags,
-            path=child_path,
-            parent_span_id=self.id
-        ).save()        
+    #     # Create child ExecutionSpan directly
+    #     child_span = await ExecutionSpan(
+    #         name=name,
+    #         span_type=span_type,
+    #         tags=tags,
+    #         path=child_path,
+    #         parent_span_id=self.id
+    #     ).save()        
 
-        # Log the SpanTree as a value - this adds it to _values
-        await self.ctx.artifact_log.log_value(self, child_span, io_kind="output")
+    #     # Log the SpanTree as a value - this adds it to _values
+    #     await self.ctx.artifact_log.log_value(self, child_span, io_kind="output")
 
-        return child_span
+    #     return child_span
 
     
 

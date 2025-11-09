@@ -56,6 +56,10 @@ class Model(BaseModel, metaclass=ModelMeta):
         """Create DB table/collection for this model."""
         await cls.get_namespace().create_namespace()
         
+    @classmethod
+    def is_saved(cls) -> bool:
+        return cls.primary_id is not None
+        
     def __enter__(self):
         """Enter the context"""
         ns = self.get_namespace()
