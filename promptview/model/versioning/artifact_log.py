@@ -4,16 +4,51 @@
 
 from typing import List, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from .models import Turn, Artifact
+
+from codecs import lookup
+import asyncio
+from typing import Any, Iterator, TYPE_CHECKING
+
+from ...utils.type_utils import SerializableType, serialize_value, type_to_str_or_none
+from .models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanType, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
+from ...block import BlockList, Block
+from ..block_models.block_log import insert_block, get_blocks
+
+from collections import defaultdict
 
 
+
+
+
+def is_artifact_list(target_list: Any) -> bool:
+    for item in target_list:
+        if isinstance(item, VersionedModel):
+            return True
+        elif isinstance(item, Block):
+            return True
+
+    return False
 
 class ArtifactLog:
     
+    
+    
+    def __init__(self, branch: Branch, turn: Turn):
+        self.branch = branch
+        self.turn = turn
+        
+        
+    @property
+    def branch_id(self):
+        return self.branch.id
+    
+    @property
+    def turn_id(self):
+        return self.turn.id
+    
         
     @classmethod
-    async def populate_turns(cls, turns: List["Turn"]):
+    async def populate_turns(cls, turns: List[Turn]):
         from collections import defaultdict
         from ..namespace_manager2 import NamespaceManager
         from ..block_models.block_log import get_blocks
@@ -25,8 +60,8 @@ class ArtifactLog:
                 return "block_trees"
             return k
 
-        models_to_load = defaultdict(list)
-
+        models_to_load = defaultdict(list)        
+        span_lookup = {s.artifact.id: s for turn in turns for s in turn.spans}
         for turn in turns:
             for span in turn.spans:
                 print(span.id, span.name)
@@ -35,6 +70,9 @@ class ArtifactLog:
                         print(value.path, value.kind, value.artifact_id)
                         for da in value.data_artifacts:
                           models_to_load[da.kind].append(da.artifact_id)  
+                    else:
+                        value._value = span_lookup[value.artifact_id]
+                        span._parent_value = value
                         # models_to_load[value.kind] += value.data_artifacts
                     
         model_lookup = {"span": {s.artifact_id: s for turn in turns for s in turn.spans}}
@@ -67,3 +105,168 @@ class ArtifactLog:
                     
                     
         return turns
+    
+    
+    
+    def _build_parameter(self, value: SerializableType) -> Parameter | None:
+        if isinstance(value, Parameter):
+            return value
+        else:     
+            kind = type_to_str_or_none(type(value))
+            if kind is None:
+                return None
+            return Parameter(data={"value": serialize_value(value)}, kind=kind)
+
+    
+    
+    # async def log_value(self, value: Any, io_kind: ValueIOKind = "input", name: str | None = None):
+    #     """
+    #     Log a value to the current span and add it to the values list
+
+    #     Args:
+    #         value: The value to log (can be single artifact or list of artifacts)
+    #         io_kind: Whether this is an input or output
+    #         name: Optional parameter name for function kwargs
+    #     """
+    #     value = value.root if isinstance(value, SpanTree) else value
+    #     value = await self.root.log_value(value, io_kind=io_kind, name=name)
+    #     return value
+    def _get_target_meta(self, target: Any) -> tuple[ArtifactKindEnum, int | None]:
+        from ...block import Block
+        if isinstance(target, Block):
+            return "block", None
+        elif isinstance(target, Log):
+            return "log", target.artifact_id
+        elif isinstance(target, ExecutionSpan):
+            # Handle SpanTree (extract ExecutionSpan for artifact_id)
+            return "span", target.artifact_id
+        elif isinstance(target, ExecutionSpan):
+            if target == self:
+                print(f"target == self {target.id} {self.id}")
+            return "span", target.artifact_id
+        elif isinstance(target, VersionedModel):
+            return "model", target.artifact_id
+        else:
+            return "parameter", None
+           
+    
+    
+    
+        
+        
+    def _sanitize_target_value(self, target: Any) -> tuple[VersionedModel, ArtifactKindEnum, int | None]:
+        kind, artifact_id = self._get_target_meta(target)
+        if kind == "block":
+            return target, kind, artifact_id
+        elif kind == "parameter":
+            param = self._build_parameter(target)
+            if param is None:
+                raise ValueError(f"Target '{target}' cannot be logged as a parameter")
+            return param, kind, artifact_id
+        elif kind == "span":
+            # Keep SpanTree as-is (don't convert to ExecutionSpan)
+            return target, kind, artifact_id
+        else:
+            return target, kind, artifact_id
+        
+    def _sanitize_target_list_value(self, target: Any) -> list[VersionedModel]:
+        if isinstance(target, list) and is_artifact_list(target):
+            container_artifact = Artifact(
+                branch_id=self.branch_id,
+                turn_id=self.turn_id,
+                kind="list",
+                model_name=target[0].__class__.__name__,  # Model type of items
+            )
+            
+            
+    async def log_value(self, execution_span: ExecutionSpan, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
+        # Compute path for this value using in-memory counter
+        if io_kind == "output":
+            index = len(execution_span.values)
+            value_path = f"{execution_span.path}.{index}"
+        elif io_kind == "input":
+            value_path = execution_span.path + ".input"
+            if name is not None:
+                value_path += "." + name
+        else:
+            raise ValueError(f"Invalid io_kind: {io_kind}")
+
+        if isinstance(target, list) and is_artifact_list(target):
+            container_artifact = await Artifact(
+                branch_id=self.branch_id,
+                turn_id=self.turn_id,
+                span_id=execution_span.id,  # NEW: Track creation context
+                kind="list",
+            ).save()
+
+            value = await execution_span.add(DataFlowNode(
+                span_id=execution_span.id,
+                kind="list",
+                alias=alias,
+                io_kind=io_kind,
+                name=name,
+                path=value_path,  # NEW: Set path
+                artifact_id=container_artifact.id,
+            ))
+
+            await value.add(container_artifact, kind="list")
+            
+            list_artifacts = []
+            for position, item in enumerate(target):
+                item, kind, artifact_id = self._sanitize_target_value(item)
+                if kind == "block":
+                    block_item = await insert_block(item, self.branch_id, self.turn_id, execution_span.id)
+                    block_item._block = item
+                    item = block_item
+                    artifact_id = item.artifact_id
+                elif artifact_id is None:
+                    await item.save()
+                    artifact_id = item.artifact_id                
+                list_artifacts.append(item)
+                va = await DataArtifact(
+                    value_id=value.id,
+                    artifact_id=artifact_id,
+                    kind=kind,
+                    position=position,
+                ).save()
+                
+            value.artifacts = list_artifacts
+
+            return value
+            
+        else:
+            target, kind, artifact_id = self._sanitize_target_value(target)
+            if kind == "block":
+                target = await insert_block(target, self.branch_id, self.turn_id, execution_span.id)
+                artifact_id = target.artifact_id
+            elif kind == "span":
+                # For spans, get artifact from SpanTree or ExecutionSpan
+                artifact = target.artifact
+                value = await execution_span.add(DataFlowNode(
+                    span_id=execution_span.id,
+                    kind=kind,
+                    alias=alias,
+                    io_kind=io_kind,
+                    name=name,
+                    path=value_path,  # NEW: Set path
+                    artifact_id=artifact_id,
+                ))
+                await value.add(artifact, kind=kind)
+                
+                return value
+            elif artifact_id is None:
+                await target.save()
+                artifact_id = target.artifact_id
+
+            value = await execution_span.add(DataFlowNode(
+                span_id=execution_span.id,
+                kind=kind,
+                alias=alias,
+                io_kind=io_kind,
+                name=name,
+                path=value_path,  # NEW: Set path
+                artifact_id=artifact_id,
+            ))
+            value.artifacts = [target.artifact]
+            await value.add(target.artifact, kind=kind)
+            return value

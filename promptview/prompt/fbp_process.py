@@ -1324,7 +1324,7 @@ class ObservableProcess(Process):
         self._tags = tags or []
         self._args = args
         self._kwargs = kwargs or {}
-        self._span_tree: "SpanTree | None" = None
+        self._span: "ExecutionSpan | None" = None
         self.resolved_kwargs: dict[str, Any] = {}
         self.index: int = 0  # Set by parent PipeController
         self.parent: "ObservableProcess | None" = None  # Set by parent PipeController
@@ -1353,19 +1353,16 @@ class ObservableProcess(Process):
     @property
     def span(self):
         """Get the execution span."""
-        return self._span_tree.root if self._span_tree else None
+        if self._span is None:
+            raise ValueError("Span is not initialized")
+        return self._span
     
-    @property
-    def span_tree(self):
-        """Get the span tree."""
-        if self._span_tree is None:
-            raise ValueError("Span tree is not initialized")
-        return self._span_tree
+
 
     @property
     def span_id(self):
         """Get the span ID."""
-        return self._span_tree.id if self._span_tree else None
+        return self._span.id if self._span else None
 
     async def _resolve_dependencies(self):
         """
@@ -1378,7 +1375,7 @@ class ObservableProcess(Process):
         from ..llms import LLM, LlmConfig
         
         
-        self._span_tree = await self.ctx.start_span(
+        self._span = await self.ctx.start_span(
             component=self,
             name=self._name,
             span_type=self._span_type,
@@ -1392,8 +1389,8 @@ class ObservableProcess(Process):
                 kwargs={}
             )
             self.resolved_kwargs = kwargs
-        elif self._span_tree.inputs:            
-            self._replay_inputs = [v.value for v in self._span_tree.inputs]
+        elif self._span.inputs:            
+            self._replay_inputs = [v.value for v in self._span.inputs]
             bound, kwargs = await resolve_dependencies_kwargs(
                 self._gen_func,
                 args=self._replay_inputs,
@@ -1409,13 +1406,13 @@ class ObservableProcess(Process):
             self.resolved_kwargs = kwargs
 
             # Log resolved kwargs as inputs
-            if self._span_tree and self._should_log_inputs:
+            if self._span and self._should_log_inputs:
                 for key, value in kwargs.items():
                     if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx]:
-                        await self._span_tree.log_value(value, io_kind="input", name=key)
+                        await self._span.log_value(value, io_kind="input", name=key)
                     
-        if self._span_tree.outputs and not self._span_tree.need_to_replay:
-            self._replay_outputs = [v.value for v in self._span_tree.outputs]
+        if self._span.outputs and not self._span.need_to_replay:
+            self._replay_outputs = [v.value for v in self._span.outputs]
 
         return bound, kwargs
 
@@ -1469,10 +1466,10 @@ class ObservableProcess(Process):
             type=self._start_event_type,
             name=self._name,
             attrs=value_attrs,
-            payload=self.span_tree,
+            payload=self.span,
             span_id=str(self.span_id) if self.span_id else None,
             path=self.get_execution_path(),
-            value=self.span_tree.parent_value
+            value=self.span.parent_value
         )
 
     async def on_value_event(self, payload: Any = None):
@@ -1732,12 +1729,12 @@ class StreamController(ObservableProcess):
             # Log the final accumulated result as output
             # if self._span_tree and self._accumulator:
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
-            if self._span_tree:
+            if self._span:
                 value = None
                 if self._parser and self._parser.res_ctx.instance is not None:
-                    value = await self._span_tree.log_value(self._parser.res_ctx.instance, io_kind="output")
+                    value = await self._span.log_value(self._parser.res_ctx.instance, io_kind="output")
                 elif self._accumulator:
-                    value = await self._span_tree.log_value(self._accumulator.result, io_kind="output")
+                    value = await self._span.log_value(self._accumulator.result, io_kind="output")
                 self._stream_value = value
 
             await self.on_stop()
@@ -1932,12 +1929,12 @@ class PipeController(ObservableProcess):
                     child.parent = self
                     child.index = self.index
                     self.index += 1  # Increment for next child
-                elif self._span_tree:
-                    value = await self._span_tree.log_value(child, io_kind="output")
+                elif self._span:
+                    value = await self._span.log_value(child, io_kind="output")
                     self._last_value = value
 
                 # Log child as output
-                if self._span_tree and isinstance(child, (StreamController, PipeController)):
+                if self._span and isinstance(child, (StreamController, PipeController)):
                     # Log the child's span tree once it's created
                     # Note: child span is created when child.on_start() is called by FlowRunner
                     pass

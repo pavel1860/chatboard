@@ -4,6 +4,8 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, AsyncGenerator, Iterator, Type
 
 from pydantic import BaseModel
+
+from promptview.model.versioning.artifact_log import ArtifactLog
 from ..auth.user_manager2 import AuthModel
 from ..model.model3 import Model
 from ..model.postgres2.pg_query_set import PgSelectQuerySet
@@ -62,10 +64,10 @@ class Context(BaseModel):
     _ctx_models: dict[str, Model] = {}
     _tasks: list[LoadBranch | LoadTurn | ForkTurn | StartTurn | StartEval] = []
     _execution_stack: list = []
-    _replay_span_trees: list["SpanTree"] = []  # Top-level span trees to replay from
+    _replay_span_trees: list["ExecutionSpan"] = []  # Top-level span trees to replay from
     _execution_path: list[int] = []  # Current execution path like [0, 1, 2]
     _top_level_span_count: int = 0  # Counter for top-level spans in current turn
-    _top_level_spans: list["SpanTree"] = []  # All top-level spans in this turn
+    _top_level_spans: list["ExecutionSpan"] = []  # All top-level spans in this turn
     _evaluation_context: "EvaluationContext | None" = None  # Evaluation context if in eval mode
     
     
@@ -94,6 +96,13 @@ class Context(BaseModel):
         self._turn = turn
         self._auth = auth
         self._initialized = False
+        self._artifact_log: ArtifactLog | None = None
+        
+    @property
+    def artifact_log(self) -> ArtifactLog:
+        if self._artifact_log is None:
+            raise ValueError("Artifact log not set")
+        return self._artifact_log
         
     @property
     def request_id(self):
@@ -123,19 +132,19 @@ class Context(BaseModel):
         return self._execution_stack[-1] if self._execution_stack else None
 
     @property
-    def current_span_tree(self) -> "SpanTree | None":
+    def current_span_tree(self) -> "ExecutionSpan | None":
         """Get the current span tree from the current component."""
         if self.current_component and hasattr(self.current_component, '_span_tree'):
             return self.current_component._span_tree
         return None
 
     @property
-    def top_level_spans(self) -> list["SpanTree"]:
+    def top_level_spans(self) -> list["ExecutionSpan"]:
         """Get all top-level spans created in this turn."""
         return self._top_level_spans
 
     @property
-    def root_span(self) -> "SpanTree | None":
+    def root_span(self) -> "ExecutionSpan | None":
         """
         Get the first top-level span (for backward compatibility).
         If you have multiple top-level spans, use top_level_spans instead.
@@ -170,7 +179,7 @@ class Context(BaseModel):
 
         return parent_path + [child_index]
 
-    def _get_replay_span_at_path(self, path: list[int]) -> "SpanTree | None":
+    def _get_replay_span_at_path(self, path: list[int]) -> "ExecutionSpan | None":
         """
         Look up a span in the replay tree at the given path.
 
@@ -225,7 +234,7 @@ class Context(BaseModel):
         name: str,
         span_type: str = "component",
         tags: list[str] | None = None
-    ) -> "SpanTree":
+    ) -> "ExecutionSpan":
         """
         Start a new span for a component and add to execution stack.
 
@@ -242,7 +251,6 @@ class Context(BaseModel):
         Returns:
             SpanTree instance for this component (either from replay or newly created)
         """
-        from .span_tree import SpanTree
 
         tags = tags or []
 
@@ -271,16 +279,13 @@ class Context(BaseModel):
             top_level_path = str(span_index)  # "0", "1", "2", ...
 
             # Create ExecutionSpan directly
-            exec_span = await ExecutionSpan(
+            span_tree = await ExecutionSpan(
                 name=name,
                 span_type=span_type,
                 tags=tags,
                 path=top_level_path,
                 parent_span_id=None  # Top-level, no parent
             ).save()
-
-            # Wrap in SpanTree
-            span_tree = SpanTree(exec_span, parent=None, index=span_index)
 
             # Add to top-level spans list
             self._top_level_spans.append(span_tree)
@@ -343,7 +348,7 @@ class Context(BaseModel):
 
         return component
     
-    def get_span(self, path: list[int]) -> "SpanTree | None":
+    def get_span(self, path: list[int]) -> "ExecutionSpan | None":
         """
         Get a span by its full path from the top-level spans.
         Path format: [top_level_index, child_index, child_child_index, ...]
@@ -593,6 +598,7 @@ class Context(BaseModel):
             auth = self._auth.__enter__()
         branch = await self._handle_tasks()
         v_models, models = self.get_models()
+        self._artifact_log = ArtifactLog(self.branch, self.turn)
         for model in models:
             model.__enter__()
         # Only enter branch context if we have a branch

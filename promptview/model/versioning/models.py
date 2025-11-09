@@ -11,7 +11,7 @@ from promptview.model.base.types import ArtifactKind
 from promptview.model.db_types import Tree
 from promptview.model.sql2.expressions import Raw
 from promptview.model.sql2.relations import RawRelation
-from promptview.model.versioning.artifact_log import ArtifactLog
+
 from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
 
 
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from ...block import Block
     from promptview.model.sql2.relational_queries import SelectQuerySet
     from promptview.model.sql2.pg_query_builder import PgQueryBuilder
+    from promptview.model.versioning.artifact_log import ArtifactLog
+    from ...prompt.context import Context
 
 # ContextVars for current branch/turn
 _curr_branch = contextvars.ContextVar("curr_branch", default=None)
@@ -387,7 +389,9 @@ class Turn(Model):
         **kwargs
     ) -> "PgQueryBuilder[Self]":
         from ..postgres2.pg_query_set import PgSelectQuerySet
-        from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
+        from ..sql2.pg_query_builder import PgQueryBuilder, select
+        from ..versioning.artifact_log import ArtifactLog
+        
         query = select(cls)           
         if fields:
             query.select(*fields)
@@ -1070,6 +1074,11 @@ class ExecutionSpan(VersionedModel):
     # events: List[Event] = RelationField(foreign_key="execution_span_id")
     block_trees: List[BlockTree] = RelationField(foreign_key="span_id")
     
+    _parent_value: "DataFlowNode | None" = None
+    
+    @property
+    def parent_value(self) -> "DataFlowNode | None":
+        return self._parent_value
 
     @property
     def inputs(self) -> dict[str, "DataFlowNode"]:
@@ -1078,6 +1087,54 @@ class ExecutionSpan(VersionedModel):
     @property
     def outputs(self) -> list["DataFlowNode"]:
         return [v.value for v in self.values if v.io_kind == "output"]
+    
+    @property
+    def children(self) -> list["ExecutionSpan"]:
+        return [v.value for v in self.values if v.kind == "span"]
+    
+    @property
+    def ctx(self) -> "Context":
+        from ...prompt.context import Context
+        ctx = Context.current()
+        if ctx is None:
+            raise ValueError("Context is not set")
+        return ctx
+    
+    
+    async def log_value(self, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
+        from ...prompt.context import Context
+        return await self.ctx.artifact_log.log_value(self, target, alias, io_kind, name)
+    
+    
+    
+    async def add_child(self, name: str, span_type: SpanType = "component", tags: list[str] = []):
+        """
+        Add a child span to the current span by logging it as a span value.
+        The child will be accessible via the computed 'children' property.
+        """
+        # Compute child path
+        from ...prompt.context import Context
+        child_index = len(self.children)
+        child_path = f"{self.path}.{child_index}"        
+        
+
+        # Create child ExecutionSpan directly
+        child_span = await ExecutionSpan(
+            name=name,
+            span_type=span_type,
+            tags=tags,
+            path=child_path,
+            parent_span_id=self.id
+        ).save()        
+
+        # Log the SpanTree as a value - this adds it to _values
+        await self.ctx.artifact_log.log_value(self, child_span, io_kind="output")
+
+        return child_span
+
+    
+
+
 
 
 
