@@ -65,10 +65,10 @@ class ArtifactLog:
         for turn in turns:
             for span in turn.spans:
                 print(span.id, span.name)
-                for value in span.values:
+                for value in span.data:
                     if value.kind != "span":
                         print(value.path, value.kind, value.artifact_id)
-                        for da in value.data_artifacts:
+                        for da in value.artifact_data:
                           models_to_load[da.kind].append(da.artifact_id)  
                     else:
                         value._value = span_lookup[value.artifact_id]
@@ -92,10 +92,10 @@ class ArtifactLog:
 
         for turn in turns:
             for span in turn.spans:
-                for value in span.values:
+                for value in span.data:
                     if value.kind == "list":
                         value._value = []
-                        for da in value.data_artifacts:
+                        for da in value.artifact_data:
                             if da.kind == "list":
                                 value._container_value = model_lookup[da.kind][da.artifact_id]
                             else:
@@ -182,7 +182,7 @@ class ArtifactLog:
     async def log_value(self, execution_span: ExecutionSpan, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
         # Compute path for this value using in-memory counter
         if io_kind == "output":
-            index = len(execution_span.values)
+            index = len(execution_span.data)
             value_path = f"{execution_span.path}.{index}"
         elif io_kind == "input":
             value_path = execution_span.path + ".input"

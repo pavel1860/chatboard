@@ -238,7 +238,7 @@ class BlockLogQuery:
         if self.span_name:
             span_query = self._build_span_query(self.span_name)
             spans = await span_query
-            artifact_ids = [a.id for span in spans for sv in span.values for a in sv.artifacts]
+            artifact_ids = [a.id for span in spans for sv in span.data for a in sv.artifacts]
             if not artifact_ids:
                 return []
         def tree_to_block(tree):
@@ -263,7 +263,7 @@ class BlockLogQuery:
         if self.span_name:
             span_query = self._build_span_query(self.span_name)
             spans = await span_query
-            artifact_ids = [a.id for span in spans for sv in span.values for a in sv.artifacts]
+            artifact_ids = [a.id for span in spans for sv in span.data for a in sv.artifacts]
         if artifact_ids:
             query = query.where(lambda x: x.artifact_id.isin(artifact_ids))
         results = await query.json()

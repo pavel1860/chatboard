@@ -366,7 +366,7 @@ class SpanTree:
 
             # Reconstruct values for this span
             span._values = []
-            for v in span.root.values:
+            for v in span.root.data:
                 if v.kind == "list":
                     container = value_dict["list"][v.artifact_id]
                     if container is None:
@@ -538,7 +538,7 @@ class SpanTree:
 
             for i, s in enumerate(spans):
                 span_values = []
-                for v in s.values:
+                for v in s.data:
                     if skip_last and i == len(spans) - 1 and v.io_kind == "output":
                         continue
                     v.id = None
@@ -550,7 +550,7 @@ class SpanTree:
                     span_values.append(v)
                 span_values = await asyncio.gather(*[s.save() for s in span_values])
                 span_lookup[s.artifact_id] = s
-                s.values = span_values
+                s.data = span_values
         
         values = await cls.gather_artifacts(spans, branch_id, span_lookup)
         span_trees = await cls.load_span_list(spans, values)

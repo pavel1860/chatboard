@@ -265,33 +265,13 @@ class Turn(Model):
     metadata: dict | None = ModelField(default=None)
     artifacts: List["Artifact"] = RelationField(foreign_key="turn_id")
     spans: Tree["ExecutionSpan"] = RelationField(foreign_key="turn_id")
-    block_trees: List["BlockTree"] = RelationField(foreign_key="turn_id")
-    values: Tree["DataFlowNode"] = RelationField(foreign_key="turn_id")  # Turn-level values
-    test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")
-    # test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")
-    
+    test_turns: List["TestTurn"] = RelationField(foreign_key="turn_id")    
 
     _auto_commit: bool = True
     _raise_on_error: bool = True
 
     forked_branches: List["Branch"] = RelationField("Branch", foreign_key="forked_from_turn_id")
-    
-    @classmethod
-    def blocks(cls):
-        from ..block_models.block_log import parse_block_tree_turn
-        return cls.query().include(
-            BlockTree.query(alias="bt").select("*").include(
-                BlockNode.query(alias="bn").select("*").include(
-                    BlockModel.query(alias="bm").select("*")
-                )
-            )
-        ).parse(parse_block_tree_turn)
-        
-        
-    async def add_block(self, block: "Block", span_id: int | None = None):
-        from ..block_models.block_log import insert_block
-        return await insert_block(block, self.branch_id, self.id, span_id)
-        
+            
         
     async def commit(self):
         """Mark this turn as committed."""
@@ -409,11 +389,11 @@ class Turn(Model):
         if include_executions:
             query.include(
                 ExecutionSpan.query()
-                .include(Artifact)
-                .include(
-                    DataFlowNode.query()
-                    .include(DataArtifact)
-                )
+                    .include(Artifact)
+                    .include(
+                        DataFlowNode.query()
+                        .include(DataArtifact)
+                    )
             )
             query.parse(ArtifactLog.populate_turns, target="models")
         # if to_select:
@@ -1019,14 +999,11 @@ class DataFlowNode(Model):
         foreign_key="id",
         junction_model=DataArtifact,
     )
-    data_artifacts: list[DataArtifact] = RelationField(
+    artifact_data: list[DataArtifact] = RelationField(
         primary_key="id",
         foreign_key="value_id",
     )
-    value_artifacts: list[DataArtifact] = RelationField(
-        primary_key="id",
-        foreign_key="value_id",
-    )
+    
     alias: str | None = ModelField(default=None)
     name: str | None = ModelField(default=None)  # Keyword argument name (e.g., "count", "items")
     
@@ -1063,15 +1040,13 @@ class ExecutionSpan(VersionedModel):
     start_time: dt.datetime = ModelField(default_factory=dt.datetime.now)
     end_time: dt.datetime | None = ModelField(default=None)
     tags: list[str] | None = ModelField(default=None)
-    depth: int = ModelField(default=0)  # Nesting level
     metadata: dict[str, Any] = ModelField(default={})
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
     turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
     
     # Relations
-    values: List["DataFlowNode"] = RelationField([], foreign_key="span_id")
+    data: List["DataFlowNode"] = RelationField([], foreign_key="span_id")
     artifacts: List[Artifact] = RelationField(foreign_key="span_id")
-    # events: List[Event] = RelationField(foreign_key="execution_span_id")
     block_trees: List[BlockTree] = RelationField(foreign_key="span_id")
     
     _parent_value: "DataFlowNode | None" = None
@@ -1082,15 +1057,15 @@ class ExecutionSpan(VersionedModel):
 
     @property
     def inputs(self) -> dict[str, "DataFlowNode"]:
-        return {v.path.split(".")[-1]: v.value for v in self.values if v.io_kind == "input"}
+        return {v.path.split(".")[-1]: v.value for v in self.data if v.io_kind == "input"}
     
     @property
     def outputs(self) -> list["DataFlowNode"]:
-        return [v.value for v in self.values if v.io_kind == "output"]
+        return [v.value for v in self.data if v.io_kind == "output"]
     
     @property
     def children(self) -> list["ExecutionSpan"]:
-        return [v.value for v in self.values if v.kind == "span"]
+        return [v.value for v in self.data if v.kind == "span"]
     
     @property
     def ctx(self) -> "Context":

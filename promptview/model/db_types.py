@@ -108,11 +108,20 @@ class Tree(Generic[FOREIGN_MODEL]):
         raise ValueError(f"Invalid value: {value}. Use _validate_with_info instead.")
     
     @staticmethod
-    def _serialize(instance: "Tree | None") -> list | None:
+    def _serialize(instance: "Tree | None") -> dict | None:
         if instance is None:
             return None
-        # Return list of items in sorted order (dict maintains insertion order)
-        return list(instance.items.values())
+        # Serialize each item in the tree
+        # If items are Pydantic models, call model_dump() on them
+        d = {}
+        for path, item in instance.items.items():
+            if hasattr(item, 'model_dump'):
+                d[path] = item.model_dump()
+            elif hasattr(item, 'to_dict'):
+                d[path] = item.to_dict()
+            else:
+                d[path] = item
+        return d
     
     
     
