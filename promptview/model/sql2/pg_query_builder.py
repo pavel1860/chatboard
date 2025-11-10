@@ -360,13 +360,18 @@ class PgQueryBuilder(Generic[Ts]):
     
     
     def include(self, target: "Type[Model] | PgQueryBuilder") -> "PgQueryBuilder[Ts]":
+        from ..versioning.models import VersionedModel
         # Check if target is already a query builder with nested includes
         if isinstance(target, PgQueryBuilder):
             # Extract model type from the query builder's first source
             target_query_builder = target
+            model_cls = target.get_cls()
             # We'll use the existing query instead of creating a fresh one
         else:
+            model_cls = target            
             target_query_builder = None
+            
+        needs_versioning = issubclass(model_cls, VersionedModel)
 
         rel, relation_source = self._infer_relation(target)
         if rel is None:
@@ -452,6 +457,35 @@ class PgQueryBuilder(Generic[Ts]):
                 Coalesce(json_query, Value("'[]'", inline=True)),
                 alias=rel.name
             )
+            
+        if needs_versioning:
+            target_query = self.add_versioning_to_query(target_query)
+        return self
+    
+    
+    def add_versioning_to_query(self, target_query) -> "PgQueryBuilder[Ts]":
+        from ..versioning.models import Artifact
+        version_cte = next((cte for cte in self.query.ctes if cte.name == "artifacts_turns_branch_hierarchy"), None)
+        if version_cte is None:
+            version_cte = Artifact.query()
+            self.use_cte(version_cte, cte_name="artifact_cte")
+        target_query.join(version_cte, on=("artifact_id", "id"), alias="ac")
+        return target_query
+
+            
+            
+    
+    def checkout(self, branch_id: int) -> "PgQueryBuilder[Ts]":
+        from ..versioning.models import Artifact
+        art_query = Artifact.query(branch_id=branch_id)
+        self.join_cte(art_query, cte_name="artifact_cte", alias="ac")
+        return self
+    
+    
+    def use_versioning(self) -> "PgQueryBuilder[Ts]":
+        from ..versioning.models import Artifact
+        art_query = Artifact.query()
+        self.join_cte(art_query, cte_name="artifact_cte", alias="ac")
         return self
     
         
@@ -575,4 +609,5 @@ class PgQueryBuilder(Generic[Ts]):
 
 
 def select(*targets: Type[Ts], fields: list[str] | str | None = "*")->PgQueryBuilder[Ts]:
-    return PgQueryBuilder().select(*targets)
+    # return PgQueryBuilder().select(*targets)
+    return PgQueryBuilder().select(*targets).use_versioning()

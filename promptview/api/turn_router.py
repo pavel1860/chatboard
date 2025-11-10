@@ -28,8 +28,35 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         # exclude_routes={"update"}
     )
     
-    
     @turn_router.get("/spans")
+    async def get_turn_data(
+        list_params: ListParams = Depends(get_list_params),
+        filters: QueryListType | None = Depends(query_filters),
+        ctx = Depends(get_model_ctx)
+    ):
+        """
+        Get turns with their span trees using the new SpanTree architecture.
+
+        This endpoint uses SpanTree.from_turn() which handles:
+        - Loading ExecutionSpans with their hierarchy
+        - Loading DataFlowNodes with the DataArtifact junction table
+        - Instantiating actual model instances for values
+        - Building the complete tree structure
+        """
+        from ..prompt.span_tree import SpanTree
+
+        async with ctx:
+            turns = await (
+                Turn.query(include_executions=True)
+                .include(TestTurn)
+                .where(Turn.status == TurnStatus.COMMITTED)
+                .limit(10)
+                .offset(0)
+                .order_by("-created_at")
+            )
+            return turns
+    
+    @turn_router.get("/spans3")
     async def get_turn_spans(
         list_params: ListParams = Depends(get_list_params),
         filters: QueryListType | None = Depends(query_filters),

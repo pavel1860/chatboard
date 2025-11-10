@@ -373,7 +373,7 @@ class Turn(Model):
         from ..sql2.pg_query_builder import PgQueryBuilder, select
         from ..versioning.artifact_log import ArtifactLog
         
-        query = select(cls)           
+        query = PgQueryBuilder().select(cls)       
         if fields:
             query.select(*fields)
         if alias:
@@ -520,7 +520,7 @@ class Artifact(Model):
         # from ..postgres2.pg_query_set import PgSelectQuerySet
         
         from promptview.model.sql2.pg_query_builder import PgQueryBuilder, select
-        query = select(cls)
+        query = PgQueryBuilder().select(cls)
         
         if fields:
             query.select(*fields)
@@ -682,7 +682,11 @@ class VersionedModel(Model):
             turn_cte=turn_cte,
             include_branch_turn=include_branch_turn
         )
-        return select(cls).join_cte(art_cte, "artifact_cte", alias="ac")
+        return (
+            PgQueryBuilder()
+            .select(cls)
+            .join_cte(art_cte, "artifact_cte", alias="ac")
+        )
         
         
         # return (
@@ -1064,6 +1068,9 @@ class DataFlowNode(Model):
             return [get_value(v) for v in self._value]
         return get_value(self)
 
+    @property
+    def value_or_none(self) -> Any | None:
+        return self._value
 
     @property
     def index(self) -> int:
@@ -1072,13 +1079,15 @@ class DataFlowNode(Model):
     
     
     
-    def model_dump(self) -> dict:
-        dump = super().model_dump()
+    def model_dump(self, *args, **kwargs) -> dict:
+        dump = super().model_dump(*args, **kwargs)
         
         if self.kind == "list":
             dump["value"] = [v.model_dump() for v in self.value]
-        else:                
-            dump["value"] = self.value.model_dump()
+        elif self._value is not None:     
+            dump["value"] = self._value.model_dump()
+        else:
+            dump["value"] = None
         return dump
    
 

@@ -258,9 +258,9 @@ class Model(BaseModel, metaclass=ModelMeta):
     ) -> "PgQueryBuilder[Self]":
         # from .postgres2.pg_query_set import PgSelectQuerySet
         # query = PgSelectQuerySet(cls, alias=alias).select(*fields if fields else "*")
-        from .sql2.pg_query_builder import select
-        query = select(cls)
-        return query
+        from .sql2.pg_query_builder import PgQueryBuilder
+        # query = select(cls)
+        return PgQueryBuilder().select(cls)
         
         
     @classmethod
