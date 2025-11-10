@@ -101,24 +101,25 @@ class ArtifactLog:
                 return "parameters"
             elif k == "block":
                 return "block_trees"
+            elif k == "span":
+                return "execution_spans"
             return k
 
-        models_to_load = defaultdict(list)        
-        span_lookup = {s.artifact.id: s for turn in turns for s in turn.spans}
+        models_to_load = defaultdict(list)
+
         for turn in turns:
-            for span in turn.spans:
-                print(span.id, span.name)
-                for value in span.data:
-                    if value.kind != "span":
-                        print(value.path, value.kind, value.artifact_id)
-                        for da in value.artifact_data:
-                          models_to_load[da.kind].append(da.artifact_id)  
-                    else:
-                        value._value = span_lookup[value.artifact_id]
-                        span._parent_value = value
-                        # models_to_load[value.kind] += value.data_artifacts
+            for value in turn.data:        
+                print(value.path, value.kind, value.artifact_id)
+                for da in value.artifact_data:
+                    models_to_load[da.kind].append(da.artifact_id)  
+                # else:
+                #     value._value = span_lookup[value.artifact_id]
+                #     span._parent_value = value
+                    # models_to_load[value.kind] += value.data_artifacts
                     
-        model_lookup = {"span": {s.artifact_id: s for turn in turns for s in turn.spans}}
+        model_lookup = {}
+
+
         for k in models_to_load:
             if k == "list":
                 models = await Artifact.query(include_branch_turn=True).where(Artifact.id.isin(models_to_load[k]))
@@ -133,22 +134,18 @@ class ArtifactLog:
                 models = await ns._model_cls.query(include_branch_turn=True).where(ns._model_cls.artifact_id.isin(models_to_load[k]))
                 model_lookup[k] = {m.artifact_id: m for m in models}
 
-        for turn in turns:
-            for span in turn.spans:
-                for value in span.data:
-                    if value.kind == "list":
-                        value._value = []
-                        for da in value.artifact_data:
-                            if da.kind == "list":
-                                value._container_value = model_lookup[da.kind][da.artifact_id]
-                            else:
-                                value._value.append(model_lookup[da.kind][da.artifact_id])
-                    else:
-                        value._value = model_lookup[value.kind][value.artifact_id]
-                    
-                    
-        return turns
-    
+        for turn in turns:    
+            for value in turn.data:
+                if value.kind == "list":
+                    value._value = []
+                    for da in value.artifact_data:
+                        if da.kind == "list":
+                            value._container_value = model_lookup[da.kind][da.artifact_id]
+                        else:
+                            value._value.append(model_lookup[da.kind][da.artifact_id])
+                else:
+                    value._value = model_lookup[value.kind][value.artifact_id]
+        return turns    
     
     
 
@@ -207,12 +204,15 @@ class ArtifactLog:
             raise ValueError(f"Invalid io_kind: {io_kind}")
 
         if isinstance(target, list) and is_artifact_list(target):
-            container_artifact = await Artifact(
-                branch_id=ctx.branch_id,
-                turn_id=ctx.turn_id,
-                span_id=execution_span.id,  # NEW: Track creation context
-                kind="list",
-            ).save()
+            try:
+                container_artifact = await Artifact(
+                    branch_id=ctx.branch.id,
+                    turn_id=ctx.turn.id,
+                    span_id=span_id,  # NEW: Track creation context
+                    kind="list",
+                ).save()
+            except Exception as e:
+                raise e
 
             value = await execution_span.add(DataFlowNode(
                 span_id=span_id,
@@ -230,7 +230,7 @@ class ArtifactLog:
             for position, item in enumerate(target):
                 item, kind, artifact_id = _sanitize_target_value(item)
                 if kind == "block":
-                    block_item = await insert_block(item, ctx.branch_id, ctx.turn_id, span_id)
+                    block_item = await insert_block(item, ctx.branch.id, ctx.turn.id, span_id)
                     block_item._block = item
                     item = block_item
                     artifact_id = item.artifact_id
@@ -252,7 +252,7 @@ class ArtifactLog:
         else:
             target, kind, artifact_id = _sanitize_target_value(target)
             if kind == "block":
-                target = await insert_block(target, ctx.branch_id, ctx.turn_id, span_id)
+                target = await insert_block(target, ctx.branch.id, ctx.turn.id, span_id)
                 artifact_id = target.artifact_id
             elif kind == "span":
                 # For spans, get artifact from SpanTree or ExecutionSpan

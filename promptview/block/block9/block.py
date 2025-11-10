@@ -193,6 +193,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "attrs",
         "postfix",
         "prefix",
+        "artifact_id",
     ]
     
     def __init__(
@@ -208,6 +209,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         prefix: BlockSent | str | None = None,
         postfix: BlockSent | str | None = None,
         parent: "Block | None" = None,
+        artifact_id: int | None = None,
     ):
         super().__init__(
             content=self._init_content(content),
@@ -222,6 +224,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.styles: list[str] = styles or parse_style(style)
         # self.attrs: dict[str, AttrBlock] = get_attrs(attrs)
         self.attrs: dict[str, str] | None = attrs or {}
+        self.artifact_id: str | None = artifact_id
         self.content = self._init_content(content)
         # if content is None:
         #     self.content = BlockSent(parent=self)

@@ -99,7 +99,7 @@ def dump_block(blk: Block):
     return dumps
 
 
-def load_block_dump(dumps: list[dict]):
+def load_block_dump(dumps: list[dict], artifact_id: int | None = None):
     block_lookup = {}
     for dump in dumps:
         blk = Block(
@@ -110,6 +110,7 @@ def load_block_dump(dumps: list[dict]):
             tags=dump["tags"],
             prefix=load_sent_dump(dump['block']["json_content"]['prefix']) if dump['block']["json_content"]['prefix'] is not None else None,
             postfix=load_sent_dump(dump['block']["json_content"]['postfix']) if dump['block']["json_content"]['postfix'] is not None else None,
+            artifact_id=artifact_id,
         )
         block_lookup[dump["path"]] = blk
     

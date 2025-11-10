@@ -388,13 +388,21 @@ class Turn(Model):
                 .join_cte(branch_cte, "branch_hierarchy", on=("branch_id", "id"), alias="bh", recursive=True)
             )
         if include_executions:
-            query.include(
-                ExecutionSpan.query()
-                    .include(Artifact)
-                    .include(
-                        DataFlowNode.query()
-                        .include(DataArtifact)
-                    )
+            # query.include(
+            #     ExecutionSpan.query()
+            #         .include(Artifact)
+            #         .include(
+            #             DataFlowNode.query()
+            #             .include(DataArtifact)
+            #         )
+            # )
+                    
+            query = (
+                query
+                .include(
+                    DataFlowNode.query()
+                    .include(DataArtifact)            
+                )
             )
             query.parse(ArtifactLog.populate_turns, target="models")
         # if to_select:
@@ -743,6 +751,8 @@ class Parameter(VersionedModel):
     @property
     def value(self) -> SerializableType:
         return deserialize_value(self.data["value"], self.kind)
+    
+    
         
     
 
@@ -794,6 +804,29 @@ class BlockTree(VersionedModel):
     nodes: List[BlockNode] = RelationField(foreign_key="tree_id")
     span_id: int | None = ModelField(foreign_key=True)
     _block: "Block | None" = None
+    
+    
+    @classmethod
+    def query(cls: Type[Self], include_branch_turn: bool = False):
+        from ..sql2.pg_query_builder import select, PgQueryBuilder
+        from ..block_models.block_log import load_block_dump
+        async def to_block(trees: list[BlockTree]):
+            blocks = []
+            for tree in trees:
+                dump = tree.model_dump()
+                blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
+            return blocks
+        query =(
+            super()
+            .query(include_branch_turn=include_branch_turn)
+            .include(
+                BlockNode.query().include(
+                    BlockModel
+                )
+            )
+            .parse(to_block, target="models")
+        )
+        return query
     
 
 
@@ -1015,19 +1048,38 @@ class DataFlowNode(Model):
     
     @property
     def value(self) -> Any:
+        from ...block import Block
         if self._value is None:
             raise ValueError(f"no value for DataFlowNode {self.id}")
-        if self.kind == "parameter":
-            return self._value.value
-        # elif self.kind == "list":
-            # return [v for v in self._value]
-        return self._value
+        
+        def get_value(target: Any) -> Any:
+            if isinstance(target, Block):
+                return target
+            if target.kind == "parameter":
+                return target._value.value
+            # elif target.kind == "block":
+                # return target._value._block
+            return target._value
+        if self.kind == "list":
+            return [get_value(v) for v in self._value]
+        return get_value(self)
 
 
     @property
     def index(self) -> int:
         """Extract index from path (last segment)"""
         return int(self.path.split('.')[-1])
+    
+    
+    
+    def model_dump(self) -> dict:
+        dump = super().model_dump()
+        
+        if self.kind == "list":
+            dump["value"] = [v.model_dump() for v in self.value]
+        else:                
+            dump["value"] = self.value.model_dump()
+        return dump
    
 
 class ExecutionSpan(VersionedModel):
