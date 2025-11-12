@@ -76,7 +76,7 @@ class BaseNamespace(Generic[MODEL, FIELD]):
             raise ValueError(f"Field '{field.name}' already exists in '{self.name}' table")
         if field.is_primary_key:
             if self._primary_key_field:
-                raise ValueError(f"Primary key already defined: {self._primary_key_field.name}")
+                raise ValueError(f"Primary key already defined: {self._primary_key_field.name} in table {self.name}")
             self._primary_key_field = field
         if field.order_by:
             self._default_order_field = field

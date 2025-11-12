@@ -254,6 +254,11 @@ class Block(BlockSequence[BlockSent, "Block"]):
             return sent
         else:
             raise ValueError(f"Invalid sent type: {type(sent)}")
+        
+        
+    @property
+    def kind(self) -> str:
+        return "block"
 
     def _init_content(self, content: BlockContent | None) -> BlockSent:
         if content is None:

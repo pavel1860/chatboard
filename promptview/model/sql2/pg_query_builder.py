@@ -268,6 +268,10 @@ class PgQueryBuilder(Generic[Ts]):
                 if rel is not None:
                     return (rel, source)
         return (None, None)
+    
+    def distinct_on(self, *fields: str):
+        self.query.distinct(*fields)
+        return self
 
     
     def one(self) -> "QuerySetSingleAdapter[Ts]":
@@ -610,4 +614,8 @@ class PgQueryBuilder(Generic[Ts]):
 
 def select(*targets: Type[Ts], fields: list[str] | str | None = "*")->PgQueryBuilder[Ts]:
     # return PgQueryBuilder().select(*targets)
-    return PgQueryBuilder().select(*targets).use_versioning()
+    # return PgQueryBuilder().select(*targets).use_versioning()
+    query = targets[0].query()
+    for target in targets[1:]:
+        query.join(target.query())
+    return query

@@ -49,6 +49,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
             turns = await (
                 Turn.query(include_executions=True)
                 .include(TestTurn)
+                .include(Branch)
                 .where(Turn.status == TurnStatus.COMMITTED)
                 .limit(10)
                 .offset(0)

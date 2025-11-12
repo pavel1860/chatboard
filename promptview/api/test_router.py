@@ -51,7 +51,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
         test_case = await (
             TestCase.query()
             .include(TestTurn)
-            .where(lambda tc: tc.id == test_case_id)
+            .where(TestCase.id == test_case_id)
             .first()
         )
 
@@ -77,7 +77,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
         test_runs = await (
             TestRun.query()
             .include(TurnEval)
-            .where(lambda tr: tr.test_case_id == test_case_id)
+            .where(TestRun.test_case_id == test_case_id)
             .order_by("-created_at")
             .limit(list_params.limit)
             .offset(list_params.offset)
@@ -98,9 +98,9 @@ def create_test_router(context_cls: Type[Context] | None = None):
         payload = await request.json()
         if not payload.get("test_case_id"):
             raise HTTPException(status_code=400, detail="test_case_id is required")
-        test_case = await TestCase.query().include(TestTurn).where(lambda tc: tc.id == payload["test_case_id"]).first()
+        test_case = await TestCase.query().include(TestTurn).where(TestCase.id == payload["test_case_id"]).first()
         
-        turns = await Turn.query().where(lambda t: t.id.isin([turn.turn_id for turn in test_case.test_turns])).order_by("-index")
+        turns = await Turn.query().where(Turn.id.isin([turn.turn_id for turn in test_case.test_turns])).order_by("-index")
         
         if not test_case or not turns:
             raise HTTPException(status_code=404, detail="Test case not found")
@@ -135,7 +135,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
                 TurnEval.query()
                 .include(ValueEval)
             )
-            .where(lambda tr: tr.id == test_run_id)
+            .where(TestRun.id == test_run_id)
             .first()
         )
 
@@ -171,7 +171,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
         # First get all turn_eval_ids for this test run
         turn_evals = await (
             TurnEval.query()
-            .where(lambda te: te.test_run_id == test_run_id)
+            .where(TurnEval.test_run_id == test_run_id)
             .select("id")
         )
 
@@ -182,21 +182,21 @@ def create_test_router(context_cls: Type[Context] | None = None):
 
         # Build value eval query with filters
         query = ValueEval.query().where(
-            lambda ve: ve.turn_eval_id.isin(turn_eval_ids)
+            ValueEval.turn_eval_id.isin(turn_eval_ids)
         )
 
         # Apply optional filters
         if evaluator:
-            query = query.where(lambda ve: ve.evaluator == evaluator)
+            query = query.where(ValueEval.evaluator == evaluator)
 
         if min_score is not None:
-            query = query.where(lambda ve: ve.score >= min_score)
+            query = query.where(ValueEval.score >= min_score)
 
         if max_score is not None:
-            query = query.where(lambda ve: ve.score <= max_score)
+            query = query.where(ValueEval.score <= max_score)
 
         if status:
-            query = query.where(lambda ve: ve.status == status)
+            query = query.where(ValueEval.status == status)
 
         # Apply pagination and ordering
         value_evals = await (
@@ -227,7 +227,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
         """
         test_runs = await (
             TestRun.query()
-            .where(lambda tr: tr.test_case_id == test_case_id)
+            .where(TestRun.test_case_id == test_case_id)
             .order_by("-created_at")
             .limit(run_count)
         )

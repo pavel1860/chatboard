@@ -557,7 +557,10 @@ class VersionedModel(Model):
     
     def _build_insert_query(
         self, 
-        branch: Branch | int | None = None, turn: Turn | int | None = None, version: int = 1):
+        branch: Branch | int | None = None, turn: Turn | int | None = None, 
+        version: int = 1,
+        exclude: set[str] | None = None
+    ):
         # Import here to avoid circular dependency        
         from ...prompt.context import Context, ContextError
         ctx = Context.current()
@@ -568,27 +571,6 @@ class VersionedModel(Model):
         turn_id = Turn.resolve_target_id(turn)
         
         span_id = ctx.current_span.id if ctx.current_span else None
-        
-
-        # Resolve branch_id: explicit param > Context.branch > Branch.current()
-        # if branch is not None:
-        #     branch_id = Branch.resolve_target_id(branch)
-        # elif ctx is not None and ctx._branch is not None:
-        #     branch_id = ctx._branch.id
-        # else:
-        #     branch_id = Branch.resolve_target_id(branch)  # Will try Branch.current()
-
-        # # Resolve turn_id: explicit param > Context.turn > Turn.current()
-        # if turn is not None:
-        #     turn_id = Turn.resolve_target_id(turn)
-        # elif ctx is not None and ctx._turn is not None:
-        #     turn_id = ctx._turn.id
-        # else:
-        #     turn_id = Turn.resolve_target_id(turn)  # Will try Turn.current()
-
-        # If we have Context but no branch/turn, return None to signal in-memory mode
-        # if ctx is not None and (branch_id is None or turn_id is None):
-        #     return None
 
         # If we still don't have branch/turn, this will fail (expected for non-Context usage)
         ns = self.get_namespace()
@@ -600,7 +582,7 @@ class VersionedModel(Model):
             turn_id=turn_id,
             span_id=span_id
         ).insert()
-        dump = self.model_dump()
+        dump = self.model_dump(exclude=exclude)
         dump["artifact_id"] = art_query.col("id")
         return ns.insert(dump).select("*").one().json()                        
 
@@ -659,8 +641,8 @@ class VersionedModel(Model):
         include_branch_turn: bool = False,
         **kwargs
     ) -> "PgQueryBuilder[Self]":
-        from ..postgres2.pg_query_set import PgSelectQuerySet
-        from ..sql2.pg_query_builder import select
+        # from ..postgres2.pg_query_set import PgSelectQuerySet
+        from ..sql2.pg_query_builder import select, PgQueryBuilder
         
         # if turn_cte is None:
         #     turn_cte = Turn.query(branch=branch, to_select=True)
@@ -845,6 +827,8 @@ class ArtifactModel(VersionedModel):
     """VersionedModel with artifact tracking."""
     _is_base = True
     _dirty_fields: dict[str, Any] = {}
+    # es_id: int = KeyField(primary_key=True)
+    artifact_id: int = KeyField(primary_key=True)
     # id: int = KeyField(primary_key=True)
     # artifact_id: uuid.UUID = KeyField(
     #         default_factory=uuid.uuid4, 
@@ -862,11 +846,12 @@ class ArtifactModel(VersionedModel):
     
     async def _super_save(self):
         return await super().save()
+    
 
     async def save(self, *, branch: Branch | int | None = None, turn: Turn | int | None = None):        
         ns = self.get_namespace()
         if primary_key:= ns.get_primary_key(self):
-            result = await self._build_insert_query(branch, turn, self.artifact.version + 1)
+            result = await self._build_insert_query(branch, turn, self.artifact.version + 1, exclude={"artifact_id", "artifact"})
             # obj = self.model_copy(update={"turn_id": None, "branch_id": None})
             # obj.version += 1
             # return await obj._super_save()
@@ -875,20 +860,7 @@ class ArtifactModel(VersionedModel):
         self._dirty_fields = {}
         return result
     
-    # @classmethod
-    # def query(
-    #     cls: Type[Self], 
-    #     fields: list[str] | None = None, 
-    #     alias: str | None = None, 
-    #     use_ctx: bool = True,
-    #     **kwargs
-    # ) -> "PgSelectQuerySet[Self]":  
-    #     query = (
-    #         PgSelectQuerySet(cls, alias=alias) \
-    #         .distinct_on("artifact_id")
-    #         .order_by("-artifact_id", "-version")
-    #     ) 
-    #     return query
+
     
     @classmethod
     def query(
@@ -905,8 +877,8 @@ class ArtifactModel(VersionedModel):
         direction: Literal["asc", "desc"] = "desc",
         include_branch_turn: bool = False,
         **kwargs
-    ) -> "PgSelectQuerySet[Self]":
-        from ..postgres2.pg_query_set import PgSelectQuerySet
+    ) -> "PgQueryBuilder[Self]":
+        from ..sql2.pg_query_builder import PgQueryBuilder
         
         art_cte = Artifact.query(
             statuses=statuses, 
@@ -918,14 +890,21 @@ class ArtifactModel(VersionedModel):
             include_branch_turn=include_branch_turn
         )
         return (
-            PgSelectQuerySet(cls, alias=alias) \
-            .use_cte(
-                art_cte,
-                name="artifact_cte",
-                alias="ac",
-            )
-            .select(*fields if fields else "*")
+            PgQueryBuilder()
+            .select(cls)
+            .distinct_on("id")
+            .order_by("-id", "-version")
+            .join_cte(art_cte, "artifact_cte", alias="ac")
         )
+        # return (
+        #     PgSelectQuerySet(cls, alias=alias) \
+        #     .use_cte(
+        #         art_cte,
+        #         name="artifact_cte",
+        #         alias="ac",
+        #     )
+        #     .select(*fields if fields else "*")
+        # )
 
     
         
@@ -1057,16 +1036,22 @@ class DataFlowNode(Model):
             raise ValueError(f"no value for DataFlowNode {self.id}")
         
         def get_value(target: Any) -> Any:
-            if isinstance(target, Block):
-                return target
+            # if isinstance(target, Block):
+            #     return target
             if target.kind == "parameter":
                 return target._value.value
-            # elif target.kind == "block":
-                # return target._value._block
+            elif target.kind == "block":
+                return target
             return target._value
         if self.kind == "list":
             return [get_value(v) for v in self._value]
         return get_value(self)
+    
+    @property
+    def list_kind(self) -> list[str] | None:
+        if self.kind != "list" or self._value is None:
+            return None
+        return [v.kind for v in self._value]
 
     @property
     def value_or_none(self) -> Any | None:
@@ -1081,9 +1066,14 @@ class DataFlowNode(Model):
     
     def model_dump(self, *args, **kwargs) -> dict:
         dump = super().model_dump(*args, **kwargs)
-        
+        dump["list_kind"] = None
         if self.kind == "list":
-            dump["value"] = [v.model_dump() for v in self.value]
+            if self._value is None:
+                dump["value"] = []
+                dump["list_kind"] = []
+            else:
+                dump["value"] = [v.model_dump() for v in self.value]
+                dump["list_kind"] = self.list_kind
         elif self._value is not None:     
             dump["value"] = self._value.model_dump()
         else:
