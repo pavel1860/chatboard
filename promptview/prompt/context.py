@@ -13,7 +13,7 @@ from ..utils.function_utils import call_function
 if TYPE_CHECKING:
     from fastapi import Request
     from .span_tree import SpanTree
-    from ..evaluation.context import EvaluationContext
+    from ..evaluation.eval_context import EvaluationContext
 
 # Context variable for implicit context passing across async boundaries
 _context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
@@ -462,7 +462,7 @@ class Context(BaseModel):
         Loads reference data and creates evaluation tracking objects.
         """
         from ..evaluation import EvaluationContext
-        from ..model import TestCase, TestRun, TurnEval, TestTurn
+        from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn, DataFlowNode
         from .span_tree import SpanTree
 
         # Load test case
@@ -476,9 +476,9 @@ class Context(BaseModel):
         test_turn = test_turns[0]
 
         # Load reference turn and span trees
-        ref_span_trees = await SpanTree.from_turn(test_turn.turn_id)
-        if not isinstance(ref_span_trees, list):
-            ref_span_trees = [ref_span_trees]
+        ref_turns = await Turn.query(include_executions=True).where(Turn.id.isin([turn.turn_id for turn in test_turns]))
+        if not isinstance(ref_turns, list):
+            ref_turns = [ref_turns]
 
         if test_run_id is not None:
             test_run = await TestRun.get(test_run_id)
@@ -508,7 +508,7 @@ class Context(BaseModel):
             test_run=test_run,
             turn_eval=turn_eval,
             test_turn=test_turn,
-            reference_span_trees=ref_span_trees
+            reference_turns=ref_turns
         )
 
         # Store in context

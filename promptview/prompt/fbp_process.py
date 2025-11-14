@@ -1382,7 +1382,7 @@ class ObservableProcess(Process):
             tags=self._tags
         )
         if self._load_eval_args:
-            self._replay_inputs = self.ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()        
+            self._replay_inputs = self.ctx.eval_ctx.get_eval_turn_inputs()
             bound, kwargs = await resolve_dependencies_kwargs(
                 self._gen_func,
                 args=self._replay_inputs,

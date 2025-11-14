@@ -1036,12 +1036,12 @@ class DataFlowNode(Model):
             raise ValueError(f"no value for DataFlowNode {self.id}")
         
         def get_value(target: Any) -> Any:
-            # if isinstance(target, Block):
-            #     return target
+            if isinstance(target, Block):
+                return target
             if target.kind == "parameter":
                 return target._value.value
             elif target.kind == "block":
-                return target
+                return target._value
             return target._value
         if self.kind == "list":
             return [get_value(v) for v in self._value]
@@ -1289,6 +1289,7 @@ class TestTurn(Model):
         default=[],
         description="Evaluators to run for values in this turn"
     )
+    turn: Turn = RelationField(foreign_key="id", primary_key="turn_id")
 
 
 class TestCase(Model):

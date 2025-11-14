@@ -11,7 +11,7 @@ from .matching import match_value_to_evaluators
 if TYPE_CHECKING:
     from ..prompt.span_tree import DataFlow, SpanTree
     from ..prompt.fbp_process import EvaluatorController
-    from ..model import TestCase, TestRun, TurnEval, TestTurn
+    from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn
 
 
 @dataclass
@@ -33,21 +33,26 @@ class EvaluationContext:
     test_turn: "TestTurn"
 
     # Reference span trees (for looking up values by path)
-    reference_span_trees: list["SpanTree"] = field(default_factory=list)
+    reference_turns: list["Turn"] = field(default_factory=list)
 
     # Track evaluation results
     results: list[dict[str, Any]] = field(default_factory=list)
     value_evals: list[ValueEval] = field(default_factory=list)
+    
+    
+    def get_eval_turn_inputs(self) -> list[Any]:
+        turn = self.reference_turns[0]
+        return [d.value for d in turn.data["1.0.*"]]
 
     
-    def get_eval_span_tree(self, path: list[int]) -> "SpanTree":
-        span_tree = self.reference_span_trees[path[0]].get(path[1:])
+    def get_eval_turn(self, path: list[int]) -> "SpanTree":
+        span_tree = self.reference_turns[path[0]].get(path[1:])
         if span_tree is None:
             raise ValueError(f"Span tree not found for path {path}")
         return span_tree
     
     def get_ref_value(self, path: list[int]) -> "DataFlow":
-        span_tree = self.reference_span_trees[0]
+        span_tree = self.reference_turns[0]
         if span_tree is None:
             raise ValueError(f"Span tree not found for path {path}")
         value = span_tree.get_value_by_path(path)
@@ -59,7 +64,7 @@ class EvaluationContext:
     def get_evaluators(self, value: "DataFlow") -> list["EvaluatorConfig"]:
         return match_value_to_evaluators(
             value,
-            self.get_eval_span_tree(value.path[:-1]),
+            self.reference_turns[0],
             self.test_turn.evaluators
         )
         
@@ -143,7 +148,7 @@ class EvaluationContext:
         """
         # Get reference value at same path by searching reference span trees
         ref_value = None
-        for ref_span_tree in self.reference_span_trees:
+        for ref_span_tree in self.reference_turns:
             ref_value = ref_span_tree.get_value_by_path(test_value.path)
             if ref_value:
                 break
