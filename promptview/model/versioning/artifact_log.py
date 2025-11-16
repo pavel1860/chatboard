@@ -109,7 +109,7 @@ class ArtifactLog:
 
         for turn in turns:
             for value in turn.data:        
-                print(value.path, value.kind, value.artifact_id)
+                # print(value.path, value.kind, value.artifact_id)
                 for da in value.artifact_data:
                     models_to_load[da.kind].append(da.artifact_id)  
                 # else:

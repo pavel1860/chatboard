@@ -41,7 +41,7 @@ def create_model_router(model: Type[MODEL], get_context: AsyncContextManager[CTX
 
             model_query = query.limit(limit).offset(offset).order_by("-created_at")
             if filters:
-                condition = parse_query_params(model, filters, model_query.from_table)
+                condition = parse_query_params(model, filters)
                 model_query.query.where(condition)
 
             # Parse include parameter

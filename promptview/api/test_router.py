@@ -1,10 +1,10 @@
 """API router for test and evaluation endpoints."""
 
 from typing import Type, List
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Body
 from .model_router import create_model_router
 from ..prompt.context import Context
-from ..model import Branch, TestCase, TestRun, TestTurn, TurnEval, ValueEval, Turn
+from ..model import Branch, EvaluatorConfig, TestCase, TestRun, TestTurn, TurnEval, ValueEval, Turn
 from .utils import ListParams, get_list_params
 
 
@@ -16,7 +16,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
         return await context_cls.from_request(request)
 
     # Create base routers for each model
-    test_case_router = create_model_router(TestCase, get_model_ctx)
+    test_case_router = create_model_router(TestCase, get_model_ctx, exclude_routes={"create"})
     test_run_router = create_model_router(TestRun, get_model_ctx)
     turn_eval_router = create_model_router(TurnEval, get_model_ctx)
     value_eval_router = create_model_router(ValueEval, get_model_ctx)
@@ -50,7 +50,7 @@ def create_test_router(context_cls: Type[Context] | None = None):
         """
         test_case = await (
             TestCase.query()
-            .include(TestTurn)
+            .include(TestTurn.query().include(EvaluatorConfig))
             .where(TestCase.id == test_case_id)
             .first()
         )
@@ -84,6 +84,37 @@ def create_test_router(context_cls: Type[Context] | None = None):
         )
 
         return [run.model_dump() for run in test_runs]
+    
+    
+    @router.post("/TestCase/create")
+    async def create_test_case(
+        payload: dict = Body(...),
+        ctx = Depends(get_model_ctx)
+    ):
+        """Create a new model"""
+        try:                    
+            test_case = await TestCase(
+                title=payload["title"],
+                description=payload["description"],
+                branch_id=payload["branch_id"],
+                user_id=payload["user_id"],
+            ).save()
+            
+            for test_turn_payload in payload["test_turns"]:
+                test_turn = await test_case.add(TestTurn(
+                    turn_id=test_turn_payload["turn_id"],
+                    # evaluators=test_turn_payload["evaluators"],
+                ))
+                for idx, (path, evaluator) in enumerate(test_turn_payload["evaluators"].items()):
+                    await test_turn.add(EvaluatorConfig(
+                        name=evaluator["name"],
+                        path=path,
+                        tags=evaluator["tags"],
+                        metadata=evaluator["metadata"],
+                    ))            
+            return test_case
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
     
     
     

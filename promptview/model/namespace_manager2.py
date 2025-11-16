@@ -103,8 +103,8 @@ class NamespaceManager:
             if hasattr(ns, "add_foreign_keys"):
                 await ns.add_foreign_keys()
         print("Added all foreign keys")
-        if init_main_branch:
-            await cls.init_main_branch()
+        # if init_main_branch:
+            # await cls.init_main_branch()
         end_time = time.time()
         print(f"initialize_all took {end_time - start_time} seconds")
         cls._initialized = True

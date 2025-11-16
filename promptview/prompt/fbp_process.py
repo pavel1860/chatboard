@@ -1541,7 +1541,7 @@ class ObservableProcess(Process):
             current = current.parent if hasattr(current, 'parent') else None
         return path
 
-    def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False):
+    def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False) -> "FlowRunner":
         """
         Return a FlowRunner that streams events from this process.
 
@@ -2175,13 +2175,15 @@ class FlowRunner:
                 # Process exhausted, pop from stack
                 process = self.pop()
                                 
-                await self._try_evaluate_value(process)
+                
 
                 # Get the response from the completed process
                 if hasattr(process, 'get_response'):
                     response = process.get_response()
                 else:
                     response = self.last_value
+                    
+                await self._try_evaluate_value(process)
 
                 # If there's a parent waiting, save the response to send
                 if self.stack:
@@ -2207,8 +2209,8 @@ class FlowRunner:
                     raise e
                 
                 
-        if not self.stack:
-            result = await self._commit_evaluation()
+        # if not self.stack:
+            # result = await self._commit_evaluation()
         await self.exit_context()
         raise StopAsyncIteration
     
@@ -2233,14 +2235,16 @@ class FlowRunner:
     async def _try_evaluate_value(self, process: Process):
         """Try to evaluate value based on evaluation context."""
         eval_ctx = self.ctx._evaluation_context
-        value = process._last_value if hasattr(process, '_last_value') else None
+        value = process._stream_value if hasattr(process, '_stream_value') else None
+        # value = process._last_value if hasattr(process, '_last_value') else None
         if eval_ctx is None or value is None:
             return
         
+        await eval_ctx.build_turn_eval_from_current()        
         for gen_func, ctx in eval_ctx.get_evaluator_handlers(value):
             ref_value = eval_ctx.get_ref_value(value.path)
             score, metadata = await gen_func(ctx, ref_value, value)
-            value_eval = await eval_ctx.log_value_eval(value, score, metadata, ctx.config)
+            value_eval = await eval_ctx.log_eval(value, score, metadata, ctx.config)
         
 
 

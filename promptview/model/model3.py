@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     # from .postgres2.pg_query_set import PgSelectQuerySet
     from .sql2.pg_query_builder import PgQueryBuilder
     from .base.base_namespace import BaseNamespace
+    from .relation_info import RelationInfo
 
 MODEL = TypeVar("MODEL", bound="Model")
 JUNCTION_MODEL = TypeVar("JUNCTION_MODEL", bound="Model")
@@ -200,10 +201,28 @@ class Model(BaseModel, metaclass=ModelMeta):
             key = getattr(self, relation.primary_key)
             setattr(model, relation.foreign_key, key)
             result = await model.save()
+            
         field = getattr(self, relation.name)
-        if field is not None and should_append:
-            field.append(result)
+        if should_append:
+            if relation.is_one_to_one:
+                setattr(self, relation.name, result)
+            else:
+                if field is None:
+                    field = self._resulve_container_default(relation)
+                    setattr(self, relation.name, field)
+                field.append(result)
         return result
+    
+    def _resulve_container_default(self, relation: "RelationInfo"):
+        from typing import List
+        from .db_types import Tree
+        if relation.container_type in (List, list):
+            return []
+        elif relation.container_type is Tree:
+            return Tree([], relation)
+        else:
+            raise ValueError(f"Unsupported container type: {relation}")
+        
     
     
     async def include(self, field: str, limit: int | None = None) -> Self:

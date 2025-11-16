@@ -1,15 +1,17 @@
-from typing import Literal, Set
+from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, TYPE_CHECKING
 from fastapi.responses import StreamingResponse
-from ..prompt import SpanTree
+from ..prompt import PipeController, SpanTree
 from ..prompt.context import Context
-from ..prompt.flow_components import EventLogLevel
+from ..prompt.flow_components import EventLogLevel, FlowRunner
 from ..block.util import StreamEvent
 from ..block import Block
 from ..api.utils import get_auth, get_request_content, get_request_ctx
 from ..auth.user_manager2 import AuthModel
 from fastapi import APIRouter, FastAPI, Query, Request, Depends
 import datetime as dt
-
+from ..evaluation import EvaluationContext
+if TYPE_CHECKING:   
+    from ..model import Branch
 
 
 async def get_ctx_from_request(request: Request):
@@ -46,9 +48,13 @@ async def get_ctx_from_request(request: Request):
 #                     yield message, user, partition, branch
 
 
+P = ParamSpec("P")
 
-
-class Agent():
+class Agent(Generic[P]):
+    name: str
+    # agent_component: Callable[P, AsyncGenerator[StreamEvent, None]]
+    agent_component: Callable[P, PipeController]
+    ingress_router: APIRouter
     
     def __init__(self, agent_component, name: str | None = None):
         self.name = name or "default"
@@ -182,27 +188,65 @@ class Agent():
     #         async for event in self.agent_component(*args).stream():
     #             yield event
     
-    def run_evaluate(
+    # def build
+    
+    def build_context(
+        self, 
+        auth: AuthModel, 
+        branch_id: int,
+        from_turn_id: int | None = None,
+        start_turn: bool = True,
+        eval_ctx: EvaluationContext | None = None,
+    ) -> Context:
+        ctx = Context(auth=auth, branch_id=branch_id, eval_ctx=eval_ctx)
+        if from_turn_id:
+            ctx.fork(turn_id=from_turn_id)       
+        if start_turn:
+            ctx = ctx.start_turn()         
+        return ctx
+    
+    async def build_flow_runner(
         self,
-        test_case_id: int,
+        auth,
+        branch_id: int,
+        load_eval_args: bool = False,
+    ) -> FlowRunner:
+        return self.agent_component().stream(ctx=ctx, load_eval_args=load_eval_args)
+    
+    async def run_evaluate(
+        self,        
+        eval_ctx: EvaluationContext | None = None,
+        test_case_id: int | None = None,
         test_run_id: int | None = None,
         auth: AuthModel | None = None,
     ):
-        ctx = Context(auth=auth)
-        ctx.start_eval(test_case_id=test_case_id, test_run_id=test_run_id)
-        # args = ctx.eval_ctx.get_eval_span_tree([0]).get_input_args()
-        return self.agent_component().stream(ctx=ctx, load_eval_args=True)
+        if eval_ctx is None:
+            if test_case_id is None:
+                raise ValueError("test_case_id is required if eval_ctx is not provided")
+            eval_ctx = await EvaluationContext(auth=auth).init(test_case_id=test_case_id, test_run_id=test_run_id)
+        if eval_ctx.did_start:
+            raise ValueError("Evaluation context already started")
+        
+        for test_turn in eval_ctx:
+            args = test_turn.turn.get_args()
+            ctx = self.build_context(auth=auth or eval_ctx.auth, branch_id=eval_ctx.branch.id, eval_ctx=eval_ctx)
+            async with ctx:
+                async for event in self.agent_component(*args).stream():
+                    yield event
+                await eval_ctx.commit_test_turn()
+            
 
     async def run_debug(
         self,
         message: Block | str,                
         auth: AuthModel | None = None,
-        branch_id: int | None = None,         
+        branch_id: int | None = None, 
+        branch: "Branch | None" = None,         
         auto_commit: bool = True,
         level: Literal["chunk", "span", "turn"] = "chunk",      
         **kwargs: dict,
     ):
-        ctx = await Context.from_kwargs(**kwargs, auth=auth)
+        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id)
         async with ctx.start_turn(auto_commit=auto_commit) as turn:            
             async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
                 print("--------------------------------")

@@ -41,6 +41,7 @@ class RelationInfo:
         self.relation_model = relation_model
         self.junction_keys = junction_keys or []
         self.is_reverse = is_reverse
+        self.container_type = container_type
         
     @property
     def foreign_cls(self) -> Type["Model"]:

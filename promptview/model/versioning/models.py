@@ -52,6 +52,7 @@ class Branch(Model):
     _namespace_name = "branches"
     id: int = KeyField(primary_key=True)
     name: str | None = ModelField(default=None)
+    kind: str | None = ModelField(default=None)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
     updated_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
     forked_from_index: int | None = ModelField(default=None)
@@ -79,6 +80,14 @@ class Branch(Model):
         branch = await cls.get_or_none(1)
         if branch is None:
             branch = await cls(name="main").save()
+        return branch
+    
+    
+    @classmethod
+    async def get_or_create(cls, id: int, name: str | None = None, kind: str | None = None):
+        branch = await cls.get_or_none(id)
+        if branch is None:
+            branch = await cls(name=name, kind=kind).save()
         return branch
     
     
@@ -272,7 +281,22 @@ class Turn(Model):
     _raise_on_error: bool = True
 
     forked_branches: List["Branch"] = RelationField("Branch", foreign_key="forked_from_turn_id")
-            
+    
+    
+    @property
+    def inputs(self) -> list["DataFlowNode"]:
+        return self.data["1.0.*"]
+    
+    
+    def get_kwargs(self) -> dict[str, Any]:        
+        kwargs = {}
+        for d in self.data["1.0.*"]:
+            path = d.path.split(".")[-1]
+            kwargs[path] = d.value
+        return kwargs
+    
+    def get_args(self) -> list[Any]:
+        return [d.value for d in self.data["1.0.*"]]
         
     async def commit(self):
         """Mark this turn as committed."""
@@ -1172,7 +1196,7 @@ class EvaluationFailure(Exception):
     pass
 
 
-class EvaluatorConfig(BaseModel):
+class EvaluatorConfig(Model):
     """
     Configuration for a value evaluator.
 
@@ -1184,12 +1208,14 @@ class EvaluatorConfig(BaseModel):
 
     All criteria are AND-ed together (value must match all specified criteria).
     """
-    name: str = Field(..., description="Evaluator function name")
-    path_pattern: str | None = Field(None, description="LTREE path pattern for SpanValue.path (e.g., '1.*', '*.0', '1.2.3')")
-    tags: list[str] = Field(default=[], description="Match values whose parent span has these tags")
-    span_name: str | None = Field(None, description="Match values whose parent span has this name")
+    id: int = KeyField(primary_key=True)
+    name: str = ModelField(..., description="Evaluator function name")
+    path: str = ModelField(..., db_type="LTREE", description="LTREE path pattern for SpanValue.path (e.g., '1.*', '*.0', '1.2.3')")
+    tags: list[str] = ModelField(default=[], description="Match values whose parent span has these tags")
+    span_name: str | None = ModelField(None, description="Match values whose parent span has this name")
     # value_name: str | None = Field(None, description="Match values by their name field")
-    metadata: dict = Field(default={}, description="Additional evaluator configuration")
+    metadata: dict = ModelField(default={}, description="Additional evaluator configuration")
+    test_turn_id: int = ModelField(foreign_key=True, description="Parent test turn")
 
 
 class ValueEval(Model):
@@ -1236,7 +1262,7 @@ class TurnEval(Model):
     test_run_id: int = ModelField(foreign_key=True, description="Parent test run")
 
     score: float | None = ModelField(default=None, description="Average score across all value evaluations")
-    value_evals: List[ValueEval] = RelationField(foreign_key="turn_eval_id")
+    value_evals: Tree[ValueEval] = RelationField(foreign_key="turn_eval_id")
     trace_id: str = ModelField(default="", description="Trace ID for debugging")
 
 
@@ -1285,11 +1311,22 @@ class TestTurn(Model):
     test_case_id: int = ModelField(foreign_key=True, description="Parent test case")
     turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn, description="Reference turn ID")
 
-    evaluators: List[EvaluatorConfig] = ModelField(
-        default=[],
+    evaluators: Tree[EvaluatorConfig] = RelationField(
+        foreign_key="test_turn_id",
         description="Evaluators to run for values in this turn"
     )
     turn: Turn = RelationField(foreign_key="id", primary_key="turn_id")
+    
+    
+    @property
+    def inputs(self) -> list[DataFlowNode]:
+        return self.turn.inputs
+    
+    def get_kwargs(self) -> dict[str, Any]:
+        return self.turn.get_kwargs()
+    
+    def get_args(self) -> list[Any]:
+        return self.turn.get_args()
 
 
 class TestCase(Model):

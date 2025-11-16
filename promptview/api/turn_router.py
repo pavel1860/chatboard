@@ -3,7 +3,7 @@ from fastapi import Depends, Request
 from .model_router import create_model_router
 from ..prompt.context import Context
 from ..model.query_url_params import parse_query_params, QueryListType
-from ..model import TurnStatus
+from ..model import EvaluatorConfig, TurnStatus
 from .utils import query_filters
 from ..model.block_models.block_log import get_blocks
 from ..model.versioning.models import Turn, ExecutionSpan, DataFlowNode, Log, Artifact, TestTurn
@@ -48,7 +48,7 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         async with ctx:
             turns = await (
                 Turn.query(include_executions=True)
-                .include(TestTurn)
+                .include(TestTurn.query().include(EvaluatorConfig))
                 .include(Branch)
                 .where(Turn.status == TurnStatus.COMMITTED)
                 .limit(10)

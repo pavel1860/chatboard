@@ -78,6 +78,7 @@ class Context(BaseModel):
         turn_id: int | None = None,
         request: "Request | None" = None,
         auth: AuthModel | None = None,
+        eval_ctx: "EvaluationContext | None" = None,
     ):
         super().__init__()
         self._ctx_models = {m.__class__.__name__:m for m in models}
@@ -94,6 +95,7 @@ class Context(BaseModel):
         self._turn = turn
         self._auth = auth
         self._initialized = False
+        self._evaluation_context = eval_ctx
         
     @property
     def request_id(self):
@@ -454,65 +456,75 @@ class Context(BaseModel):
     def fork(self, turn: Turn | None = None, turn_id: int | None = None) -> "Context":
         self._tasks.append(ForkTurn(turn=turn, turn_id=turn_id))
         return self
-
+    
     async def _setup_evaluation(self, test_case_id: int, test_run_id: int | None = None):
-        """
-        Setup evaluation context for the given test case.
-
-        Loads reference data and creates evaluation tracking objects.
-        """
         from ..evaluation import EvaluationContext
-        from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn, DataFlowNode
-        from .span_tree import SpanTree
+        self._evaluation_context = await EvaluationContext().init(test_case_id=test_case_id, test_run_id=test_run_id)
+        return self._evaluation_context
+    
+    
+    async def iter_replay(self):
+        if not self._evaluation_context:
+            raise ValueError("Evaluation context not setup")
+        return self._evaluation_context
+    # async def _setup_evaluation(self, test_case_id: int, test_run_id: int | None = None):
+    #     """
+    #     Setup evaluation context for the given test case.
 
-        # Load test case
-        test_case = await TestCase.get(test_case_id)
+    #     Loads reference data and creates evaluation tracking objects.
+    #     """
+    #     from ..evaluation import EvaluationContext
+    #     from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn, DataFlowNode
+    #     from .span_tree import SpanTree
 
-        # Get first test turn (for MVP, support single turn)
-        test_turns = await TestTurn.query().where(test_case_id=test_case_id).execute()
-        if not test_turns:
-            raise ValueError(f"No test turns found for test case {test_case_id}")
+    #     # Load test case
+    #     test_case = await TestCase.get(test_case_id)
 
-        test_turn = test_turns[0]
+    #     # Get first test turn (for MVP, support single turn)
+    #     test_turns = await TestTurn.query().where(test_case_id=test_case_id).execute()
+    #     if not test_turns:
+    #         raise ValueError(f"No test turns found for test case {test_case_id}")
 
-        # Load reference turn and span trees
-        ref_turns = await Turn.query(include_executions=True).where(Turn.id.isin([turn.turn_id for turn in test_turns]))
-        if not isinstance(ref_turns, list):
-            ref_turns = [ref_turns]
+    #     test_turn = test_turns[0]
 
-        if test_run_id is not None:
-            test_run = await TestRun.get(test_run_id)
-            if test_run is None:
-                raise ValueError(f"Test run {test_run_id} not found")
-            if test_run.status != "pending":
-                raise ValueError(f"Test run {test_run_id} is not pending. start a new test run to evaluate this test case.")
-        else:
-        # Create test run
-            test_run = await TestRun(
-                test_case_id=test_case_id,
-                status="running"
-            ).save()
+    #     # Load reference turn and span trees
+    #     ref_turns = await Turn.query(include_executions=True).where(Turn.id.isin([turn.turn_id for turn in test_turns]))
+    #     if not isinstance(ref_turns, list):
+    #         ref_turns = [ref_turns]
 
-        # Create turn evaluation
-        turn_eval = await TurnEval(
-            test_turn_id=test_turn.id,
-            ref_turn_id=test_turn.turn_id,
-            test_run_id=test_run.id
-        ).save()
+    #     if test_run_id is not None:
+    #         test_run = await TestRun.get(test_run_id)
+    #         if test_run is None:
+    #             raise ValueError(f"Test run {test_run_id} not found")
+    #         if test_run.status != "pending":
+    #             raise ValueError(f"Test run {test_run_id} is not pending. start a new test run to evaluate this test case.")
+    #     else:
+    #     # Create test run
+    #         test_run = await TestRun(
+    #             test_case_id=test_case_id,
+    #             status="running"
+    #         ).save()
 
-        # Create evaluation context
-        # Instead of building flat index, just pass the reference span trees
-        # EvaluationContext will use get_value_by_path() on-demand
-        eval_ctx = EvaluationContext(
-            test_case=test_case,
-            test_run=test_run,
-            turn_eval=turn_eval,
-            test_turn=test_turn,
-            reference_turns=ref_turns
-        )
+    #     # Create turn evaluation
+    #     turn_eval = await TurnEval(
+    #         test_turn_id=test_turn.id,
+    #         ref_turn_id=test_turn.turn_id,
+    #         test_run_id=test_run.id
+    #     ).save()
 
-        # Store in context
-        self._evaluation_context = eval_ctx
+    #     # Create evaluation context
+    #     # Instead of building flat index, just pass the reference span trees
+    #     # EvaluationContext will use get_value_by_path() on-demand
+    #     eval_ctx = EvaluationContext(
+    #         test_case=test_case,
+    #         test_run=test_run,
+    #         turn_eval=turn_eval,
+    #         test_turn=test_turn,
+    #         reference_turns=ref_turns
+    #     )
+
+    #     # Store in context
+    #     self._evaluation_context = eval_ctx
 
     async def load_replay(self, turn_id: int, span_id: int | None = None, branch_id: int | None = None) -> "Context":
         """

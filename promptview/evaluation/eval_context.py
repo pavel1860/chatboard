@@ -4,14 +4,16 @@ from typing import TYPE_CHECKING, Any, Callable
 from dataclasses import dataclass, field
 
 # from .models import EvaluatorConfig, ValueEval, EvaluationFailure
-from ..model import EvaluatorConfig, ValueEval, EvaluationFailure
+from ..model import Branch, EvaluatorConfig, ValueEval, EvaluationFailure
 from .decorators import get_evaluator, EvalCtx, evaluator_registry
 from .matching import match_value_to_evaluators
-
+from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn, DataFlowNode
+from ..model.versioning.artifact_log import ArtifactLog
 if TYPE_CHECKING:
     from ..prompt.span_tree import DataFlow, SpanTree
     from ..prompt.fbp_process import EvaluatorController
-    from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn
+    from ..auth import AuthModel
+    # from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn
 
 
 @dataclass
@@ -27,17 +29,93 @@ class EvaluationContext:
     - Handles early stopping
     """
 
-    test_case: "TestCase"
-    test_run: "TestRun"
-    turn_eval: "TurnEval"
-    test_turn: "TestTurn"
+    # test_case: "TestCase"
+    # test_run: "TestRun"
+    # turn_eval: "TurnEval"
+    # test_turn: "TestTurn"
+    # test_case_id: int
+    # test_run_id: int | None
 
     # Reference span trees (for looking up values by path)
+    auth: "AuthModel"
     reference_turns: list["Turn"] = field(default_factory=list)
-
     # Track evaluation results
     results: list[dict[str, Any]] = field(default_factory=list)
-    value_evals: list[ValueEval] = field(default_factory=list)
+    value_evals: list[ValueEval] = field(default_factory=list)    
+    _did_start: bool = field(default=False)
+    
+    # def __init__(self, test_case: "TestCase", test_run: "TestRun"):
+    @property
+    def current_turn_eval(self) -> "TurnEval":
+        if self.test_run is None or not self.test_run.turn_evals:
+            raise ValueError("No turn evals found")
+        return self.test_run.turn_evals[-1]
+    
+    
+    @property
+    def did_start(self) -> bool:
+        return self._did_start
+    
+    
+    
+    async def init(self, test_case_id: int, test_run_id: int | None = None):
+        self.test_case = await TestCase.query().where(id=test_case_id).include(
+                TestTurn.query()
+                    .include(EvaluatorConfig)
+                    # .include(Turn.query().include(DataFlowNode))
+                    .include(Turn.query(include_executions=True))
+                ).one()
+        if self.test_case is None:
+            raise ValueError(f"Test case not found for id {test_case_id}")
+        turns = [t.turn for t in self.test_case.test_turns]
+        turns = await ArtifactLog.populate_turns(turns)
+        if test_run_id is not None:
+            self.test_run = await TestRun.query().where(id=test_run_id).one()
+        else:
+            self.test_run = await TestRun(
+                test_case_id=test_case_id,
+                status="running"
+            ).save()
+        # for test_turn in self.test_case.test_turns:
+        #     turn_eval = await test_run.add(
+        #         TurnEval(
+                    
+        #         )
+        #     )
+        self.current_test_turn = None
+        self.current_test_turn_index = 0
+        self.source_branch = await Branch.get(self.test_case.branch_id)
+        fork_turn = turns[0]
+        self.branch = await self.source_branch.fork_branch(fork_turn)
+        return self
+    
+    
+    
+    
+    
+    def get_next_test(self) -> "TestTurn | None":
+        if not self.did_start:
+            self._did_start = True            
+        if self.current_test_turn is None:
+            self.current_test_turn = self.test_case.test_turns[0]
+            self.current_test_turn_index = 1
+        else:
+            if self.current_test_turn_index >= len(self.test_case.test_turns):
+                return None
+            self.current_test_turn = self.test_case.test_turns[self.current_test_turn_index + 1]
+            self.current_test_turn_index += 1
+        return self.current_test_turn
+    
+    
+    def __iter__(self):
+        return self
+    
+    
+    def __next__(self):
+        res = self.get_next_test()
+        if res is None:
+            raise StopIteration
+        return res
     
     
     def get_eval_turn_inputs(self) -> list[Any]:
@@ -52,16 +130,15 @@ class EvaluationContext:
         return span_tree
     
     def get_ref_value(self, path: list[int]) -> "DataFlow":
-        span_tree = self.reference_turns[0]
-        if span_tree is None:
-            raise ValueError(f"Span tree not found for path {path}")
-        value = span_tree.get_value_by_path(path)
-        if value is None:
-            raise ValueError(f"Value not found for path {path}")
-        return value
+        value = self.current_test_turn.turn.data[path]
+        return value[0]
+        
     
     
     def get_evaluators(self, value: "DataFlow") -> list["EvaluatorConfig"]:
+        if self.current_test_turn is None:
+            raise ValueError("Current test turn not set")
+        return self.current_test_turn.evaluators[f"{value.path}.test.*"]
         return match_value_to_evaluators(
             value,
             self.reference_turns[0],
@@ -69,7 +146,7 @@ class EvaluationContext:
         )
         
         
-    def get_evaluator_handlers(self, value: "DataFlow") -> list[tuple[Callable, EvalCtx]]:
+    def get_evaluator_handlers(self, value: "DataFlowNode") -> list[tuple[Callable, EvalCtx]]:
         evaluator_handlers = []
         for evaluator_config in self.get_evaluators(value):
             gen_func = evaluator_registry.get(evaluator_config.name)
@@ -84,23 +161,44 @@ class EvaluationContext:
         return evaluator_handlers
     
     
-    async def log_value_eval(self, value: "DataFlow", score: float, metadata: dict, evaluator_config: "EvaluatorConfig"):
-        value_eval = await ValueEval(
-            turn_eval_id=self.turn_eval.id,
-            value_id=value.id,
-            path=value.str_path,
-            evaluator=evaluator_config.name,
-            score=score,
-            metadata=metadata,
-        ).save()
+    async def build_turn_eval_from_current(self):
+        if not self.current_test_turn:
+            raise ValueError("Current test turn not set")
+        turn_eval = await self.test_run.add(TurnEval(
+            test_turn_id=self.current_test_turn.id,
+            ref_turn_id=self.current_test_turn.turn.id,
+            score=None,
+            value_evals=self.value_evals,
+        ))
+        return turn_eval
+    
+    
+    async def log_eval(self, value: "DataFlowNode", score: float, metadata: dict, evaluator_config: "EvaluatorConfig"):
+        value_eval = await self.current_turn_eval.add(
+            ValueEval(
+                value_id=value.id,
+                path=value.path,
+                evaluator=evaluator_config.name,
+                score=score,
+                metadata=metadata,
+            )
+        )
         self.value_evals.append(value_eval)
         self.results.append({
             "evaluator": evaluator_config.name,
             "score": score,
-            "path": value.str_path,
+            "path": value.path,
             "metadata": metadata
         })
         return value_eval
+    
+    
+    async def commit_test_turn(self):
+        if not self.current_test_turn:
+            raise ValueError("Current test turn not set")
+        self.current_turn_eval.score = self.get_average_score()
+        await self.current_turn_eval.save()
+        
     
     async def commit(self):
        self.turn_eval.score = self.get_average_score()
@@ -255,7 +353,8 @@ class EvaluationContext:
 
     def get_average_score(self) -> float | None:
         """Calculate average score across all evaluations."""
-        scores = [r["score"] for r in self.results if r.get("score") is not None]
+        # scores = [r["score"] for r in self.results if r.get("score") is not None]
+        scores = [v.score for v in self.current_turn_eval.value_evals if v.score is not None]
         if not scores:
             return None
         return sum(scores) / len(scores)

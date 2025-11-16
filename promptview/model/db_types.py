@@ -66,6 +66,13 @@ class Tree(Generic[FOREIGN_MODEL]):
     def __str__(self):
         return self.__repr__()
     
+    def append(self, item: FOREIGN_MODEL):
+        path = self._normalize_path(item.path)
+        if path in self.items:
+            raise ValueError(f"Item already exists at path {path}")
+        self.items[path] = item
+        return item
+    
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         # extract the generic type parameter

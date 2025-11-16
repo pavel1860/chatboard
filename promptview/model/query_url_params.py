@@ -1,8 +1,8 @@
 import datetime as dt
 from typing import Any, List, Literal, Type, Union
 
-from .sql.queries import Column, Table
-from .sql.expressions import Eq, Gte, Lte, Gt, Lt, And, Neq, param
+from .sql2.relations import NsRelation
+from .sql2.expressions import Eq, Gte, Lte, Gt, Lt, And, Neq, Value
 
 
 
@@ -31,56 +31,67 @@ QueryListType = Union[SimpleQuery, ComplexQuery]
 
 
 
-def parse_query_params(model_class, conditions: list[list[Any]], table: Table | None = None):
+def parse_query_params(model_class, conditions: list[list[Any]], relation: NsRelation | None = None):
     """
     Parse a list of query conditions into a combined SQL expression.
+
+    Args:
+        model_class: The model class to query
+        conditions: List of [field, operator, value] conditions
+        relation: Optional NsRelation to use (created from namespace if not provided)
+
+    Returns:
+        Combined SQL expression using SQL2 system
     """
     namespace = model_class.get_namespace()
-    
-    if table is None:
-        table = Table(namespace.table_name)
+
+    if relation is None:
+        relation = NsRelation(namespace)
 
     exprs = []
     for condition in conditions:
         if len(condition) != 3:
             raise ValueError(f"Invalid condition: {condition}")
-        field, operator, value = condition
+        field_name, operator, value = condition
 
-        # -- This is the critical line --
-        field_info = namespace.get_field(field)
+        # Get field info for validation and type conversion
+        field_info = namespace.get_field(field_name)
         if field_info is None:
-            raise ValueError(f"Field {field} not found in namespace {namespace.name}")
-        column = Column(field_info.name, table)  # Always a Column object!
+            raise ValueError(f"Field {field_name} not found in namespace {namespace.name}")
+
+        # Get RelField from relation (SQL2 field reference)
+        field = relation.get(field_name)
 
         # --- Type conversion ---
-        # You can expand this if needed
         if field_info.is_temporal and isinstance(value, str):
             try:
                 value = dt.datetime.fromisoformat(value)
             except Exception:
                 raise ValueError(f"Invalid datetime format: {value}")
-
         elif field_info.is_enum:
             value = value  # Enum conversion here if needed
         elif field_info.data_type is float:
             value = float(value)
         elif field_info.data_type is int:
             value = int(value)
-        # else: leave str
-        value = param(value)
+        # else: leave as str
+
+        # Wrap value as parameter (SQL2 uses Value instead of param)
+        value = Value(value, inline=False)
+
         # --- Build expression ---
         if operator == "==":
-            exprs.append(Eq(column, value))
+            exprs.append(Eq(field, value))
         elif operator == ">=":
-            exprs.append(Gte(column, value))
+            exprs.append(Gte(field, value))
         elif operator == "<=":
-            exprs.append(Lte(column, value))
+            exprs.append(Lte(field, value))
         elif operator == ">":
-            exprs.append(Gt(column, value))
+            exprs.append(Gt(field, value))
         elif operator == "<":
-            exprs.append(Lt(column, value))
+            exprs.append(Lt(field, value))
         elif operator == "!=":
-            exprs.append(Neq(column, value))
+            exprs.append(Neq(field, value))
         else:
             raise ValueError(f"Unsupported operator: {operator}")
 

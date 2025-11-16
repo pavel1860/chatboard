@@ -20,6 +20,7 @@ This module provides:
 from .decorators import evaluator, EvalCtx
 from .matching import match_value_to_evaluators, match_ltree_pattern
 from .eval_context import EvaluationContext
+from .default_evaluators import prompt_evaluator, distance_evaluator
 
 __all__ = [
     # Configuration and exceptions
@@ -43,4 +44,8 @@ __all__ = [
     # Matching
     "match_value_to_evaluators",
     "match_ltree_pattern",
+
+    # Default evaluators
+    "prompt_evaluator",
+    "distance_evaluator",
 ]

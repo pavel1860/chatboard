@@ -50,61 +50,62 @@ class EvaluatorRegistry:
 
 evaluator_registry = EvaluatorRegistry()
 
+def evaluator(name: str | None = None):
+    def evaluator_decorator(
+        func: Callable[
+            [EvalCtx, "DataFlow", "DataFlow"],
+            Awaitable[float | Tuple[float, dict]]
+        ]
+    ) -> Callable:
+        """
+        Decorator to register a value evaluator function.
 
-def evaluator(
-    func: Callable[
-        [EvalCtx, "DataFlow", "DataFlow"],
-        Awaitable[float | Tuple[float, dict]]
-    ]
-) -> Callable:
-    """
-    Decorator to register a value evaluator function.
+        The evaluator function should have signature:
+            async def evaluator(
+                ctx: EvalCtx,
+                ref_value: Value,
+                test_value: Value
+            ) -> float | tuple[float, dict]
 
-    The evaluator function should have signature:
-        async def evaluator(
+        Args:
+            ctx: Evaluation context with test case, test run, and config
+            ref_value: Reference value from the reference turn
+            test_value: Test value being evaluated
+
+        Returns:
+            Either a score (float) or (score, metadata dict)
+
+        Example:
+            @evaluator
+            async def validate_thought(ctx, ref_value, test_value):
+                ref_output = ref_value.value
+                test_output = test_value.value
+
+                if ref_output == test_output:
+                    return 1.0, {"match": True}
+                return 0.5, {"match": False}
+        """
+        @wraps(func)
+        async def wrapper(
             ctx: EvalCtx,
-            ref_value: Value,
-            test_value: Value
-        ) -> float | tuple[float, dict]
+            ref_value: "DataFlow",
+            test_value: "DataFlow"
+        ) -> Tuple[float, dict]:
+            """Wrapper that ensures return value is always (score, metadata)."""
+            result = await func(ctx, ref_value, test_value)
 
-    Args:
-        ctx: Evaluation context with test case, test run, and config
-        ref_value: Reference value from the reference turn
-        test_value: Test value being evaluated
+            if isinstance(result, tuple):
+                return result
+            else:
+                # If only score returned, wrap in tuple with empty metadata
+                return result, {}
 
-    Returns:
-        Either a score (float) or (score, metadata dict)
+        # Register in global registry
+        evaluator_registry.register(name or func.__name__, wrapper)
 
-    Example:
-        @evaluator
-        async def validate_thought(ctx, ref_value, test_value):
-            ref_output = ref_value.value
-            test_output = test_value.value
-
-            if ref_output == test_output:
-                return 1.0, {"match": True}
-            return 0.5, {"match": False}
-    """
-    @wraps(func)
-    async def wrapper(
-        ctx: EvalCtx,
-        ref_value: "DataFlow",
-        test_value: "DataFlow"
-    ) -> Tuple[float, dict]:
-        """Wrapper that ensures return value is always (score, metadata)."""
-        result = await func(ctx, ref_value, test_value)
-
-        if isinstance(result, tuple):
-            return result
-        else:
-            # If only score returned, wrap in tuple with empty metadata
-            return result, {}
-
-    # Register in global registry
-    evaluator_registry.register(func.__name__, wrapper)
-
-    return wrapper
-
+        return wrapper
+    
+    return evaluator_decorator
 
 def get_evaluator(name: str) -> Callable | None:
     """Get an evaluator function by name from the registry."""
