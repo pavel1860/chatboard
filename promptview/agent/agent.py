@@ -123,13 +123,13 @@ class Agent(Generic[P]):
             agent_gen = self.run_evaluate(options["test_case_id"])
             return StreamingResponse(agent_gen, media_type="text/plain")
     
-    def update_metadata(self, ctx: Context, index, events: list[StreamEvent],  event: StreamEvent):
+    def update_metadata(self, ctx: Context, events: list[StreamEvent],  event: StreamEvent):
         event.request_id = ctx.request_id
         event.turn_id = ctx.turn.id
         event.branch_id = ctx.branch.id
         # event.timestamp = int(datetime.now().timestamp() * 1000)
         event.created_at = dt.datetime.now()
-        event.index = index
+        # event.index = index
         events.append(event)
         return event
 
@@ -157,11 +157,11 @@ class Agent(Generic[P]):
             
                 if message.role == "user":
                     events = []  
-                    index = 0
+                    # index = 0
                     async for event in self.agent_component(message).stream():
                         print("streaming event", event)
-                        event = self.update_metadata(ctx, index, events, event)
-                        index += 1
+                        # event = self.update_metadata(ctx, events, event)
+                        # index += 1
                         if filter_events and event.type not in filter_events:
                             continue
                         # if ctx.user.auto_respond == "auto":

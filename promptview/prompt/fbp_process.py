@@ -1688,6 +1688,7 @@ class StreamController(ObservableProcess):
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
+        self._temp_data_flow: DataFlowNode | None = None
 
     async def on_start(self):
         """
@@ -1718,6 +1719,36 @@ class StreamController(ObservableProcess):
         if self._parser is not None:
             self._stream |= self._parser
         self._accumulator = accumulator
+        
+    async def on_value_event(self, payload: Any = None):
+        """
+        Generate value event.
+
+        Returns:
+            StreamEvent with type="stream_delta" or "span_event"
+        """
+        from .events import StreamEvent
+        from ..model.versioning.artifact_log import ArtifactLog
+        
+        
+        if self._temp_data_flow is None:
+            data_flow = ArtifactLog.build_data_flow_node(self.span, payload, io_kind="output")
+            self._temp_data_flow = data_flow
+            return self.ctx.build_event(
+                path=self._temp_data_flow.path,
+                kind=f"{self._span_type}_value",
+                payload=data_flow,
+                name=self._name,
+                
+            )
+        
+        return self.ctx.build_event(
+            path=self._temp_data_flow.path,
+            kind=self._value_event_type,
+            payload=payload,
+            name=self._name
+        )
+
         
     def parse(self, block_schema: "Block"):
         if self._parser is not None:

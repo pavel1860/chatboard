@@ -143,6 +143,16 @@ class AuthManager(Generic[UserT]):
     async def get_user_from_request(self, request: Request) -> Optional[UserT]:
         guest_token = request.cookies.get("temp_user_token")
         session_token = request.cookies.get("next-auth.session-token")
+        # if not session_token:
+        #     session_token = request.headers.get("X-Backend-Jwt")
+        
+        #TODO hack for streaming to work. remove this hack
+        # if not session_token:
+        #     user_id = request.headers.get("X-Auth-User")
+        #     user = await self.fetch_by_auth_user_id(user_id)
+        #     if not user:
+        #         raise UserNotFound(f"User {user_id} not found")
+        #     return user
         auth_user_id = None
         if session_token:
             NEXTAUTH_SECRET = os.getenv("NEXTAUTH_SECRET")
