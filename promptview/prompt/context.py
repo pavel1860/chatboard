@@ -9,6 +9,7 @@ from ..model.model3 import Model
 from ..model.postgres2.pg_query_set import PgSelectQuerySet
 from ..model.versioning.models import Branch, ExecutionSpan, SpanType, Turn, TurnStatus, ValueIOKind, VersionedModel, Artifact
 from dataclasses import dataclass
+from .events import StreamEvent
 from ..utils.function_utils import call_function
 if TYPE_CHECKING:
     from fastapi import Request
@@ -67,6 +68,8 @@ class Context(BaseModel):
     _top_level_span_count: int = 1  # Counter for top-level spans in current turn
     _top_level_spans: list["ExecutionSpan"] = []  # All top-level spans in this turn
     _evaluation_context: "EvaluationContext | None" = None  # Evaluation context if in eval mode
+    _index: int = 0
+    events: list[StreamEvent] = []
     
     
     def __init__(
@@ -96,6 +99,8 @@ class Context(BaseModel):
         self._auth = auth
         self._initialized = False
         self._evaluation_context = eval_ctx
+        self._index = 0
+        self.events = []
         
     @property
     def request_id(self):
@@ -130,6 +135,9 @@ class Context(BaseModel):
         if self.current_component and hasattr(self.current_component, '_span_tree'):
             return self.current_component._span_tree
         return None
+    
+    
+    
 
     @property
     def top_level_spans(self) -> list["ExecutionSpan"]:
@@ -228,7 +236,7 @@ class Context(BaseModel):
         name: str,
         span_type: str = "component",
         tags: list[str] | None = None
-    ) -> "ExecutionSpan":
+    ) -> "DataFlowNode":
         """
         Start a new span for a component and add to execution stack.
 
@@ -266,6 +274,7 @@ class Context(BaseModel):
         if replay_span:
             # Replay mode: use existing span with saved outputs
             span_tree = replay_span
+            data_flow = span_tree
         elif not self._execution_stack:
             # Top-level component - create top-level span (no root span)
             # Get next top-level span index from context counter
@@ -281,7 +290,7 @@ class Context(BaseModel):
                 parent_span_id=None  # Top-level, no parent
             ).save()
             
-            await ArtifactLog.log_value(span_tree, ctx=self)
+            data_flow = await ArtifactLog.log_value(span_tree, ctx=self)
 
             # Add to top-level spans list
             self._top_level_spans.append(span_tree)
@@ -303,7 +312,7 @@ class Context(BaseModel):
                 path=parent_span.path + f".{len(parent_span.outputs) + 1}",
                 parent_span_id=parent_span.id
             ).save()
-            await ArtifactLog.log_value(span_tree, ctx=self)
+            data_flow = await ArtifactLog.log_value(span_tree, ctx=self)
 
         # Attach span_tree to component
         component._span_tree = span_tree
@@ -330,7 +339,27 @@ class Context(BaseModel):
 
             parent._child_count += 1
 
-        return span_tree
+        return data_flow
+    
+    
+    def push_event(self, path: str, kind: str, payload: Any, name: str | None = None, error: str | None = None) -> StreamEvent:
+        event = self.build_event(path=path, kind=kind, payload=payload, error=error)        
+        self.events.append(event)
+        return event
+    
+    
+    def build_event(self, path: str, kind: str, payload: Any, name: str | None = None, error: str | None = None) -> StreamEvent:        
+        index = self._index
+        self._index += 1
+        return StreamEvent(
+            type=kind,
+            payload=payload,
+            path=path,
+            name=name,
+            request_id=self.request_id,
+            index=index,
+            error={"message": error} if error else None,
+        )
 
     async def end_span(self):
         """
@@ -559,8 +588,10 @@ class Context(BaseModel):
         for task in self._tasks:
             if isinstance(task, LoadBranch):
                 self._branch = await Branch.get(task.branch_id)
+                self.push_event(path="0", kind="branch_load", payload=self._branch)
             elif isinstance(task, LoadTurn):
                 self._turn = await Turn.get(task.turn_id)
+                self.push_event(path="0", kind="turn_load", payload=self._turn)
             elif isinstance(task, ForkTurn):
                 if task.turn is not None:
                     branch = await self._get_branch()
@@ -573,12 +604,14 @@ class Context(BaseModel):
                     branch = await self._get_branch()
                     turn = await Turn.query().where(branch_id=branch.id).last()
                     self._branch = await branch.fork_branch(turn)
+                self.push_event(path="0", kind="branch_fork", payload=self._branch)
             elif isinstance(task, StartTurn):
                 branch = await self._get_branch()
                 self._turn = await branch.create_turn(auto_commit=task.auto_commit)
+                self.push_event(path="0", kind="turn_start", payload=self._turn)
             elif isinstance(task, StartEval):
                 await self._setup_evaluation(task.test_case_id, task.test_run_id)
-
+                
 
         if self._branch is None and len(self._tasks) > 0:
             # Only load branch if there were tasks that require it

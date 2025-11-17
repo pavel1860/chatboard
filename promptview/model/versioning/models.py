@@ -280,7 +280,7 @@ class Turn(Model):
     _auto_commit: bool = True
     _raise_on_error: bool = True
 
-    forked_branches: List["Branch"] = RelationField("Branch", foreign_key="forked_from_turn_id")
+    forked_branches: List["Branch"] = RelationField( foreign_key="forked_from_turn_id")
     
     
     @property

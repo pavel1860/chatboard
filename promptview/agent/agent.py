@@ -149,11 +149,17 @@ class Agent(Generic[P]):
             # async with branch.start_turn(
             #     metadata=metadata, 
             #     auto_commit=auto_commit
-            # ) as turn:
+            # ) as turn: 
+                for event in ctx.events:
+                    print("streaming event", event)
+                    yield event.to_ndjson() if serialize else event
+                           
+            
                 if message.role == "user":
                     events = []  
                     index = 0
                     async for event in self.agent_component(message).stream():
+                        print("streaming event", event)
                         event = self.update_metadata(ctx, index, events, event)
                         index += 1
                         if filter_events and event.type not in filter_events:
@@ -200,7 +206,7 @@ class Agent(Generic[P]):
     ) -> Context:
         ctx = Context(auth=auth, branch_id=branch_id, eval_ctx=eval_ctx)
         if from_turn_id:
-            ctx.fork(turn_id=from_turn_id)       
+            ctx.fork(turn_id=from_turn_id)
         if start_turn:
             ctx = ctx.start_turn()         
         return ctx
