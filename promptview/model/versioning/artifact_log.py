@@ -164,7 +164,30 @@ class ArtifactLog:
     #     value = value.root if isinstance(value, SpanTree) else value
     #     value = await self.root.log_value(value, io_kind=io_kind, name=name)
     #     return value
-
+    
+    @classmethod
+    def build_data_flow_node(cls, execution_span: ExecutionSpan, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None, ctx: Context | None = None):
+        if io_kind == "output":
+            value_path = f"{execution_span.path}.{len(execution_span.outputs) + 1}"
+        elif io_kind == "input":
+            value_path = f"{execution_span.path}.{INPUT_TAG}" 
+            if name is not None:
+                value_path += "." + name
+        else:
+            raise ValueError(f"Invalid io_kind: {io_kind}")
+        
+        _, kind, artifact_id = _sanitize_target_value(target)
+        data_flow = DataFlowNode(
+            span_id=None,
+            kind=kind,
+            alias=alias,
+            io_kind=io_kind,
+            name=name,
+            path=value_path,
+            artifact_id=-1,
+        )
+        data_flow._value = target
+        return data_flow
             
     @classmethod
     async def log_value(cls, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None, ctx: Context | None = None):
@@ -252,8 +275,9 @@ class ArtifactLog:
         else:
             target, kind, artifact_id = _sanitize_target_value(target)
             if kind == "block":
-                target = await insert_block(target, ctx.branch.id, ctx.turn.id, span_id)
-                artifact_id = target.artifact_id
+                block_tree = await insert_block(target, ctx.branch.id, ctx.turn.id, span_id)
+                artifact = block_tree.artifact
+                artifact_id = block_tree.artifact_id
             elif kind == "span":
                 # For spans, get artifact from SpanTree or ExecutionSpan
                 artifact = target.artifact
@@ -271,6 +295,7 @@ class ArtifactLog:
                 return value
             elif artifact_id is None:
                 await target.save()
+                artifact = target.artifact
                 artifact_id = target.artifact_id
 
             value = await execution_span.add(DataFlowNode(
@@ -282,7 +307,7 @@ class ArtifactLog:
                 path=value_path,  # NEW: Set path
                 artifact_id=artifact_id,
             ))
-            value.artifacts = [target.artifact]
-            await value.add(target.artifact, kind=kind)
+            value.artifacts = [artifact]
+            await value.add(artifact, kind=kind)
             value._value = target
             return value

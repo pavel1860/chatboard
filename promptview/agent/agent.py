@@ -123,13 +123,13 @@ class Agent(Generic[P]):
             agent_gen = self.run_evaluate(options["test_case_id"])
             return StreamingResponse(agent_gen, media_type="text/plain")
     
-    def update_metadata(self, ctx: Context, index, events: list[StreamEvent],  event: StreamEvent):
+    def update_metadata(self, ctx: Context, events: list[StreamEvent],  event: StreamEvent):
         event.request_id = ctx.request_id
         event.turn_id = ctx.turn.id
         event.branch_id = ctx.branch.id
         # event.timestamp = int(datetime.now().timestamp() * 1000)
         event.created_at = dt.datetime.now()
-        event.index = index
+        # event.index = index
         events.append(event)
         return event
 
@@ -149,13 +149,19 @@ class Agent(Generic[P]):
             # async with branch.start_turn(
             #     metadata=metadata, 
             #     auto_commit=auto_commit
-            # ) as turn:
+            # ) as turn: 
+                for event in ctx.events:
+                    print("streaming event", event)
+                    yield event.to_ndjson() if serialize else event
+                           
+            
                 if message.role == "user":
                     events = []  
-                    index = 0
+                    # index = 0
                     async for event in self.agent_component(message).stream():
-                        event = self.update_metadata(ctx, index, events, event)
-                        index += 1
+                        print("streaming event", event)
+                        # event = self.update_metadata(ctx, events, event)
+                        # index += 1
                         if filter_events and event.type not in filter_events:
                             continue
                         # if ctx.user.auto_respond == "auto":
@@ -200,7 +206,7 @@ class Agent(Generic[P]):
     ) -> Context:
         ctx = Context(auth=auth, branch_id=branch_id, eval_ctx=eval_ctx)
         if from_turn_id:
-            ctx.fork(turn_id=from_turn_id)       
+            ctx.fork(turn_id=from_turn_id)
         if start_turn:
             ctx = ctx.start_turn()         
         return ctx

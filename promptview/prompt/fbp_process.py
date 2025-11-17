@@ -879,7 +879,7 @@ import json
 import asyncio
 
 from ..evaluation.decorators import EvalCtx
-from ..model.versioning.models import ExecutionSpan, SpanType
+from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
@@ -1324,13 +1324,15 @@ class ObservableProcess(Process):
         self._tags = tags or []
         self._args = args
         self._kwargs = kwargs or {}
-        self._span: "ExecutionSpan | None" = None
+        # self._span: "ExecutionSpan | None" = None
+        self._data_flow: "DataFlowNode | None" = None
         self.resolved_kwargs: dict[str, Any] = {}
         self.index: int = 0  # Set by parent PipeController
         self.parent: "ObservableProcess | None" = None  # Set by parent PipeController
         self._replay_inputs: list | None = None  # Saved inputs for replay mode
         self._replay_outputs: list | None = None  # Saved outputs for replay mode
         self._replay_index: int = 0  # Current position in replay buffer
+        
         self._start_event_type: str = f"{self._span_type}_start"
         self._value_event_type: str = f"{self._span_type}_value"
         self._stop_event_type: str = f"{self._span_type}_stop"
@@ -1338,6 +1340,7 @@ class ObservableProcess(Process):
         self._should_log_inputs = should_log_inputs
         self._ctx: "Context | None" = None
         self._load_eval_args: bool = False
+        self._input_data_flows: dict[str, "DataFlowNode"] = {}
         
     @property
     def ctx(self):
@@ -1353,16 +1356,24 @@ class ObservableProcess(Process):
     @property
     def span(self):
         """Get the execution span."""
-        if self._span is None:
+        if self._data_flow is None:
             raise ValueError("Span is not initialized")
-        return self._span
+        return self._data_flow.value
+    
+    
+    @property
+    def path(self):
+        """Get the path."""
+        if self._data_flow is None:
+            raise ValueError("Path is not initialized")
+        return self._data_flow.path
     
 
 
     @property
     def span_id(self):
         """Get the span ID."""
-        return self._span.id if self._span else None
+        return self.span.id if self.span else None
 
     async def _resolve_dependencies(self):
         """
@@ -1375,7 +1386,7 @@ class ObservableProcess(Process):
         from ..llms import LLM, LlmConfig
         
         
-        self._span = await self.ctx.start_span(
+        self._data_flow = await self.ctx.start_span(
             component=self,
             name=self._name,
             span_type=self._span_type,
@@ -1389,8 +1400,8 @@ class ObservableProcess(Process):
                 kwargs={}
             )
             self.resolved_kwargs = kwargs
-        elif self._span.inputs:            
-            self._replay_inputs = [v.value for v in self._span.inputs]
+        elif self.span.inputs:            
+            self._replay_inputs = [v.value for v in self.span.inputs]
             bound, kwargs = await resolve_dependencies_kwargs(
                 self._gen_func,
                 args=self._replay_inputs,
@@ -1406,13 +1417,13 @@ class ObservableProcess(Process):
             self.resolved_kwargs = kwargs
 
             # Log resolved kwargs as inputs
-            if self._span and self._should_log_inputs:
+            if self.span and self._should_log_inputs:
                 for key, value in kwargs.items():
                     if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx]:
-                        await self._span.log_value(value, io_kind="input", name=key)
-                    
-        if self._span.outputs and not self._span.need_to_replay:
-            self._replay_outputs = [v.value for v in self._span.outputs]
+                        data_flow = await self.span.log_value(value, io_kind="input", name=key)
+                        self._input_data_flows[data_flow.path] = data_flow                    
+        if self.span.outputs and not self.span.need_to_replay:
+            self._replay_outputs = [v.value for v in self.span.outputs]
 
         return bound, kwargs
 
@@ -1462,6 +1473,16 @@ class ObservableProcess(Process):
                     continue
                 value_attrs[key] = value
 
+        
+        return self.ctx.build_event(
+            path=self.path,
+            kind=self._start_event_type,
+            payload={
+                self.path: self._data_flow,
+                **self._input_data_flows,
+            },
+            name=self._name
+        )
         return StreamEvent(
             type=self._start_event_type,
             name=self._name,
@@ -1480,13 +1501,21 @@ class ObservableProcess(Process):
             StreamEvent with type="stream_delta" or "span_event"
         """
         from .events import StreamEvent
+        
+        
+        return self.ctx.build_event(
+            path=self.path,
+            kind=self._value_event_type,
+            payload=payload,
+            name=self._name
+        )
 
         return StreamEvent(
             type=self._value_event_type,
             name=self._name,
             payload=payload,
-            span_id=str(self.span_id) if self.span_id else None,
-            path=self.get_execution_path(),
+            # span_id=str(self.span_id) if self.span_id else None,
+            # path=self.get_execution_path(),
         )
 
     async def on_stop_event(self, payload: Any = None):
@@ -1497,6 +1526,14 @@ class ObservableProcess(Process):
             StreamEvent with type="stream_end" or "span_end"
         """
         from .events import StreamEvent
+        
+        
+        return self.ctx.build_event(
+            path=self.path,
+            kind=self._stop_event_type,
+            payload=payload,
+            name=self._name
+        )
 
         return StreamEvent(
             type=self._stop_event_type,
@@ -1516,6 +1553,15 @@ class ObservableProcess(Process):
             StreamEvent with type="stream_error" or "span_error"
         """
         from .events import StreamEvent
+        
+        
+        return self.ctx.build_event(
+            path=self.path,
+            kind=self._error_event_type,
+            payload=error,
+            name=self._name,
+            error=str(error)
+        )
 
         return StreamEvent(
             type=self._error_event_type,
@@ -1642,6 +1688,7 @@ class StreamController(ObservableProcess):
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
+        self._temp_data_flow: DataFlowNode | None = None
 
     async def on_start(self):
         """
@@ -1672,6 +1719,36 @@ class StreamController(ObservableProcess):
         if self._parser is not None:
             self._stream |= self._parser
         self._accumulator = accumulator
+        
+    async def on_value_event(self, payload: Any = None):
+        """
+        Generate value event.
+
+        Returns:
+            StreamEvent with type="stream_delta" or "span_event"
+        """
+        from .events import StreamEvent
+        from ..model.versioning.artifact_log import ArtifactLog
+        
+        
+        if self._temp_data_flow is None:
+            data_flow = ArtifactLog.build_data_flow_node(self.span, payload, io_kind="output")
+            self._temp_data_flow = data_flow
+            return self.ctx.build_event(
+                path=self._temp_data_flow.path,
+                kind=f"{self._span_type}_value",
+                payload=data_flow,
+                name=self._name,
+                
+            )
+        
+        return self.ctx.build_event(
+            path=self._temp_data_flow.path,
+            kind=self._value_event_type,
+            payload=payload,
+            name=self._name
+        )
+
         
     def parse(self, block_schema: "Block"):
         if self._parser is not None:
@@ -1729,12 +1806,12 @@ class StreamController(ObservableProcess):
             # Log the final accumulated result as output
             # if self._span_tree and self._accumulator:
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
-            if self._span:
+            if self.span:
                 value = None
                 if self._parser and self._parser.res_ctx.instance is not None:
-                    value = await self._span.log_value(self._parser.res_ctx.instance, io_kind="output")
+                    value = await self.span.log_value(self._parser.res_ctx.instance, io_kind="output")
                 elif self._accumulator:
-                    value = await self._span.log_value(self._accumulator.result, io_kind="output")
+                    value = await self.span.log_value(self._accumulator.result, io_kind="output")
                 self._stream_value = value
 
             await self.on_stop()
@@ -1929,12 +2006,12 @@ class PipeController(ObservableProcess):
                     child.parent = self
                     child.index = self.index
                     self.index += 1  # Increment for next child
-                elif self._span:
-                    value = await self._span.log_value(child, io_kind="output")
+                elif self.span:
+                    value = await self.span.log_value(child, io_kind="output")
                     self._last_value = value
 
                 # Log child as output
-                if self._span and isinstance(child, (StreamController, PipeController)):
+                if self.span and isinstance(child, (StreamController, PipeController)):
                     # Log the child's span tree once it's created
                     # Note: child span is created when child.on_start() is called by FlowRunner
                     pass
@@ -2527,3 +2604,5 @@ class Parser(Process):
         # Hit max iterations without producing event
         raise StopAsyncIteration
 
+
+# %%
