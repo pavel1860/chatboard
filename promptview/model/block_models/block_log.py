@@ -11,7 +11,7 @@ from ..sql.expressions import RawValue
 from ..sql.queries import Column
 from ...utils.db_connections import PGConnectionManager
 import datetime as dt
-from ..versioning.models import BlockTree, BlockNode, BlockModel, ExecutionSpan, TurnStatus
+from ..versioning.models import BlockTree, BlockNode, BlockModel, BlockSignature, ExecutionSpan, TurnStatus
 
 
 
@@ -21,6 +21,27 @@ def block_hash(content: Optional[str] = None, json_content: Optional[dict] = Non
     else:
         data = json.dumps(json_content, sort_keys=True).encode("utf-8")
     return hashlib.sha256(data).hexdigest()
+
+
+def signature_hash(
+    block_id: str,
+    styles: list[str] | None,
+    role: str | None,
+    tags: list[str] | None,
+    attrs: dict | None
+) -> str:
+    """
+    Create a unique hash for a block signature (content + styling).
+    """
+    data = {
+        "block_id": block_id,
+        "styles": sorted(styles) if styles else None,
+        "role": role,
+        "tags": sorted(tags) if tags else None,
+        "attrs": attrs
+    }
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode("utf-8")).hexdigest()
+
 
 def flatten_tree(data: Dict[str, Any], base_path: str = "1") -> List[Dict[str, Any]]:
     flat = [{
@@ -100,26 +121,33 @@ def dump_block(blk: Block):
 
 
 def load_block_dump(dumps: list[dict], artifact_id: int | None = None):
+    """
+    Load blocks from new Option 1 schema structure:
+    Each dump contains: path, signature -> (styles, role, tags, attrs, block -> (content, json_content))
+    """
     block_lookup = {}
     for dump in dumps:
+        signature = dump['signature']
+        block_data = signature['block']
+
         blk = Block(
-            load_sent_dump(dump['block']["json_content"]['content']),
-            role=dump["role"],
-            styles=dump["styles"], 
-            attrs=load_attrs(dump["attrs"]),
-            tags=dump["tags"],
-            prefix=load_sent_dump(dump['block']["json_content"]['prefix']) if dump['block']["json_content"]['prefix'] is not None else None,
-            postfix=load_sent_dump(dump['block']["json_content"]['postfix']) if dump['block']["json_content"]['postfix'] is not None else None,
+            load_sent_dump(block_data["json_content"]['content']),
+            role=signature["role"],
+            styles=signature["styles"],
+            attrs=load_attrs(signature["attrs"]),
+            tags=signature["tags"],
+            prefix=load_sent_dump(block_data["json_content"]['prefix']) if block_data["json_content"]['prefix'] is not None else None,
+            postfix=load_sent_dump(block_data["json_content"]['postfix']) if block_data["json_content"]['postfix'] is not None else None,
             artifact_id=artifact_id,
         )
         block_lookup[dump["path"]] = blk
-    
+
     root_blk = block_lookup.pop("0")
     for p in sorted(block_lookup.keys()):
         blk = block_lookup[p]
         path = [int(p_i) for p_i in p.split(".")]
         root_blk.insert(blk, path[1:])
-        
+
     return root_blk
 
 
@@ -127,58 +155,83 @@ def load_block_dump(dumps: list[dict], artifact_id: int | None = None):
 
 async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int | None = None) -> BlockTree:
     """
-    Alternative implementation using executemany for bulk inserts.
-    This approach is cleaner and more straightforward than UNNEST.
+    Insert block using Option 1 (Block Signatures) architecture.
+    1. Deduplicate block content in `blocks` table
+    2. Deduplicate content+styling in `block_signatures` table
+    3. Store only tree structure in `block_nodes` table
     """
     from ..versioning.models import BlockTree
     nodes = dump_block(block)
-    # async with PGConnectionManager.transaction() as tx:
-    async def insert_block_transaction(tx, tree_id: int):
-        # tree_id = str(uuid.uuid4())
-        created_at = dt.datetime.now()
-        # await tx.execute(
-        #     "INSERT INTO block_trees (id, created_at, branch_id, turn_id, span_id) VALUES ($1, $2, $3, $4, $5)", 
-        #     tree_id, created_at, branch_id, turn_id, span_id
-        # )
 
-        # --- prepare rows for blocks ---
+    async def insert_block_transaction(tx, tree_id: int):
+        # --- Step 1: Prepare and insert blocks (content only) ---
         block_rows = []
+        seen_blocks = set()
         for node in nodes:
             blk_id = block_hash(node["content"], node["json_content"])
-            block_rows.append((blk_id, node["content"], json.dumps(node["json_content"])))
+            if blk_id not in seen_blocks:
+                block_rows.append((blk_id, node["content"], json.dumps(node["json_content"])))
+                seen_blocks.add(blk_id)
 
-        # --- bulk insert blocks using executemany ---
         if block_rows:
             await tx.executemany(
                 "INSERT INTO blocks (id, content, json_content) VALUES ($1, $2, $3) ON CONFLICT (id) DO NOTHING",
                 block_rows
             )
 
-        # --- prepare rows for nodes ---
-        node_rows = []
-        for node in nodes:
+        # --- Step 2: Prepare and insert block signatures (content + styling) ---
+        signature_rows = []
+        seen_signatures = set()
+        node_signatures = {}  # Map node index -> signature_id
+
+        for idx, node in enumerate(nodes):
             blk_id = block_hash(node["content"], node["json_content"])
-            # Convert lists to arrays for PostgreSQL
-            styles_array = node["styles"] if node["styles"] is not None else []
-            tags_array = node["tags"] if node["tags"] is not None else []            
+            sig_id = signature_hash(
+                blk_id,
+                node["styles"],
+                node["role"],
+                node["tags"],
+                node["attrs"]
+            )
+            node_signatures[idx] = sig_id
+
+            if sig_id not in seen_signatures:
+                styles_array = node["styles"] if node["styles"] is not None else []
+                tags_array = node["tags"] if node["tags"] is not None else []
+                signature_rows.append((
+                    sig_id,
+                    blk_id,
+                    styles_array,
+                    node["role"],
+                    tags_array,
+                    json.dumps(node["attrs"])
+                ))
+                seen_signatures.add(sig_id)
+
+        if signature_rows:
+            await tx.executemany(
+                "INSERT INTO block_signatures (id, block_id, styles, role, tags, attrs) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+                signature_rows
+            )
+
+        # --- Step 3: Insert block nodes (tree structure only) ---
+        node_rows = []
+        for idx, node in enumerate(nodes):
+            sig_id = node_signatures[idx]
             node_rows.append((
-                tree_id, 
-                node["path"], 
-                blk_id, 
-                styles_array, 
-                node["role"], 
-                tags_array, 
-                json.dumps(node["attrs"])
+                tree_id,
+                node["path"],
+                sig_id
             ))
 
-        # --- bulk insert nodes using executemany ---
         if node_rows:
             await tx.executemany(
-                "INSERT INTO block_nodes (tree_id, path, block_id, styles, role, tags, attrs) VALUES ($1, $2::ltree, $3, $4, $5, $6, $7)",
+                "INSERT INTO block_nodes (tree_id, path, signature_id) VALUES ($1, $2::ltree, $3)",
                 node_rows
             )
 
         return tree_id
+
     block_tree = await BlockTree().save()
     async def tx_wrapper(tx):
         return await insert_block_transaction(tx, block_tree.id)
@@ -190,11 +243,17 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int 
     
     
 async def get_blocks(art_ids: list[str], dump_models: bool = True, include_branch_turn: bool = False) -> dict[str, Block]:
+    """
+    Retrieve blocks using the new Option 1 schema:
+    BlockTree -> BlockNode -> BlockSignature -> BlockModel
+    """
     if not art_ids:
         return {}
     block_trees = await BlockTree.query(alias="bt", include_branch_turn=include_branch_turn).select("*").include(
             BlockNode.query(alias="bn").select("*").include(
-                BlockModel.query(alias="bm").select("*")
+                BlockSignature.query(alias="bs").select("*").include(
+                    BlockModel.query(alias="bm").select("*")
+                )
             )
         ).where(lambda b: b.artifact_id.isin(art_ids)).order_by("-artifact_id").json()
     blocks_lookup = {}
@@ -273,14 +332,17 @@ class BlockLogQuery:
     
     
     def _build_block_query(self):
+        """Build query using Option 1 schema: BlockTree -> BlockNode -> BlockSignature -> BlockModel"""
         return BlockTree.query(
-            alias="bt", 
-            limit=self.limit, 
-            offset=self._offset, 
+            alias="bt",
+            limit=self.limit,
+            offset=self._offset,
             direction=self.direction,
             statuses=self.statuses
         ).include(
-            BlockNode.query(alias="bn").order_by("id").include(BlockModel)
+            BlockNode.query(alias="bn").order_by("id").include(
+                BlockSignature.query(alias="bs").include(BlockModel)
+            )
         ).order_by("created_at")
         
     def _build_span_query(self, name: str):
@@ -352,8 +414,9 @@ class BlockLog:
         if turn_id is None:
             turn_id = Turn.current().id
         if span_id is None:
-            span_id = ExecutionSpan.current().id
-        
+            curr_span = ExecutionSpan.current_or_none()
+            if curr_span is not None:
+                span_id = curr_span.id
         return await insert_block(block, branch_id, turn_id, span_id)
     
     
