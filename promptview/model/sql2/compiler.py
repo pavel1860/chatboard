@@ -4,7 +4,8 @@ from .expressions import (
     Expression, BinaryExpression, And, Or, Not, IsNull, IsNotNull,
     In, NotIn, Between, Like, ILike, Value, Raw, JsonBuildObject, JsonAgg, JsonbAgg,
     Count, Sum, Avg, Min, Max, AggregateFunction, Coalesce,
-    LtreeNlevel, LtreeSubpath, LtreeLca
+    LtreeNlevel, LtreeSubpath, LtreeLca,
+    VectorSimilarity, VectorDistance, VectorComparison
 )
 import textwrap
 
@@ -316,6 +317,15 @@ class Compiler:
             fields_sql = [self.compile_expr(field) for field in expr.fields]
             return f"lca({', '.join(fields_sql)})"
 
+        # Vector (pgvector) operations
+        elif isinstance(expr, VectorComparison):
+            # Similarity comparison: embedding.similar(v) > 0.5
+            return self._compile_vector_comparison(expr)
+
+        elif isinstance(expr, VectorDistance):
+            # Distance for ordering: embedding.distance(v)
+            return self._compile_vector_distance(expr)
+
         else:
             raise ValueError(f"Unknown expression type: {type(expr)}")
 
@@ -474,7 +484,15 @@ class Compiler:
 
         # Add ORDER BY clause if present
         if query.order_by_fields:
-            order_parts = [f"{field} {direction}" for field, direction in query.order_by_fields]
+            order_parts = []
+            for field, direction in query.order_by_fields:
+                if isinstance(field, Expression):
+                    # Compile expression (e.g., VectorDistance)
+                    field_sql = self.compile_expr(field)
+                    order_parts.append(f"{field_sql} {direction}")
+                else:
+                    # String field name
+                    order_parts.append(f"{field} {direction}")
             order_by_sql = ", ".join(order_parts)
             sql += f"ORDER BY {order_by_sql}\n"
 
@@ -487,3 +505,94 @@ class Compiler:
             sql += f"OFFSET {query.offset_value}\n"
 
         return sql
+
+    def _compile_vector_comparison(self, expr):
+        """
+        Compile a vector similarity comparison.
+
+        Example: embedding.similar([0.1, 0.2, 0.3]) > 0.5
+        SQL: (1 - (embedding <=> '[0.1,0.2,0.3]')) > 0.5
+        """
+        # Get the distance operator based on field's distance metric
+        field_info = expr.similarity_expr.field.field_info
+        distance_metric = getattr(field_info, 'distance', 'cosine') if field_info else 'cosine'
+
+        # Get distance operator for PostgreSQL pgvector
+        distance_op = self._get_distance_operator(distance_metric)
+
+        # Compile field reference
+        field_sql = self.compile_expr(expr.similarity_expr.field)
+
+        # Compile vector value
+        vector_sql = self._compile_vector_value(expr.similarity_expr.vector)
+
+        # Convert distance to similarity based on metric
+        if distance_metric == 'cosine':
+            # Cosine: similarity = 1 - distance (range 0-1)
+            similarity_sql = f"(1 - ({field_sql} {distance_op} {vector_sql}))"
+        elif distance_metric in ('dot', 'inner_product'):
+            # Inner product: negate distance for similarity (higher = better)
+            similarity_sql = f"(-({field_sql} {distance_op} {vector_sql}))"
+        else:
+            # L2/euclidean: convert to 0-1 range with 1/(1+distance)
+            similarity_sql = f"(1.0 / (1.0 + {field_sql} {distance_op} {vector_sql}))"
+
+        # Build comparison SQL
+        threshold_sql = self.compile_expr(Value(expr.threshold))
+        return f"({similarity_sql} {expr.operator} {threshold_sql})"
+
+    def _compile_vector_distance(self, expr):
+        """
+        Compile a vector distance expression for ordering.
+
+        Example: embedding.distance([0.1, 0.2, 0.3])
+        SQL: embedding <=> '[0.1,0.2,0.3]'
+        """
+        field_info = expr.field.field_info
+        distance_metric = getattr(field_info, 'distance', 'cosine') if field_info else 'cosine'
+
+        # Get distance operator
+        distance_op = self._get_distance_operator(distance_metric)
+
+        field_sql = self.compile_expr(expr.field)
+        vector_sql = self._compile_vector_value(expr.vector)
+
+        return f"({field_sql} {distance_op} {vector_sql})"
+
+    def _get_distance_operator(self, distance_metric):
+        """Get PostgreSQL pgvector distance operator for a metric."""
+        if distance_metric == 'cosine':
+            return '<=>'  # cosine distance
+        elif distance_metric in ('euclid', 'l2'):
+            return '<->'  # L2/Euclidean distance
+        elif distance_metric in ('dot', 'inner_product'):
+            return '<#>'  # inner product (negated)
+        else:
+            return '<=>'  # default to cosine
+
+    def _compile_vector_value(self, vector):
+        """
+        Compile a vector value to SQL parameter.
+
+        Args:
+            vector: List, tuple, or numpy array of numbers
+
+        Returns:
+            SQL parameter placeholder (e.g., $1)
+        """
+        import numpy as np
+
+        # Convert numpy array to list if needed
+        if isinstance(vector, np.ndarray):
+            vector = vector.tolist()
+
+        # Format vector as PostgreSQL array literal string
+        if isinstance(vector, (list, tuple)):
+            vector_str = '[' + ','.join(str(v) for v in vector) + ']'
+            # Add as parameter
+            self.params.append(vector_str)
+            param_num = self.param_counter
+            self.param_counter += 1
+            return f"${param_num}"
+        else:
+            raise ValueError(f"Unsupported vector type: {type(vector)}")

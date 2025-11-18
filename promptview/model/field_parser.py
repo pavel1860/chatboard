@@ -59,7 +59,11 @@ class FieldParser:
 
             self.field_extras[field_name] = extra
 
-            if extra.get("is_relation", False) or extra.get("is_vector", False):
+            if extra.get("is_relation", False):
+                continue
+
+            if extra.get("is_vector", False):
+                self._register_vector_field(field_name, field_type, field_info, extra)
                 continue
 
             self._register_scalar_field(field_name, field_type, field_info, extra)
@@ -93,3 +97,39 @@ class FieldParser:
             enforce_foreign_key=extra.get("enforce_foreign_key", True),
         )
         self.namespace.add_field(field_obj)
+
+    def _register_vector_field(self, field_name, field_type, field_info, extra):
+        """Register a vector field with vectorizer."""
+        from .namespace_manager2 import NamespaceManager
+
+        vectorizer = extra.get("vectorizer")
+        if vectorizer is None:
+            raise ValueError(f"vectorizer is required for vector field: {field_type} on Model {self.model_name}")
+
+        dimension = extra.get("dimension")
+        distance = extra.get("distance", "cosine")
+
+        # Register vector field with namespace (gets vectorizer instance)
+        vectorizer_instance = self.namespace.register_vector_field(field_name, vectorizer)
+        dimension = dimension or vectorizer_instance.dimension
+
+        # Create field info for vector
+        field_obj = self.namespace.make_field_info(
+            name=field_name,
+            field_type=field_type,
+            default=field_info.default,
+            is_optional=extra.get("is_optional", False),
+            is_primary_key=False,
+            is_foreign_key=False,
+            is_vector=True,
+            dimension=dimension,
+            distance=distance,
+            index=extra.get("index", False),
+            is_key=False,
+            order_by=False,
+        )
+        self.namespace.add_field(field_obj)
+
+        # Register vector extension for Postgres
+        if self.db_type == "postgres":
+            NamespaceManager.register_extension(self.db_type, "vector")

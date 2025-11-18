@@ -222,22 +222,31 @@ class QuerySet(Relation):
         return self
 
     # ordering
-    def order_by(self, *fields: str):
+    def order_by(self, *fields):
         """
         Add ORDER BY fields to the query.
 
-        Use '-' prefix for descending order:
-            query.order_by('posts.created_at')  # ASC
-            query.order_by('-posts.created_at')  # DESC
+        Accepts strings or Expression objects:
+            query.order_by('posts.created_at')  # ASC (string)
+            query.order_by('-posts.created_at')  # DESC (string with '-' prefix)
+            query.order_by(Post.embedding.distance([0.1, 0.2]))  # Expression
             query.order_by('posts.title', '-posts.created_at')  # Multiple
         """
+        from .expressions import Expression
+
         for field in fields:
-            if field.startswith('-'):
-                # Descending order
-                self.order_by_fields.append((field[1:], 'DESC'))
-            else:
-                # Ascending order (default)
+            if isinstance(field, Expression):
+                # Expression object (e.g., VectorDistance) - always ASC by default
                 self.order_by_fields.append((field, 'ASC'))
+            elif isinstance(field, str):
+                if field.startswith('-'):
+                    # Descending order
+                    self.order_by_fields.append((field[1:], 'DESC'))
+                else:
+                    # Ascending order (default)
+                    self.order_by_fields.append((field, 'ASC'))
+            else:
+                raise ValueError(f"order_by expects string or Expression, got {type(field)}")
         return self
 
     # pagination

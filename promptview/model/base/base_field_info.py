@@ -15,6 +15,7 @@ class BaseFieldInfo:
         is_foreign_key: bool = False,
         is_vector: bool = False,
         dimension: Optional[int] = None,
+        distance: str = "cosine",
         is_key: bool = False,
         index: bool = False,
         on_delete: str = "CASCADE",

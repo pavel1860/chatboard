@@ -42,11 +42,21 @@ class PgNamespace(BaseNamespace["Model", PgFieldInfo]):
     
     @classmethod
     async def install_extensions(cls):
-        sql = """
-        CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-        CREATE EXTENSION IF NOT EXISTS "ltree";
+        from ..namespace_manager2 import NamespaceManager, _extensions_registry
 
-        """
+        # Base extensions that are always needed
+        base_extensions = ["uuid-ossp", "ltree"]
+
+        # Collect all registered extensions for postgres
+        registered_extensions = [ext for db_type, ext in _extensions_registry if db_type == "postgres"]
+
+        # Combine base and registered extensions
+        all_extensions = base_extensions + registered_extensions
+
+        # Build SQL to install all extensions
+        sql_parts = [f'CREATE EXTENSION IF NOT EXISTS "{ext}";' for ext in all_extensions]
+        sql = "\n".join(sql_parts)
+
         await PGConnectionManager.execute(sql)
 
     def __repr__(self):

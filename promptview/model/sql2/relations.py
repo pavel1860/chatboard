@@ -153,6 +153,49 @@ class RelField:
         from .expressions import LtreeSubpath
         return LtreeSubpath(self, offset, length)
 
+    # Vector methods (pgvector extension)
+
+    def similar(self, vector):
+        """
+        Create a similarity expression for vector search.
+        Returns a VectorSimilarity object that supports comparison operators.
+
+        Args:
+            vector: The query vector (list, numpy array, or text for auto-embedding)
+
+        Returns:
+            VectorSimilarity expression that can be compared with >, <, >=, <=
+
+        Example:
+            SimpleDocument.query().where(
+                SimpleDocument.embedding.similar([0.1, 0.2, 0.3]) > 0.5
+            )
+            SimpleDocument.query().where(
+                SimpleDocument.embedding.similar("machine learning") > 0.7
+            )
+        """
+        from .expressions import VectorSimilarity
+        return VectorSimilarity(self, vector)
+
+    def distance(self, vector):
+        """
+        Create a distance expression for vector ordering.
+        Used in order_by() to sort by similarity to a query vector.
+
+        Args:
+            vector: The query vector (list, numpy array, or text for auto-embedding)
+
+        Returns:
+            VectorDistance expression for use in order_by()
+
+        Example:
+            SimpleDocument.query().order_by(
+                SimpleDocument.embedding.distance([0.1, 0.2, 0.3])
+            ).limit(10)
+        """
+        from .expressions import VectorDistance
+        return VectorDistance(self, vector)
+
 
 
 class RelationProtocol(Protocol):
