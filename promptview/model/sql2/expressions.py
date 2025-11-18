@@ -297,6 +297,100 @@ class LtreeSubpath(Expression):
         self.length = length
 
 
+# Vector (pgvector) operations
+
+class VectorSimilarity(Expression):
+    """
+    Vector similarity expression that supports comparison operators.
+
+    Represents similarity between a vector field and a query vector.
+    Returns a similarity score (0-1 for cosine, varies by distance metric).
+
+    Used with comparison operators to filter by similarity threshold:
+        embedding.similar([0.1, 0.2, 0.3]) > 0.5  # similarity > 0.5
+        embedding.similar("text") >= 0.7           # auto-embed text, similarity >= 0.7
+
+    The underlying SQL uses pgvector distance operators:
+        - <=> for cosine distance (converted to similarity: 1 - distance)
+        - <-> for L2/euclidean distance
+        - <#> for inner product
+    """
+    def __init__(self, field, vector):
+        """
+        Args:
+            field: RelField representing the vector column
+            vector: Query vector (list, numpy array, or text for auto-embedding)
+        """
+        self.field = field
+        self.vector = vector
+        self.is_text = isinstance(vector, str)
+
+    # Override comparison operators to return VectorComparison
+    def __gt__(self, threshold):
+        return VectorComparison(self, ">", threshold)
+
+    def __ge__(self, threshold):
+        return VectorComparison(self, ">=", threshold)
+
+    def __lt__(self, threshold):
+        return VectorComparison(self, "<", threshold)
+
+    def __le__(self, threshold):
+        return VectorComparison(self, "<=", threshold)
+
+    def __eq__(self, threshold):
+        return VectorComparison(self, "==", threshold)
+
+
+class VectorDistance(Expression):
+    """
+    Vector distance expression for ordering by similarity.
+
+    Represents the distance between a vector field and a query vector.
+    Lower distance = more similar (for most distance metrics).
+
+    Used in order_by() to sort results by similarity:
+        .order_by(embedding.distance([0.1, 0.2, 0.3]))
+        .order_by(embedding.distance("search text"))
+
+    The SQL uses pgvector distance operators:
+        - <=> for cosine distance
+        - <-> for L2/euclidean distance
+        - <#> for inner product (negated for ordering)
+    """
+    def __init__(self, field, vector):
+        """
+        Args:
+            field: RelField representing the vector column
+            vector: Query vector (list, numpy array, or text for auto-embedding)
+        """
+        self.field = field
+        self.vector = vector
+        self.is_text = isinstance(vector, str)
+
+
+class VectorComparison(Expression):
+    """
+    Comparison between vector similarity and a threshold value.
+
+    Created when using comparison operators on VectorSimilarity:
+        embedding.similar([0.1, 0.2, 0.3]) > 0.5
+
+    Compiles to SQL like:
+        (1 - (embedding <=> '[0.1,0.2,0.3]')) > 0.5  # for cosine
+    """
+    def __init__(self, similarity_expr, operator, threshold):
+        """
+        Args:
+            similarity_expr: VectorSimilarity expression
+            operator: Comparison operator (">", ">=", "<", "<=", "==")
+            threshold: Similarity threshold value
+        """
+        self.similarity_expr = similarity_expr
+        self.operator = operator
+        self.threshold = threshold
+
+
 class LtreeLca(Expression):
     """
     lca(ltree, ltree, ...) function - lowest common ancestor.
