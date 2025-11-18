@@ -14,13 +14,14 @@ if TYPE_CHECKING:
 class Vector(np.ndarray):
     
     
-    def __new__(cls, input_array, info=None):
-        # Create the ndarray instance
-        obj = np.asarray(input_array).view(cls)
-        # Add new attribute
-        return obj
+    def __new__(cls, input_array: np.ndarray | list | str, info=None):
+        if isinstance(input_array, str):
+            input_array = np.fromstring(input_array.strip("[]"), sep=",")
+        elif isinstance(input_array, list):
+            input_array = np.array(input_array)
+        return np.asarray(input_array).view(cls)
     
-
+    
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         return core_schema.no_info_plain_validator_function(

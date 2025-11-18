@@ -167,14 +167,53 @@ class Model(BaseModel, metaclass=ModelMeta):
 
 
     
-    async def save(self):        
+    def transform(self) -> str:
+        """
+        Transform the model into text for vectorization.
+        Override this method to customize how your model is converted to text.
+        Default: returns JSON dump of the model.
+        """
+        return self.model_dump_json()
+
+    async def save(self):
         ns = self.get_namespace()
         self._load_context_vars()
+
+        # Prepare model dump
+        dump = self.model_dump()
+
+        # Handle vectorization if needed
+        if ns.need_to_transform:
+            # Check which vector fields need to be generated
+            fields_to_vectorize = []
+            for field_name in ns._vectorizers.keys():
+                if dump.get(field_name) is None:
+                    fields_to_vectorize.append(field_name)
+
+            # Only vectorize if there are fields that need it
+            if fields_to_vectorize:
+                # For each field that needs vectorization, call its transformer or default transform
+                for field_name in fields_to_vectorize:
+                    # Check if there's a custom transformer for this field
+                    if field_name in ns._transformers:
+                        transform_func, vectorizer_cls = ns._transformers[field_name]
+                        text_content = transform_func(self)
+                    else:
+                        text_content = self.transform()
+
+                    # Get the vectorizer for this field and embed
+                    vectorizer = ns._vectorizers[field_name]
+                    vector = await vectorizer.embed_query(text_content)
+                    dump[field_name] = vector
+
         pk_value = self.primary_id
         if pk_value is None:
-            result = await self.insert().one().json()   
+            # Insert with vectors
+            result = await ns.insert(dump).select("*").one().json()
         else:
-            result = await self.update().one().json()
+            # Update with vectors
+            result = await ns.update(pk_value, dump).select("*").one().json()
+
         for key, value in result.items():
             setattr(self, key, value)
         return self

@@ -58,6 +58,11 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         self._pending_relation_parser: Optional["RelationParser"] = None
         self._default_order_field = None
         self._versioning_strategy = versioning_strategy
+
+        # Vector field support
+        self._transformers: dict[str, tuple[Any, Type]] = {}  # field_name -> (transform_func, vectorizer_cls)
+        self._vectorizers: dict[str, Any] = {}  # field_name -> vectorizer_instance
+        self._batch_vectorizer: Optional[Any] = None
     # -------------------------
     # Model class binding
     # -------------------------
@@ -189,6 +194,33 @@ class BaseNamespace(Generic[MODEL, FIELD]):
         Restore the previous context model using the token from set_ctx().
         """
         self._ctx_model.reset(token)
+
+    # -------------------------
+    # Vector field management
+    # -------------------------
+    def register_transformer(self, field_name: str, transform_func: Any, vectorizer_cls: Type):
+        """Register a transformer function for a vector field."""
+        self._transformers[field_name] = (transform_func, vectorizer_cls)
+
+    def register_vector_field(self, field_name: str, vectorizer_cls: Type):
+        """Register a vectorizer for a vector field and return the instance."""
+        vectorizer_instance = vectorizer_cls()
+        self._vectorizers[field_name] = vectorizer_instance
+        return vectorizer_instance
+
+    @property
+    def need_to_transform(self) -> bool:
+        """Check if this namespace has vector fields that need transformation."""
+        return len(self._vectorizers) > 0
+
+    @property
+    def batch_vectorizer(self):
+        """Get or create the batch vectorizer for this namespace."""
+        if self._batch_vectorizer is None and len(self._vectorizers) > 0:
+            # Create a batch vectorizer that combines all individual vectorizers
+            from ...algebra.vectors.batch_vectorizer import BatchVectorizer
+            self._batch_vectorizer = BatchVectorizer(vectorizers=self._vectorizers)
+        return self._batch_vectorizer
 
     # -------------------------
     # Model instantiation

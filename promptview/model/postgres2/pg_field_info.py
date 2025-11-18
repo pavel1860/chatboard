@@ -26,6 +26,7 @@ class PgFieldInfo(BaseFieldInfo):
         is_foreign_key: bool = False,
         is_vector: bool = False,
         dimension: Optional[int] = None,
+        distance: str = "cosine",
         is_key: bool = False,
         sql_type: Optional[str] = None,  # Allow override
         index: bool = False,
@@ -142,5 +143,8 @@ class PgFieldInfo(BaseFieldInfo):
                 value = [self.data_type.model_validate(v) for v in value]
             else:
                 value = self.data_type.model_validate(value)
+        elif self.is_vector:
+            from ..vectors import Vector
+            value = Vector(value)
     
         return value

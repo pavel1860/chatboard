@@ -25,6 +25,15 @@ class ModelMeta(ModelMetaclass, type):
         model_name = name
         namespace_name = dct.get("_namespace_name") or cls._default_namespace_name(model_name, db_type)
         versioning_strategy = dct.get("_versioning_strategy", VersioningStrategy.NONE)
+        # Process transformer decorators BEFORE creating the class
+        # (because they need to be registered before field parsing)
+        transformer_funcs = {}
+        for attr_name, attr_value in dct.items():
+            if callable(attr_value) and hasattr(attr_value, "_transformer_field_name"):
+                field_name = getattr(attr_value, "_transformer_field_name")
+                vectorizer_cls = getattr(attr_value, "_vectorizer_cls")
+                transformer_funcs[field_name] = (attr_value, vectorizer_cls)
+
         # Create the actual Pydantic model class
         cls_obj = super().__new__(cls, name, bases, dct)
 
@@ -62,7 +71,11 @@ class ModelMeta(ModelMetaclass, type):
             reserved_fields=set()
         )
         relation_parser = RelationParser(cls_obj, ns)
-        
+
+        # Register transformers with namespace
+        for field_name, (transform_func, vectorizer_cls) in transformer_funcs.items():
+            ns.register_transformer(field_name, transform_func, vectorizer_cls)
+
         ns.set_pending_parsers(field_parser, relation_parser)
 
         # Register the namespace but do not parse yet

@@ -36,6 +36,11 @@ class NamespaceManager:
         return ns
 
     @classmethod
+    def register_extension(cls, db_type: str, extension_name: str):
+        """Register a PostgreSQL extension to be installed."""
+        _extensions_registry.add((db_type, extension_name))
+
+    @classmethod
     def get_namespace(cls, namespace_name: str, db_type: str = "postgres"):
         key = (namespace_name, db_type)
         ns = cls._registry.get(key)
@@ -84,15 +89,15 @@ class NamespaceManager:
     async def initialize_all(cls, init_main_branch: bool = True):
         if cls._initialized:
             print("NamespaceManager already initialized")
-            return        
+            return
         start_time = time.time()
-            
-        await PgNamespace.install_extensions()
-        # from .versioning.models import Branch
-        # from ..evaluation.models import TestTurn
-        # Branch.model_rebuild()
-        # BlockNode.model_rebuild()
+
+        # Finalize first to parse fields and register extensions
         cls.finalize()
+
+        # Install extensions after finalize (so vector extension is registered)
+        await PgNamespace.install_extensions()
+
         # 1️⃣ Create all tables first
         for ns in cls._registry.values():
             if hasattr(ns, "create_namespace"):
