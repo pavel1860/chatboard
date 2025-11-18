@@ -3,17 +3,17 @@ from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from promptview.model3.sql.compiler import Compiler
-from promptview.model3.query_filters import QueryListType
-from promptview.api.utils import query_filters
-from promptview.model3 import Branch, TurnStatus
-from promptview.model3.query_url_params import parse_query_params
-from promptview.utils.db_connections import PGConnectionManager
-from promptview.model3.context import Context
-from promptview.api.model_router import create_model_router
+from ..model.sql.compiler import Compiler
+from ..model.query_filters import QueryListType
+from .utils import query_filters
+from ..model import Branch, TurnStatus
+from ..model.query_url_params import parse_query_params
+from ..utils.db_connections import PGConnectionManager
+from ..prompt.context import Context
+from .model_router import create_model_router
 from fastapi import Request
 from typing import Type
-from promptview.api.utils import ListParams, get_list_params
+from .utils import ListParams, get_list_params
 
 
 

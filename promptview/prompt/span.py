@@ -6,9 +6,9 @@ from typing_extensions import TypeVar
 from pydantic import BaseModel
 
 
-from promptview.prompt.depends import DependsContainer, resolve_dependency
-from promptview.prompt.events import StreamEvent
-from promptview.prompt.stream2 import GeneratorFrame, StreamController, SupportsExtend, CHUNK
+from ..prompt.depends import DependsContainer, resolve_dependency
+from ..prompt.events import StreamEvent
+from ..prompt.stream2 import GeneratorFrame, StreamController, SupportsExtend, CHUNK
 from uuid import uuid4
 # Assuming AsyncStreamWrapper, DependsContainer, and resolve_dependency are available
 

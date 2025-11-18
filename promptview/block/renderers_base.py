@@ -5,10 +5,10 @@ import yaml
 from typing import TYPE_CHECKING, Any, List
 from abc import ABC, abstractmethod
 
-from promptview.block.block import Block
-from promptview.block.block7 import BlockList, BlockSent, FieldAttrBlock, BlockChunk, BaseBlock
-from promptview.block.types import ContentType
-from promptview.block.style2 import StyleManager
+from .block7 import Block
+from .block7 import BlockList, BlockSent, FieldAttrBlock, BlockChunk, BaseBlock
+from .types import ContentType
+from .style2 import StyleManager
 
 
 
@@ -32,7 +32,7 @@ class RenderContext:
         
     @property
     def is_list(self) -> bool:
-        from promptview.block.block7 import BlockList
+        from .block7 import BlockList
         return isinstance(self.block, BlockList)
     
     def get_style(self, key: str) -> dict:
@@ -47,7 +47,7 @@ class RenderContext:
     
     @property
     def is_context(self) -> bool:
-        from promptview.block.block7 import Block
+        from .block7 import Block
         return isinstance(self.block, Block)
     
     @property
@@ -56,7 +56,7 @@ class RenderContext:
     
     @property
     def is_wrapper(self) -> bool:
-        from promptview.block.block7 import Block
+        from .block7 import Block
         if self.block and isinstance(self.block, Block):
             if not self.block.root:
                 return True

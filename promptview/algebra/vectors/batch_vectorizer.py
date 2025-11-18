@@ -2,7 +2,7 @@ import asyncio
 from typing import Any
 
 
-from promptview.algebra.vectors.base_vectorizer import BaseVectorizer
+from .base_vectorizer import BaseVectorizer
 
 
 

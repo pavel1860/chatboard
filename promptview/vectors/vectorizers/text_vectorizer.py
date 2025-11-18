@@ -1,8 +1,8 @@
 from typing import Any, List
 
-from promptview.vectors.embeddings.text_embeddings import DenseEmbeddings
-from promptview.vectors.tokenizer import Tokenizer
-from promptview.vectors.vectorizers.base import (VectorizerBase,
+from ..embeddings.text_embeddings import DenseEmbeddings
+from ..tokenizer import Tokenizer
+from ..vectorizers.base import (VectorizerBase,
                                                      VectorizerDenseBase,
                                                      VectorMetrics)
 from pydantic import BaseModel, Field

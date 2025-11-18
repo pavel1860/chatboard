@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.spatial.distance import pdist, squareform
+# from scipy.spatial.distance import pdist, squareform
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.tag import pos_tag

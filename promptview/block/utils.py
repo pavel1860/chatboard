@@ -1,6 +1,6 @@
 
 
-from promptview.block.block7 import Block
+from .block7 import Block
 
 
 def print_block_tree(block: Block, indent: int = 0):

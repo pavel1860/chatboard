@@ -1,13 +1,10 @@
 from typing import Dict, Type, List, TypeVar, Generic
 from uuid import UUID
-from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.datastructures import QueryParams
-from promptview.api.utils import Head, build_head_parser, get_head
-from promptview.auth.dependencies import get_auth_user
-from promptview.auth.user_manager import AuthModel
+from fastapi import APIRouter, Depends, Request
+from .utils import get_auth
+from ..auth.user_manager2 import AuthModel
 from pydantic import BaseModel
-# from promptview.model2.versioning import ArtifactLog, Branch, Partition, Turn, TurnStatus
-from promptview.model3 import NamespaceManager, Turn, Branch
+from ..model import NamespaceManager, Turn, Branch
 
 
 
@@ -51,7 +48,7 @@ class BranchFromTurnRequest(BaseModel):
     turn_id: int
     
 @router.post("/branches")
-async def branch_from_turn(request: BranchFromTurnRequest, head: Head = Depends(get_head)):
+async def branch_from_turn(request: BranchFromTurnRequest):
     raise NotImplementedError
     branch = await ArtifactLog.create_branch(forked_from_turn_id=request.turn_id)
     return branch
@@ -66,7 +63,7 @@ async def get_all_turns():
 @router.get("/partitions", 
     # response_model=List[Partition]
     )
-async def get_partitions(user: AuthModel = Depends(get_auth_user)):
+async def get_partitions(user: AuthModel = Depends(get_auth)):
     # partitions = await ArtifactLog.list_partitions(user.id)
     raise NotImplementedError
     return partitions
@@ -77,7 +74,7 @@ class CreatePartitionPayload(BaseModel):
     participants: List[int]
 
 @router.post("/partitions")
-async def create_partition(payload: CreatePartitionPayload, user: AuthModel = Depends(get_auth_user)):
+async def create_partition(payload: CreatePartitionPayload, user: AuthModel = Depends(get_auth)):
     raise NotImplementedError
     # partition = await ArtifactLog.create_partition(payload.name, [user.id] + payload.participants)
     return partition

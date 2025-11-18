@@ -2,8 +2,8 @@
 from typing import List, Type
 from uuid import uuid4
 from pydantic import BaseModel, Field
-from promptview.llms.exceptions import LLMToolNotFound
-from promptview.llms.messages import AIMessage, ActionCall
+from ..llms.exceptions import LLMToolNotFound
+from ..llms.messages import AIMessage, ActionCall
 import xml.etree.ElementTree as ET
 
 

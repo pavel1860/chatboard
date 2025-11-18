@@ -6,11 +6,9 @@ from typing import TYPE_CHECKING, Annotated, Any, Callable, Generic, List, Liter
 import annotated_types
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
-from promptview.block.types import ContentType
-from promptview.block.util import LlmUsage, ToolCall
+from .types import ContentType
 if TYPE_CHECKING:
-    from promptview.model.block_model import BlockModel
-    from promptview.model.model import SelectQuerySet
+    from ..model import BlockModel
 
 
 
@@ -188,7 +186,7 @@ class BaseBlock:
 
     
     def render(self, verbose: bool = False) -> str:
-        from promptview.block.renderers_base3 import render
+        from .renderers_base3 import render
         result = render(self)
         return result if result is not None else ""
     
@@ -489,7 +487,7 @@ class BlockChunk(BaseBlock):
 
         
     def to_model(self) -> "BlockModel":
-        from promptview.model.block_model import BlockModel
+        from ..model import BlockModel
         return BlockModel.from_block(self)
     
     def model_dump(self):
@@ -1526,7 +1524,7 @@ class ResponseBlock(Block):
         
     
     def commit(self):
-        from promptview.block.renderers_base3 import SequenceRenderer
+        from .renderers_base3 import SequenceRenderer
         # content = self.children.render()
         content = SequenceRenderer().render(self)
         content = content.strip()

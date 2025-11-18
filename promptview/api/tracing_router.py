@@ -2,8 +2,8 @@
 import os
 from typing import List
 from fastapi import APIRouter
-from promptview.llms.prompt_tracer import PromptTracer
-from promptview.llms.tracer_api import get_run_messages
+from ..llms.prompt_tracer import PromptTracer
+from ..llms.tracer_api import get_run_messages
 
 
 router = APIRouter(prefix="/tracing", tags=["tracing"])

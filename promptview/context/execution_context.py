@@ -2,7 +2,7 @@
 
 import contextvars
 from typing import Any
-from promptview.tracer.langsmith_tracer import RunTypes
+from ..tracer.langsmith_tracer import RunTypes
 from ..tracer import Tracer
 
 

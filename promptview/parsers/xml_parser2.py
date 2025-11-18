@@ -4,8 +4,8 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 import xml.etree.ElementTree as ET
-if TYPE_CHECKING:
-    from promptview.prompt import ToolCall
+# if TYPE_CHECKING:
+    # from .prompt.prompt import ToolCall
 
 
 
@@ -20,13 +20,13 @@ class XmlOutputParser(Generic[OUTPUT_MODEL]):
         
         
     def find_tools(self, tools, root, tool_tag="tool", param_tag="param") -> "List[ToolCall]":
-        from promptview.prompt import ToolCall
+        from ..prompt import ToolCall
         tool_calls = []
         tool_lookup = {tool.__name__: tool for tool in tools}        
         for tool in root.findall(tool_tag):
             tool_cls = tool_lookup.get(tool.attrib["name"], None)
             if not tool_cls:
-                from promptview.llms import ErrorMessage
+                from ..llms import ErrorMessage
                 raise ErrorMessage(tool.attrib["name"])
             # params = {param.attrib["name"]: param.text for param in tool.findall(param_tag)}
             tool_inst = tool_cls.model_validate_json(tool.text)

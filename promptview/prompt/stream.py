@@ -2,7 +2,7 @@ from functools import wraps
 import inspect
 from typing import (Any, AsyncGenerator, Callable, Dict, Generic, Type, TypeVar, ParamSpec)
 
-from promptview.prompt.events import StreamEvent
+from ..prompt.events import StreamEvent
 
 
 

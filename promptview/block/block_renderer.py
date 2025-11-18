@@ -1,8 +1,7 @@
-
-from promptview.block.renderer import ItemsRenderer, MarkdownListRenderer, MarkdownParagraphRenderer, MarkdownTitleRenderer, ContentRenderer, Renderer, IndentRenderer
-from promptview.block.style import InlineStyle, BlockStyle, StyleManager, UndefinedTagError
+from .renderer import ItemsRenderer, MarkdownListRenderer, MarkdownParagraphRenderer, MarkdownTitleRenderer, ContentRenderer, Renderer, IndentRenderer
+from .style import InlineStyle, BlockStyle, StyleManager, UndefinedTagError
 from typing import TYPE_CHECKING, List, Literal, Type, TypedDict, Union
-from promptview.block.block import Block
+from .block7 import Block
 
 
 

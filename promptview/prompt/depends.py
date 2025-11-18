@@ -7,7 +7,7 @@ from typing import Annotated, Any, Callable, Generic, Optional, ParamSpec, TypeV
 from typing_extensions import Doc
 
 # from aiohttp_retry import Any, Optional
-from promptview.utils.function_utils import call_function
+from ..utils.function_utils import call_function
 
 
 # P = ParamSpec('P')

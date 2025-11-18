@@ -5,23 +5,13 @@ from fastapi import Request,  Depends, HTTPException, Query, Request
 import json
 
 
-from promptview.auth.dependencies import get_auth_user
-from promptview.auth.user_manager import AuthModel
-from promptview.context.model_context import ModelCtx
-from promptview.model.postgres.query_url_params import parse_query_params
-from promptview.model.query_filters import QueryListType
-from promptview.model.versioning import ArtifactLog, Partition
+from ..model.query_filters import QueryListType
 from pydantic import BaseModel, Field
-# from promptview.model2.query_filters import QueryFilter, parse_query_params
 
 
 
 
-class Head(BaseModel):
-    partition_id: int | None = None
-    branch_id: int = 1
-    turn_id: int | None = None
-    partition: Partition | None = None
+
 
 
 def unpack_int_env_header(request: Request, field: str, default: int | None = None):
@@ -58,46 +48,28 @@ def get_list_query(
         return ListModelQuery(offset=offset, limit=limit, filters=filters)
         
 
-def build_head_parser(model: Type[BaseModel]):
-    async def get_head(request: Request, auth_user: AuthModel = Depends(get_auth_user)) -> Head | None:
-        partition_id = unpack_int_env_header(request, "partition_id")
-        if partition_id is None:
-            if not auth_user.is_admin:
-                raise HTTPException(status_code=401, detail="Unauthorized")
-        if partition_id != auth_user.id:
-            if not auth_user.is_admin:
-                raise HTTPException(status_code=401, detail="Unauthorized")
-        if not model._is_versioned:
-            return None
-        branch_id = unpack_int_env_header(request, "branch_id")
-        if branch_id is None:
-            branch_id = 1
-        turn_id = unpack_int_env_header(request, "turn_id")
-        head = Head(branch_id=branch_id, turn_id=turn_id)
-        return head
-    return get_head
 
 
 
-async def get_head(request: Request, auth_user: AuthModel = Depends(get_auth_user)) -> Head | None:
-    partition_id = unpack_int_env_header(request, "partition_id")
-    partition = None
-    if partition_id is None:
-        if not auth_user.is_admin:
-            partition = await auth_user.last_partition("default")
-            if not partition:
-                raise HTTPException(status_code=401, detail="No Partition specified for regular user")        
-    else:
-        partition = await ArtifactLog.get_partition(partition_id)
-        if not partition.is_participant(auth_user.id) and not auth_user.is_admin:
-            raise HTTPException(status_code=401, detail="Unauthorized partition for user")
+# async def get_head(request: Request, auth_user: AuthModel = Depends(get_auth_user)) -> Head | None:
+#     partition_id = unpack_int_env_header(request, "partition_id")
+#     partition = None
+#     if partition_id is None:
+#         if not auth_user.is_admin:
+#             partition = await auth_user.last_partition("default")
+#             if not partition:
+#                 raise HTTPException(status_code=401, detail="No Partition specified for regular user")        
+#     else:
+#         partition = await ArtifactLog.get_partition(partition_id)
+#         if not partition.is_participant(auth_user.id) and not auth_user.is_admin:
+#             raise HTTPException(status_code=401, detail="Unauthorized partition for user")
         
-    branch_id = unpack_int_env_header(request, "branch_id")
-    if branch_id is None:
-        branch_id = 1
-    turn_id = unpack_int_env_header(request, "turn_id")
-    head = Head(branch_id=branch_id, turn_id=turn_id, partition_id=partition_id, partition=partition)
-    return head
+#     branch_id = unpack_int_env_header(request, "branch_id")
+#     if branch_id is None:
+#         branch_id = 1
+#     turn_id = unpack_int_env_header(request, "turn_id")
+#     head = Head(branch_id=branch_id, turn_id=turn_id, partition_id=partition_id, partition=partition)
+#     return head
     
     
 
@@ -194,7 +166,7 @@ async def get_auth(request: Request):
 #     return None
 
 # async def get_user_from_request(request: Request):
-#     from promptview.auth.user_manager2 import UserNotFound
+#     from ..auth.user_manager2 import UserNotFound
 #     user_ref_id = get_user_ref(request)
 #     user_manager = get_user_manager(request)
 #     try:

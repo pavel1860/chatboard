@@ -6,7 +6,7 @@
 
 from typing import Type
 
-from promptview.algebra.vectors.base_vectorizer import BaseVectorizer
+from .algebra.vectors.base_vectorizer import BaseVectorizer
 
 VectorizerName = str
 

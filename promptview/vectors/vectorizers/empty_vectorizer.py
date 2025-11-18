@@ -1,7 +1,7 @@
 from typing import List
 from pydantic import Field
-from promptview.vectors.embeddings.text_embeddings import DenseEmbeddings
-from promptview.vectors.vectorizers.base import VectorMetrics, VectorizerBase
+from ..embeddings.text_embeddings import DenseEmbeddings
+from ..vectorizers.base import VectorMetrics, VectorizerBase
 import numpy as np
 
 

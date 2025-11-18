@@ -1,11 +1,8 @@
 from typing import Type, TypeVar, Generic, Any, Dict, TypeVar, Union, Callable, Tuple
 from pydantic import BaseModel
 
-from promptview.artifact_log.artifact_log3 import ArtifactLog
-# from promptview.conversation.message_log import MessageLog
+from ..legacy.artifact_log.artifact_log3 import ArtifactLog
 
-from ..conversation.history import History
-from ..conversation.models import Turn
 
 StateType = TypeVar('StateType', bound=Union[Any, BaseModel])
 

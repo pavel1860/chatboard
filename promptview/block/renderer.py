@@ -1,11 +1,11 @@
 
 
 import textwrap
-from promptview.block.style import BulletType, StyleManager
+from .style import BulletType, StyleManager
 from typing import TYPE_CHECKING, Any, List, Literal, Protocol, Type, TypedDict, Union
 
-from promptview.utils.string_utils import int_to_roman
-from promptview.block.block import Block
+from ..utils.string_utils import int_to_roman
+from .block7 import Block
 
 
 

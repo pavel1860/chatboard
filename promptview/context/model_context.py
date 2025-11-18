@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from typing import Generic, List, Optional, Dict, Any, Set, Type, TypeVar
 from pydantic_core import core_schema
 from pydantic import GetCoreSchemaHandler
-from promptview.auth.user_manager import AuthModel
+from ..auth.user_manager2 import AuthModel
 
 class ModelCtx(BaseModel):
     branch_id: Optional[int] = None
@@ -79,10 +79,10 @@ class Context(BaseModel):
                 raise ValueError(f"Header {key} is required")
         return raw
     
-    @classmethod
-    def get_user_manager(cls):
-        from promptview.legacy.app import Chatboard
-        return Chatboard.get_app_ctx()._auth_manager()
+    # @classmethod
+    # def get_user_manager(cls):
+    
+    #     return Chatboard.get_app_ctx()._auth_manager()
     
 
     @classmethod

@@ -6,17 +6,14 @@ from typing import (Any, Dict, Generic, List, Literal, Optional, Type,
                     TypedDict, TypeVar, Union)
 from uuid import uuid4
 
-from promptview.llms.utils.completion_parsing import is_list_model
-# from pydantic import BaseModel
-# from promptview.app_manager import app_manager
-# from promptview.llms.mvc import BaseModel
-from promptview.vectors.stores.base import OrderBy, VectorStoreBase
-from promptview.vectors.stores.qdrant_vector_store import QdrantVectorStore
-from promptview.vectors.vectorizers.base import (VectorizerBase,
+from ..llms.utils.completion_parsing import is_list_model
+from ..vectors.stores.base import OrderBy, VectorStoreBase
+from ..vectors.stores.qdrant_vector_store import QdrantVectorStore
+from ..vectors.vectorizers.base import (VectorizerBase,
                                                      VectorizerDenseBase,
                                                      VectorizerSparseBase,
                                                      VectorMetrics)
-from promptview.vectors.vectorizers.text_vectorizer import TextVectorizer
+from ..vectors.vectorizers.text_vectorizer import TextVectorizer
 from pydantic import BaseModel
 from qdrant_client.http.exceptions import UnexpectedResponse
 

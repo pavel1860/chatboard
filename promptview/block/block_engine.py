@@ -3,8 +3,8 @@
 
 
 
-from promptview.block.block_renderer2 import RendererRegistry
-from promptview.block.style2 import StyleManager
+from .block_renderer2 import RendererRegistry
+from .style2 import StyleManager
 
 
 class BlockEngine:

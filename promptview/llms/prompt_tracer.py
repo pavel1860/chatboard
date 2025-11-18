@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Union
 
 from langsmith import Client
 from langsmith.schemas import Feedback, Run
-from promptview.llms.messages import AIMessage, HumanMessage, SystemMessage
+from ..llms.messages import AIMessage, HumanMessage, SystemMessage
 
 LANGCHAIN_PROJECT = os.getenv("LANGCHAIN_PROJECT", "default")
 

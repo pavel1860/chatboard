@@ -1,12 +1,14 @@
 
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from typing import Any, Literal, TypedDict, Unpack
 from pydantic import BaseModel, Field
 import uuid
 import datetime as dt
+
+from promptview.model.db_types import Tree
 
 
 
@@ -32,18 +34,28 @@ class EventParams(TypedDict, total=False):
 @dataclass
 class StreamEvent:
     type: str
-    name: str | None = None
-    attrs: dict | None = None
-    depth: int = 0
-    parent_event_id: int | None = None
-    event: Any | None = None
-    payload: Any | None = None    
-    created_at: dt.datetime | None = None
-    error: str | None = None
-    index: int | None = None
+    payload: Any
+    index: int
+    path: str
     request_id: str | None = None
-    span_id: str | None = None
-    path: list[int] | None = None
+    created_at: dt.datetime = field(default_factory=dt.datetime.now)        
+    name: str | None = None
+    error: dict | None = None
+    
+    
+    
+    
+    # attrs: dict | None = None
+    # depth: int = 0
+    # parent_value_id: int | None = None
+    # value: Any | None = None
+    # payload: Any | None = None    
+    # created_at: dt.datetime | None = None
+    # error: str | None = None
+    # index: int | None = None
+    # request_id: str | None = None
+    # span_id: str | None = None
+    # path: list[int] | None = None
         
     def payload_to_dict(self):
         if self.payload is None:
@@ -54,7 +66,16 @@ class StreamEvent:
             return self.payload.to_dict()
         else:
             return self.payload
-        
+    
+    # def attrs_to_dict(self):
+    #     if self.attrs is None:
+    #         return None
+    #     if hasattr(self.attrs, "model_dump"):
+    #         return self.attrs.model_dump()
+    #     elif hasattr(self.attrs, "to_dict"):
+    #         return self.attrs.to_dict()
+    #     else:
+    #         return self.attrs
         
     @staticmethod
     def _json_default(obj):
@@ -80,19 +101,25 @@ class StreamEvent:
         raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
         
     def to_json(self):
-        payload = self.payload_to_dict()        
+        payload = self.payload_to_dict()   
+        # attrs = self.attrs_to_dict()
         dump = {
             "type": self.type,
-            "path": self.path,
+            # "path": self.path,
             "name": self.name,
             "index": self.index,
-            "attrs": self.attrs,
-            "depth": self.depth,
+            "path": self.path,
+            "request_id": self.request_id,
+            "created_at": self.created_at.isoformat(),
+            # "attrs": attrs,
+            # "depth": self.depth,
             "payload": payload,            
             "request_id": self.request_id,
-            "span_id": self.span_id,   
-            "parent_event_id": self.parent_event_id,
-            "event": self.event.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.event else None,
+            "error": self.error,
+            # "span_id": self.span_id,   
+            # "parent_event_id": self.parent_value_id,
+            # "event": self.value.model_dump(exclude={"branch_id", "turn_id", "branch", "turn"}) if self.value else None,
+            # "value": self.value.to_dict() if self.value else None,
         }        
         if self.error:
             dump["error"] = self.error
@@ -106,7 +133,9 @@ class StreamEvent:
         return self.to_json() + "\n"
     
     def __repr__(self):
-        return f"Event(type={self.type}, name={self.name}, attrs={self.attrs}, depth={self.depth}, payload={self.payload}, index={self.index}, request_id={self.request_id}, span_id={self.span_id}, path={self.path})"
+        return f"Event(type={self.type}, path={self.path}, name={self.name}, payload={self.payload}, index={self.index}, request_id={self.request_id})"
+    # def __repr__(self):
+    #     return f"Event(type={self.type}, name={self.name}, attrs={self.attrs}, depth={self.depth}, payload={self.payload}, index={self.index}, request_id={self.request_id}, span_id={self.span_id}, path={self.path})"
     
     
 

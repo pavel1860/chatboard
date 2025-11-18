@@ -3,8 +3,8 @@ import json
 from typing import Any, Literal
 import uuid
 from pydantic import BaseModel
-from promptview.block.block import Block
-from promptview.block.style import InlineStyle
+from ..block import Block
+from ..block.style import InlineStyle
 
 
 

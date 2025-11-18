@@ -1,9 +1,9 @@
 
 from typing import Optional
 
-from promptview.llms.clients.azure_client import AzureOpenAiLlmClient
-from promptview.llms.clients.base import BaseLlmClient
-from promptview.llms.legacy.llm2 import LLM
+from .clients.azure_client import AzureOpenAiLlmClient
+from .clients.base import BaseLlmClient
+from .llm import LLM
 
 
 class AzureOpenAiLLM(LLM):

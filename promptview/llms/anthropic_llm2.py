@@ -2,10 +2,10 @@ import json
 from typing import Any, List, Type, TypedDict, cast, Literal
 import anthropic
 from pydantic import Field, BaseModel
-from promptview.llms.llm import LLM, BaseLlmClient
-from promptview.llms.messages import ActionCall, LlmUsage
-from promptview.llms.utils.action_manager import Actions
-from promptview.prompt.legacy.block1 import BaseBlock, ResponseBlock, ActionBlock
+from ..llms.llm import LLM, BaseLlmClient
+from ..llms.messages import ActionCall, LlmUsage
+from ..llms.utils.action_manager import Actions
+from ..prompt.legacy.block1 import BaseBlock, ResponseBlock, ActionBlock
 import os
 
 class TextBlock(TypedDict):

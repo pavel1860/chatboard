@@ -3,7 +3,7 @@ import json
 import textwrap
 from typing import Any, Callable, List, Type
 
-from promptview.utils.model_utils import is_list_type
+from ...utils.model_utils import is_list_type
 from .base_blocks import BaseBlock, BaseContent, BlockSequence
 import annotated_types
 
@@ -193,6 +193,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "attrs",
         "postfix",
         "prefix",
+        "artifact_id",
     ]
     
     def __init__(
@@ -208,6 +209,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         prefix: BlockSent | str | None = None,
         postfix: BlockSent | str | None = None,
         parent: "Block | None" = None,
+        artifact_id: int | None = None,
     ):
         super().__init__(
             content=self._init_content(content),
@@ -222,6 +224,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.styles: list[str] = styles or parse_style(style)
         # self.attrs: dict[str, AttrBlock] = get_attrs(attrs)
         self.attrs: dict[str, str] | None = attrs or {}
+        self.artifact_id: str | None = artifact_id
         self.content = self._init_content(content)
         # if content is None:
         #     self.content = BlockSent(parent=self)
@@ -251,6 +254,11 @@ class Block(BlockSequence[BlockSent, "Block"]):
             return sent
         else:
             raise ValueError(f"Invalid sent type: {type(sent)}")
+        
+        
+    @property
+    def kind(self) -> str:
+        return "block"
 
     def _init_content(self, content: BlockContent | None) -> BlockSent:
         if content is None:
@@ -467,8 +475,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
                 "postfix": self.postfix.model_dump(),
                 "styles": [s for s in self.styles],
                 "tags": [t for t in self.tags],
-                # "attrs": {k: attr.model_dump() for k, attr in self.attrs.items()},
-                "attrs": self.attrs,
+                "attrs": {k: attr.model_dump() if isinstance(attr, AttrBlock) else attr for k, attr in self.attrs.items() if attr is not None},
+                # "attrs": self.attrs,
                 "role": self.role,            
             }
         except Exception as e:
@@ -644,6 +652,19 @@ def Attr(
         ge=ge,
         le=le,
     )
+    
+
+
+TYPE_REGISTRY = {
+    "int": int,
+    "str": str,
+    "float": float,
+    "bool": bool,
+    "list": list,
+    "dict": dict,
+}
+
+REVERSE_TYPE_REGISTRY = {v: k for k, v in TYPE_REGISTRY.items()}
 
 
 class AttrBlock:
@@ -695,13 +716,19 @@ class AttrBlock:
     def model_dump(self):
         return {
             "name": self.name,
-            "type": self.type,
+            "type": REVERSE_TYPE_REGISTRY.get(self.type, "str"),
             "description": self.description,
             "gt": self.gt,
             "lt": self.lt,
             "ge": self.ge,
             "le": self.le,
         }
+        
+    @classmethod
+    def from_dict(cls, data: dict):
+        data = data.copy()
+        data["type"] = TYPE_REGISTRY.get(data["type"], str)
+        return cls(**data)
 
 
 
@@ -773,3 +800,13 @@ class BlockSchema(Block):
         for child in self.children:
             res += f"\n{child.repr_tree(verbose=verbose)}"
         return res
+
+
+
+
+
+
+
+
+class BlockList(list[Block]):
+    pass

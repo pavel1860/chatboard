@@ -5,11 +5,11 @@ from pydantic.fields import _Unset, AliasPath, AliasChoices, FieldInfo, JsonDict
 from typing import TYPE_CHECKING, Any, Callable, Dict, ForwardRef, Generic, List, Literal, Optional, Protocol, Self, Type, TypeVar, get_args, get_origin
 from pydantic_core import PydanticUndefined
 
-from promptview.algebra.vectors.base_vectorizer import BaseVectorizer
-from promptview.algebra.vectors.empty_vectorizer import EmptyVectorizer
+from ..algebra.vectors.base_vectorizer import BaseVectorizer
+from ..algebra.vectors.empty_vectorizer import EmptyVectorizer
 
 if TYPE_CHECKING:
-    from promptview.model.model import Model
+    from .model3 import Model
 
 
 
@@ -20,24 +20,42 @@ if TYPE_CHECKING:
 def ModelField(
     default: Any = PydanticUndefined,
     *,
-    foreign_key: bool = False,
+    foreign_key: bool = False,    
     index: Optional[str] = None,
     default_factory: Callable[[], Any] | None = _Unset,
-    is_default_temporal: bool = False,
+    order_by: bool = False,
     db_type: str | None = None,
     description: str | None = _Unset,
+    foreign_cls: "Type[Model] | None" = None,
+    self_ref: bool = False,
+    rel_name: str | None = None,
+    enforce_foreign_key: bool = True,
 ) -> Any:
     """Define a model field with ORM-specific metadata"""
     # Create extra metadata for the field
     extra = {}
     extra["is_model_field"] = True
-    extra["is_default_temporal"] = is_default_temporal
+    extra["order_by"] = order_by
     extra["index"] = index    
+    extra["self_ref"] = self_ref
+    extra["rel_name"] = rel_name
+    extra["enforce_foreign_key"] = enforce_foreign_key
+    if rel_name and not foreign_key:
+        raise ValueError("rel_name can only be set on foreign_key fields")
     if db_type:
         extra["db_type"] = db_type
     if foreign_key:
         extra["foreign_key"] = True
         default = None
+        
+    if foreign_cls:
+        if not foreign_key:
+            raise ValueError("foreign_key must be provided if foreign_cls is provided")
+        if self_ref:
+            raise ValueError("self_ref must be False if foreign_cls is provided")
+        extra["foreign_cls"] = foreign_cls
+        default = None
+    
     # Create the field with the extra metadata
     params = {
         "json_schema_extra": extra,
@@ -53,6 +71,7 @@ def KeyField(
     # *,
     default_factory: Callable[[], Any] | Callable[[dict[str, Any]], Any] | None = _Unset,
     primary_key: bool = False,
+    order_by: bool = False,
     type: Literal["int", "uuid"] = "int",
     description: str | None = _Unset,
     # **kwargs
@@ -64,6 +83,7 @@ def KeyField(
     extra["primary_key"] = primary_key
     extra["type"] = type
     extra["is_key"] = True
+    extra["order_by"] = order_by
     # if type == "uuid" and not primary_key:
         # return Field(default_factory=lambda: uuid.uuid4(), json_schema_extra=extra, description=description)
     # Create the field with the extra metadata
@@ -96,8 +116,8 @@ def RefField(
 def RelationField(
     default: Any = None,
     *,
-    primary_key: str | None = None,
-    foreign_key: str | None = None,
+    foreign_key: str,
+    primary_key: str | None = None,    
     junction_keys: list[str] | None = None,
     junction_model: "Type[Model] | None" = None,
     on_delete: str = "CASCADE",
@@ -117,13 +137,10 @@ def RelationField(
         on_update: The action to take when the referenced row is updated
     """
     # Create extra metadata for the field
-    from promptview.model.relation import Relation
-    # if not primary_key and not foreign_key and not junction_keys:
-        # raise ValueError("primary_key or foreign_key or junction_keys must be provided")
-    if not default:
-        # default = []
-        default = Relation()
-        # default = EmptyRelation()
+    
+
+    # if not default:
+        # default = Relation()
     
     extra = {}
     extra["is_model_field"] = True
@@ -141,9 +158,6 @@ def RelationField(
             raise ValueError("primary_key and foreign_key must be provided if junction_keys are provided")
         if not junction_model:
             raise ValueError("junction_model must be provided if junction_keys are provided")
-        # extra["type"] = "many_to_many"
-    # elif foreign_key:
-    #     extra["type"] = "many_to_one"
     
     # Create the field with the extra metadata and make it optional
     return Field(
@@ -153,8 +167,6 @@ def RelationField(
         # exclude=True,
         # exclude_none=True
     )
-    # return Field(json_schema_extra=extra, **kwargs)
-    # return Field(json_schema_extra=extra, default_factory=lambda: None, **kwargs)
 
 
 
@@ -169,13 +181,7 @@ def VectorField(
     description: str | None = _Unset,
 ) -> Any:
     extra = {}
-    
-    # if vectorizer is None:
-    #     vectorizer = EmptyVectorizer
-    #     dimension = 300
-    # else:
-    #     if not dimension:
-    #         dimension = vectorizer.dimension
+
     extra["is_model_field"] = True
     extra["dimension"] = dimension
     extra["is_vector"] = True    

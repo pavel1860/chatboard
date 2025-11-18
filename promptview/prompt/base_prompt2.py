@@ -1,18 +1,17 @@
 
 from functools import wraps
 from typing import AsyncGenerator, ParamSpec, Type
-from promptview.prompt.stream import STREAM_EVENT, STREAM_RESPONSE, StreamController
+from ..prompt.stream import STREAM_EVENT, STREAM_RESPONSE, StreamController
 import inspect
 from typing import (Any, Callable, Dict, Generic, TypeVar, ParamSpec)
 
-from promptview.context import ExecutionContext
-
-# from promptview.conversation.history import History
+from ..context import ExecutionContext
 
 
-from promptview.block import BlockChunk
+
+from ..block import BlockChunk
 from .depends import  DependsContainer, resolve_dependency
-from ..model.context import Context
+from .context import Context
 from ..utils.function_utils import filter_args_by_exclude
 
 
@@ -24,7 +23,7 @@ class PromptStream(StreamController[P, STREAM_EVENT, STREAM_RESPONSE]):
     
     
     def _filter_args_for_trace(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
-        from promptview.llms import LLM
+        from ..llms import LLM
         _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLM, Context))
         return {"args": _args, "kwargs": _kwargs}
     

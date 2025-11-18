@@ -1,13 +1,6 @@
-from dataclasses import dataclass
-import json
-import textwrap
-import yaml
-from typing import TYPE_CHECKING, Any, List
-from abc import ABC, abstractmethod
-
-from promptview.block.block7 import BlockSequence, BlockChunk, Block, BlockSent, FieldAttrBlock
-from promptview.block.types import ContentType
-from promptview.block.style2 import StyleManager
+from typing import Any
+from .block7 import BlockSequence, BlockChunk, Block, BlockSent, FieldAttrBlock
+from .style2 import StyleManager
 
 
 

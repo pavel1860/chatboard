@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 from pydantic import BaseModel
 
-from promptview.block import BlockChunk
+from ..block import BlockChunk
 
 
 ToolChoice = Literal['auto', 'required', 'none']

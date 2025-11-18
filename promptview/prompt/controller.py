@@ -1,11 +1,11 @@
 import inspect
 from typing import (Any, Callable, Dict, Generic, TypeVar, ParamSpec)
-from promptview.context import ExecutionContext
+from ..context import ExecutionContext
 
 
-from promptview.block import BlockChunk
+from ..block import BlockChunk
 from .depends import  DependsContainer, resolve_dependency
-from ..model.context import Context
+from .context import Context
 from ..utils.function_utils import filter_args_by_exclude
 
 
@@ -18,7 +18,7 @@ class Controller(Generic[P, R]):
     _complete: Callable[P, R]
     
     def _filter_args_for_trace(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
-        from promptview.llms import LLM
+        from ..llms import LLM
         _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLM, Context))
         return {"args": _args, "kwargs": _kwargs}
     

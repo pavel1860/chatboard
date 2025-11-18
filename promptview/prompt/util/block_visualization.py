@@ -1,6 +1,6 @@
 
-from promptview.prompt.legacy.block1 import BaseBlock, ResponseBlock
-from promptview.prompt.legacy.context import BlockStream
+from ..legacy.block1 import BaseBlock, ResponseBlock
+from ..legacy.context import BlockStream
 
 
 def block_to_html(block: BaseBlock):

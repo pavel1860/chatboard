@@ -5,14 +5,14 @@ from functools import singledispatch
 from typing import Any, AsyncGenerator, Callable, Dict, Generic, List, Literal, ParamSpec, Self, Type, TypeVar, Union, TYPE_CHECKING, get_args
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError
 from pydantic.fields import FieldInfo
-from promptview.block.util import StreamEvent
-from promptview.llms.types import ErrorMessage
-from promptview.block import BlockChunk, BlockRole, ToolCall, LlmUsage, BlockList
-from promptview.tracer import Tracer
-from promptview.parsers import XmlOutputParser
-from promptview.utils import logger
-from promptview.utils.function_utils import call_function
-from promptview.utils.model_utils import get_list_type, is_list_type, is_optional_type, schema_to_ts  
+from ..block.util import StreamEvent
+from ..llms.types import ErrorMessage
+from ..block import BlockChunk, BlockRole, ToolCall, LlmUsage, BlockList
+from ..tracer import Tracer
+from ..parsers import XmlOutputParser
+from ..utils import logger
+from ..utils.function_utils import call_function
+from ..utils.model_utils import get_list_type, is_list_type, is_optional_type, schema_to_ts  
 import xml.etree.ElementTree as ET
 
 class LLMToolNotFound(Exception):
@@ -237,14 +237,14 @@ class OutputModel(BaseModel):
     
     @classmethod
     def parse_tool_calls(cls, item: ET.Element, tools: List[Type[BaseModel]]) -> List[ToolCall]:
-        from promptview.block import ToolCall
+        from ..block import ToolCall
         from uuid import uuid4
         tool_calls = []
         tool_lookup = {tool.__name__: tool for tool in tools}        
         for tool in item.findall("tool"):
             tool_cls = tool_lookup.get(tool.attrib["name"], None)
             if not tool_cls:
-                from promptview.llms import ErrorMessage
+                from . import ErrorMessage
                 raise ErrorMessage(tool.attrib["name"])
             # params = {param.attrib["name"]: param.text for param in tool.findall(param_tag)}
             tool_inst = tool_cls.model_validate_json(tool.text)

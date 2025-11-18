@@ -1,6 +1,6 @@
-from promptview.block.block7 import  BaseBlock, BlockChunk, Block, BlockSent, BlockList, ResponseBlock
-from promptview.block.renderers_base import RenderContext, renderer_registry, style_manager
-from promptview.block.style2 import StyleManager
+from .block7 import  BaseBlock, BlockChunk, Block, BlockSent, BlockList, ResponseBlock
+from .renderers_base import RenderContext, renderer_registry, style_manager
+from .style2 import StyleManager
 from .renderers import *
 
 

@@ -1,6 +1,6 @@
-import promptview.utils.string_utils as string
-import promptview.utils.model_utils as model
-from promptview.utils.logger import logger
+from . import string_utils as string
+from . import model_utils as model
+from .logger import logger
 
 
 __all__ = [

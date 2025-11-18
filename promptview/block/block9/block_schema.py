@@ -51,7 +51,8 @@ class BlockBuilderContext:
         return self.queue.get()
     
     def _push_event(self, event: Block):
-        self.queue.put(event.model_dump())
+        # self.queue.put(event.model_dump())
+        self.queue.put(event)
         
         
     def get_view_info(self, view_name: str, is_last: bool = False) -> tuple[BlockSchema, Block | None]:
@@ -145,6 +146,7 @@ class BlockBuilderContext:
         
         def insert(path: list[int], view: Block):
             if not path:
+                view.role = "assistant"
                 self.instance = view
                 return view
             else:

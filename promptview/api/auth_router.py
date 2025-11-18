@@ -1,14 +1,7 @@
-
-from typing import Any, Dict, Type, TypeVar
-from uuid import UUID
+from typing import Any, Dict, TypeVar
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
-from promptview.auth.dependencies import get_auth_admin_user, get_auth_user, get_user_manager, verify_api_key
-from promptview.auth.user_manager2 import AuthManager, AuthModel, UserNotFound
-import os
+from ..auth.user_manager2 import AuthManager, AuthModel, UserNotFound
 
-from promptview.model.model import Model
 
 
 
@@ -22,7 +15,7 @@ AUTH_MODEL = TypeVar('AUTH_MODEL', bound=AuthModel)
 def create_auth_router(auth_model: AUTH_MODEL):
 
     router = APIRouter(
-        prefix="/auth",
+        prefix="/auth_manager",
         tags=["manager"],
         # dependencies=[Depends(get_current_user), ]
     )

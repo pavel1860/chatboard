@@ -3,8 +3,9 @@ from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Type, TypedDict, Unpack
 from pydantic import BaseModel, Field
 
-from promptview.block import BlockChunk, Block, BlockList
-from promptview.prompt.flow_components import StreamController
+from ..block import BlockChunk, Block, BlockList
+# from ..prompt.flow_components import StreamController
+from ..prompt.fbp_process import StreamController
 
 
 
@@ -73,9 +74,11 @@ class LlmStreamParams(TypedDict, total=False):
 #     return wrapper
 
 
+
+
 def pack_blocks(args: tuple[Any, ...]) -> tuple[BlockList, tuple[Any, ...]]:
     # block_list = BlockList()
-    block_list = []
+    block_list = BlockList()
     extra_args = ()
     for arg in args:
         if isinstance(arg, str):
@@ -106,8 +109,9 @@ def llm_stream(
             if "config" not in kwargs or kwargs["config"] is None:
                 kwargs["config"] = getattr(self, "config", None)
             blocks, extra_args = pack_blocks(args)
-            gen = method(self, blocks, *extra_args, **kwargs)
-            return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
+            # gen = method(self, blocks, *extra_args, **kwargs)
+            # return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
+            return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name or method.__name__, span_type="llm")
         return wrapper
     return llm_stream_decorator
     

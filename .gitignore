@@ -16,3 +16,4 @@ scripts
 .cursor
 alembic
 alembic.ini
+requirements.dev.txt

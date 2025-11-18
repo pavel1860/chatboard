@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.sparse import csr_matrix
+# from scipy.sparse import csr_matrix
 from pydantic import AfterValidator, BeforeValidator, BaseModel, PlainSerializer
 from pydantic_core import core_schema
 from pydantic import GetCoreSchemaHandler
@@ -8,19 +8,20 @@ from typing import TYPE_CHECKING, Annotated, Any, Callable, List, Type
 import ast
 
 if TYPE_CHECKING:
-    from promptview.algebra.vectors.base_vectorizer import BaseVectorizer
+    from ..algebra.vectors.base_vectorizer import BaseVectorizer
 
 
 class Vector(np.ndarray):
     
     
-    def __new__(cls, input_array, info=None):
-        # Create the ndarray instance
-        obj = np.asarray(input_array).view(cls)
-        # Add new attribute
-        return obj
+    def __new__(cls, input_array: np.ndarray | list | str, info=None):
+        if isinstance(input_array, str):
+            input_array = np.fromstring(input_array.strip("[]"), sep=",")
+        elif isinstance(input_array, list):
+            input_array = np.array(input_array)
+        return np.asarray(input_array).view(cls)
     
-
+    
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
         return core_schema.no_info_plain_validator_function(
@@ -51,7 +52,7 @@ class Vector(np.ndarray):
         return instance.tolist()        
         
         
-class SparseVector(csr_matrix): pass
+# class SparseVector(csr_matrix): pass
 
 
 

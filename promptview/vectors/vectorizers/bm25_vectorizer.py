@@ -2,7 +2,7 @@
 import asyncio
 from typing import Any, List
 
-from promptview.vectors.vectorizers.base import (VectorizerBase,
+from ..vectorizers.base import (VectorizerBase,
                                                      VectorizerSparseBase,
                                                      VectorMetrics)
 from pinecone_text.sparse import BM25Encoder

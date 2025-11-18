@@ -1,28 +1,8 @@
 from datetime import datetime, timedelta
-
-from fastapi import Depends, HTTPException, Request, status
-# from jose import JWTError
 import jwt
-# from sqlalchemy.orm import Session
-# from app.users import models as user_models
-# from app.users import interface as user_interface
-# from app.core.db_connect import get_db
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from authlib.integrations.starlette_client import OAuth
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from promptview.auth.user_manager2 import AuthManager
-
-
-
-# from app.config import (
-#     SECRET_KEY,
-#     ALGORITHM,
-#     ACCESS_TOKEN_EXPIRE_MINUTES,
-#     GOOGLE_CLIENT_ID,
-#     GOOGLE_CLIENT_SECRET,
-# )
 
 class GoogleAuth:
     def __init__(

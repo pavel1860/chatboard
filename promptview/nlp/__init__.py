@@ -1,4 +1,4 @@
-from promptview.nlp.language_detection import get_language
+from .language_detection import get_language
 
 
 

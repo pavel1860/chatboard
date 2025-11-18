@@ -2,8 +2,8 @@
 
 
 import textwrap
-from promptview.block.block7 import Block, BlockList, FieldAttrBlock
-from promptview.block.renderers_base import BlockRenderer, ListRenderer, RenderContext
+from .block7 import Block, BlockList, FieldAttrBlock
+from .renderers_base import BlockRenderer, ListRenderer, RenderContext
 
 
 class MarkdownHeaderRenderer(BlockRenderer):

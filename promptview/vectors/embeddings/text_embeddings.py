@@ -1,11 +1,7 @@
 import os
 from typing import Any, List
-
 from pydantic import BaseModel
-
-
-
-from promptview.llms.utils.openai_clients import build_async_openai_embeddings_client
+from ...llms.utils.openai_clients import build_async_openai_embeddings_client
 
 openai_model = os.getenv("OPENAI_MODEL", 'text-embedding-ada-002')
 

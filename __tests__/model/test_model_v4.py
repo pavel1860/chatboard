@@ -1,10 +1,10 @@
 from typing import List, Literal
 import pytest
-from promptview.model3.namespace_manager2 import NamespaceManager
-from promptview.model3.model3 import Model
-from promptview.model3.fields import KeyField, ModelField, RelationField
-from promptview.model3.relation_model import RelationModel
-from promptview.model3.postgres2.pg_query_set import select
+from promptview.model.namespace_manager2 import NamespaceManager
+from promptview.model.model3 import Model
+from promptview.model.fields import KeyField, ModelField, RelationField
+from promptview.model.relation_model import RelationModel
+from promptview.model.postgres2.pg_query_set import select
 from promptview.utils.db_connections import PGConnectionManager
 import pytest_asyncio
 # @pytest.fixture(scope="module", autouse=True)

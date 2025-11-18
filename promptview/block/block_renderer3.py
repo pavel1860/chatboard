@@ -1,6 +1,6 @@
 from typing import Callable
-from promptview.block.block7 import Block, BlockSequence, BlockSent, BlockChunk
-from promptview.block.utils import print_block_tree
+from .block7 import Block, BlockSequence, BlockSent, BlockChunk
+from .utils import print_block_tree
 from sys import getsizeof
 
 

@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING, Literal
 
-from promptview.block.types import StyleProps
+from .types import StyleProps
 
 
 if TYPE_CHECKING:
-    from promptview.block.block7 import BlockChunk
+    from .block7 import BlockChunk
 
 
 

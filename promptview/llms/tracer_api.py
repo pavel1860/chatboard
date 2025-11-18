@@ -3,7 +3,7 @@ from typing import Dict, List, Union
 
 from openai.types.chat.chat_completion_message_tool_call import \
     ChatCompletionMessageToolCall
-from promptview.llms.messages import AIMessage, HumanMessage, SystemMessage
+from ..llms.messages import AIMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 

@@ -1,10 +1,10 @@
 import asyncio
 from typing import Type, get_args
 
-from promptview.llms.utils.completion_parsing import (is_list_model,
+from .llms.utils.completion_parsing import (is_list_model,
                                                     unpack_list_model)
-from promptview.utils.model_utils import get_union_args, is_union_type, iterate_class_fields, schema_to_function, serialize_class
-from promptview.vectors.rag_documents import RagDocuments
+from .utils.model_utils import get_union_args, is_union_type, iterate_class_fields, schema_to_function, serialize_class
+from .vectors.rag_documents import RagDocuments
 from pydantic import BaseModel
 
 

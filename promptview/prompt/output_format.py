@@ -1,8 +1,8 @@
 from __future__ import annotations
-from promptview.prompt import Block
+from ..prompt import Block
 from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, PrivateAttr
-from promptview.parsers import XmlOutputParser
+from ..parsers import XmlOutputParser
 
 
 

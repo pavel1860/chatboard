@@ -2,9 +2,9 @@
 import asyncio
 from typing import Any, Callable, Dict, Generator, List, Tuple
 
-from promptview.llms.tracer import Tracer
-from promptview.prompt.legacy.chat_prompt import ChatPrompt
-from promptview.utils.function_utils import call_function
+from ..llms.tracer import Tracer
+from ..prompt.legacy.chat_prompt import ChatPrompt
+from ..utils.function_utils import call_function
 
 
 async def map_prompt(

@@ -8,7 +8,7 @@ import numpy as np
 from pydantic.fields import FieldInfo
 import datetime as dt
 
-from promptview.model.base_namespace import Namespace, QuerySet
+from .base.base_namespace import BaseNamespace
 
 if TYPE_CHECKING:  # pragma: nocoverage
     from .model import Model
@@ -461,7 +461,7 @@ class QueryProxyAny:
 class QueryProxy(Generic[MODEL, FIELD_INFO]):
     # model: Type[MODEL]
     
-    def __init__(self, model: Type[MODEL], namespace: Namespace[MODEL, FIELD_INFO]):
+    def __init__(self, model: Type[MODEL], namespace: BaseNamespace[MODEL, FIELD_INFO]):
         self.model = model
         self.namespace = namespace
         fields = model.model_fields
@@ -529,7 +529,7 @@ class QuerySetProxy(QueryProxy[MODEL, FIELD_INFO]):
 
 class SelectFieldProxy(QueryProxy[MODEL, FIELD_INFO]):
     
-    def __init__(self, model: Type[MODEL], namespace: Namespace[MODEL, FIELD_INFO]):
+    def __init__(self, model: Type[MODEL], namespace: BaseNamespace[MODEL, FIELD_INFO]):
         super().__init__(model, namespace)
         
     def __getattr__(self, name):
@@ -640,19 +640,3 @@ def parse_value(field: str, value: str) -> Any:
     else:
         return int(value)
 
-
-
-
-
-
-# def parse_query_params(model_cls: Any, curr_filter: QueryFilter | None = None, **kwargs):
-            
-#     for k, v in kwargs.items():
-#         if isinstance(v, QueryFilter):
-#             curr_filter = curr_filter & v if curr_filter else v
-#         else:
-#             if curr_filter is None:
-#                 curr_filter = QueryFilter(FieldComparable(k, model_cls.model_fields[k]), FieldOp.EQ, v)
-#             else:
-#                 curr_filter = curr_filter & QueryFilter(FieldComparable(k, model_cls.model_fields[k]), FieldOp.EQ, v)
-#     return curr_filter

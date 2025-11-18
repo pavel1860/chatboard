@@ -1,10 +1,10 @@
 #! working
 import threading
 from typing import Callable, Coroutine, Literal, Union, Any
-from promptview.prompt.agent import Agent
-from promptview.prompt.util.block_visualization import block_to_html
-from promptview.prompt.legacy.block1 import TitleBlock
-from promptview.prompt.legacy.context import Context
+from ...prompt.agent import Agent
+from ...prompt.util.block_visualization import block_to_html
+from ...prompt.legacy.block1 import TitleBlock
+from ...prompt.legacy.context import Context
 from abc import abstractmethod
 
 import nest_asyncio
@@ -284,7 +284,7 @@ class ChatUI:
 # from typing import Any, Callable, Coroutine
 # from IPython.display import display, HTML
 # import ipywidgets as widgets
-# from promptview.prompt.context import Context
+
 # import asyncio
 # import datetime as dt
 

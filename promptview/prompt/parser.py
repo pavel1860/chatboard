@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING, Any, AsyncGenerator
 from queue import SimpleQueue
 
 
-from promptview.prompt.events import StreamEvent
-from promptview.block import BlockChunk, Block
+from ..prompt.events import StreamEvent
+from ..block import BlockChunk, Block
 # if TYPE_CHECKING:
     
 

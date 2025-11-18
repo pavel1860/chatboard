@@ -9,13 +9,13 @@ from uuid import UUID
 os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
 
 from promptview.auth.user_manager2 import AuthModel
-from promptview.model3.fields import ModelField, KeyField, RelationField
-from promptview.model3 import Model, VersionedModel, ArtifactModel
-from promptview.model3.namespace_manager2 import NamespaceManager
-from promptview.model3.relation_model import RelationModel
-from promptview.model3.postgres2.pg_query_set import select
-from promptview.model3.context import Context
-from promptview.model3.versioning.models import Branch, Turn, TurnStatus
+from promptview.model.fields import ModelField, KeyField, RelationField
+from promptview.model import Model, VersionedModel, ArtifactModel
+from promptview.model.namespace_manager2 import NamespaceManager
+from promptview.model.relation_model import RelationModel
+from promptview.model.postgres2.pg_query_set import select
+from promptview.model.context import Context
+from promptview.model.versioning.models import Branch, Turn, TurnStatus
 import datetime as dt
 
 # -------------------------

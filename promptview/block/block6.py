@@ -9,12 +9,12 @@ import textwrap
 from typing import TYPE_CHECKING, Any, Callable, Concatenate, ContextManager, Generator, Generic, Iterator, List, Literal, ParamSpec, Protocol, SupportsIndex, Type, TypeVar, Union, overload
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
-from promptview.block.style import InlineStyle, BlockStyle, style_manager
-from promptview.block.util import BlockRole, LlmUsage, ToolCall
-from promptview.utils.model_utils import schema_to_ts
+from .style import InlineStyle, BlockStyle, style_manager
+from .util import BlockRole, LlmUsage, ToolCall
+from ..utils.model_utils import schema_to_ts
 if TYPE_CHECKING:
-    from promptview.model.block_model import BlockModel
-    from promptview.model.model import SelectQuerySet
+    from ..model import BlockModel
+    from ..model.model import SelectQuerySet
 
 
 
@@ -626,8 +626,8 @@ class Block:
     
     
     def render(self) -> str:
-        from promptview.block.block_renderer import BlockRenderer
-        from promptview.block.renderer import RendererMeta
+        from .block_renderer import BlockRenderer
+        from .renderer import RendererMeta
         if self.items != self.ctx_items and not self._children_block:
             raise ValueError("Wrong block context was passed to render. probably you are using the same ctx name for child and parent blocks")
         rndr = BlockRenderer(style_manager, RendererMeta._renderers)
@@ -669,12 +669,12 @@ class Block:
         
         
     def to_model(self) -> "BlockModel":
-        from promptview.model.block_model import BlockModel
+        from ..model import BlockModel
         return BlockModel.from_block(self)
     
     @classmethod
     def query(cls) -> "SelectQuerySet[BlockModel]":
-        from promptview.model.block_model import BlockModel
+        from ..model import BlockModel
         return BlockModel.query(parse=lambda x: x.to_block())
 
 

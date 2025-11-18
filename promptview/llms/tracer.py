@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Literal, Optional
 # from langsmith import RunTree
 from langsmith.run_trees import RunTree
 
-from promptview.llms.messages import BaseMessage, AIMessage, HumanMessage
+from ..llms.messages import BaseMessage, AIMessage, HumanMessage
 
 # class RunTree(ls_schemas.RunBase):
 # outputs: Optional[Dict] = None

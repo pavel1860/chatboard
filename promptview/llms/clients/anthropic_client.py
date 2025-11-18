@@ -1,17 +1,14 @@
 from typing import Any
 
 from pydantic import BaseModel
-from promptview.llms.clients.base import BaseLlmClient
+from ..clients.base import BaseLlmClient
 import os
 import anthropic
 import asyncio
-from promptview.llms.exceptions import LLMToolNotFound
-from promptview.llms.messages import ActionCall, BaseMessage, LlmUsage, SystemMessage, AIMessage, filter_action_calls, remove_action_calls
-from promptview.llms.types import ToolChoice
-from promptview.llms.utils.action_manager import Actions
-from promptview.prompt.legacy.mvc import find_action, get_action_name
-from promptview.utils.model_utils import schema_to_function
-from promptview.llms.legacy.interpreter import LlmInterpreter
+from ..messages import ActionCall, BaseMessage, LlmUsage, SystemMessage, AIMessage, filter_action_calls, remove_action_calls
+from ..types import ToolChoice
+from ..utils.action_manager import Actions
+from ...utils.model_utils import schema_to_function
 from typing import List, get_args
 import random
 
@@ -45,6 +42,7 @@ def to_antropic_tool_choice(tool_choice: ToolChoice):
     if tool_choice is None:
         return {"type": "auto"}
     elif isinstance(tool_choice, BaseModel):
+        raise ValueError("tool_choice must be a string")
         return {
             "type": "tool",
             "name": get_action_name(tool_choice)    

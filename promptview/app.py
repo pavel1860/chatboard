@@ -7,14 +7,14 @@ from typing import AsyncContextManager, Awaitable, Callable, Concatenate, Dict, 
 from fastapi import Depends, FastAPI, Request
 
 
-from promptview.api.tracing_router import router as tracing_router
-from promptview.api.model_router import create_model_router
-from promptview.auth.user_manager2 import AuthManager, AuthModel
-from promptview.model import ArtifactModel, Model, NamespaceManager, Context
-from promptview.context.model_context import CtxRequest, ModelCtx
-from promptview.api.auth_router import create_auth_router
-from promptview.api.artifact_log_api import router as artifact_log_router
-from promptview.api.testing_router import connect_testing_routers
+from .api.tracing_router import router as tracing_router
+from .api.model_router import create_model_router
+from .auth.user_manager2 import AuthManager, AuthModel
+from .model import ArtifactModel, Model, NamespaceManager
+from .prompt import Context
+from .context.model_context import CtxRequest, ModelCtx
+from .api.auth_router import create_auth_router
+from .api.artifact_log_api import router as artifact_log_router
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
@@ -132,7 +132,7 @@ class Chatboard(Generic[MSG_MODEL, USER_MODEL, CTX_MODEL]):
         self._app.include_router(artifact_log_router, prefix="/api")
         self._app.include_router(create_auth_router(self._user_model), prefix="/api")
         self._app.include_router(tracing_router, prefix="/api")
-        connect_testing_routers(self._app)
+        # connect_testing_routers(self._app)
 
     
     def entrypoint(self, path: str, method: Literal['GET', 'POST', 'PUT', 'DELETE'] = 'POST', ctx: Type[CTX_MODEL]| None = None, commit: bool = True):

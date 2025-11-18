@@ -3,7 +3,7 @@ import inspect
 from typing import Any, AsyncGenerator, Callable, Iterable, Literal, ParamSpec, Protocol, Union, AsyncIterator, Optional, Generic
 from typing_extensions import TypeVar
 
-from promptview.prompt.events import StreamEvent
+from ..prompt.events import StreamEvent
 
 
 
