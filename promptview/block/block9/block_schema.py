@@ -145,7 +145,9 @@ class BlockBuilderContext:
             return view
         
         def insert(path: list[int], view: Block):
+            path = path[1:]
             if not path:
+            # if path == [0]:
                 view.role = "assistant"
                 self.instance = view
                 return view

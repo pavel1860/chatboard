@@ -2,7 +2,8 @@ import copy
 import json
 import textwrap
 from typing import Any, Callable, List, Type
-
+from pydantic_core import core_schema
+from pydantic import BaseModel, GetCoreSchemaHandler
 from ...utils.model_utils import is_list_type
 from .base_blocks import BaseBlock, BaseContent, BlockSequence
 import annotated_types
@@ -16,6 +17,17 @@ def parse_style(style: str | List[str] | None) -> List[str]:
         return style
     else:
         return []
+
+
+# def dict_to_block(data: dict) -> BaseBlock:
+#     if data.get("_type") == "Block":
+#         return Block.model_validate(data)
+#     elif data.get("_type") == "BlockSent":
+#         return BlockSent.model_validate(data)
+#     elif data.get("_type") == "BlockChunk":
+#         return BlockChunk.model_validate(data)
+#     else:
+#         raise ValueError(f"Invalid block type: {data.get('_type')}")
 
 
 class BlockChunk(BaseBlock[str]):
@@ -150,8 +162,8 @@ class BlockSent(BlockSequence[str, BlockChunk]):
     
     
     def render(self, verbose: bool = False) -> str:
-        from .renderers2 import render
-        return render(copy.deepcopy(self))
+        from .renderers3 import render
+        return render(Block(self))
     
     def print(self, verbose: bool = False):
         print(self.render(verbose=verbose))
@@ -180,6 +192,24 @@ class BlockSent(BlockSequence[str, BlockChunk]):
         for child in self.children:
             res += f"\n{child.repr_tree(verbose=verbose)}"
         return res
+    
+    @classmethod
+    def model_validate(cls, data: dict) -> "BlockSent":
+        if data.get("children") is None or len(data.get("children")) == 0:
+            children = []
+        else:
+            children = [BlockChunk.model_validate(c) for c in data.get("children")]
+        return BlockSent(
+            content=data.get("content"),
+            children=children,
+            prefix=data.get("prefix"),
+            postfix=data.get("postfix"),
+        )
+        
+    def __iadd__(self, other: SentContent):
+        other = self.promote_content(other)
+        self.append(other)
+        return self
     
 BlockContent = BlockSent | BlockChunk | BaseContent 
  
@@ -223,7 +253,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.tags: list[str] = tags or []
         self.styles: list[str] = styles or parse_style(style)
         # self.attrs: dict[str, AttrBlock] = get_attrs(attrs)
-        self.attrs: dict[str, str] | None = attrs or {}
+        # self.attrs: dict[str, str] | None = attrs or {}
+        self.attrs: dict[str, AttrBlock] = get_attrs(attrs) if attrs is not None else {}
         self.artifact_id: str | None = artifact_id
         self.content = self._init_content(content)
         # if content is None:
@@ -275,7 +306,14 @@ class Block(BlockSequence[BlockSent, "Block"]):
             sent.append(content)
             return sent
     
-        
+    def with_style(self, style: str | list[str]) -> "Block":
+        if isinstance(style, str):
+            self.styles.append(style)
+        elif isinstance(style, list):
+            self.styles.extend(style)
+        else:
+            raise ValueError(f"Invalid style type: {type(style)}")
+        return self
         
     def promote_content(self, content: "Block | BlockSent | BaseContent", prefix: BlockSent | None = None, postfix: BlockSent | None = None) -> "Block":
         if isinstance(content, str):
@@ -287,6 +325,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
         elif isinstance(content, bool):
             return Block(str(content), prefix=prefix, postfix=postfix)
         elif isinstance(content, Block):
+            # content = content.copy()
+            content = copy.deepcopy(content)
             if prefix is not None:
                 content.prefix = prefix
             if postfix is not None:
@@ -483,6 +523,19 @@ class Block(BlockSequence[BlockSent, "Block"]):
             print(e)
             raise e
         return dump
+    
+    @classmethod
+    def model_validate(self, data: dict):
+        
+        block = Block(
+            content=BlockSent.model_validate(data.get("content")),
+            children=[Block.model_validate(c) for c in data.get("children")],
+            role=data.get("role"),
+            tags=data.get("tags"),
+            styles=data.get("styles"),
+            attrs=data.get("attrs"),
+        )
+        return block
     # def model_dump(self):
     #     dump = super().model_dump()
     #     dump["_type"] = "Block"
@@ -524,7 +577,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
             style=style,
             attrs=attrs,
         )      
-        self.append(block)
+        self.append_child(block)
         return block
     
     
@@ -619,10 +672,38 @@ class Block(BlockSequence[BlockSent, "Block"]):
         return res
     
     
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize
+            )
+        )
+        
+    @staticmethod
+    def _validate(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v
+        elif isinstance(v, dict):
+            if "_type" in v and v["_type"] == "Block":
+                return Block.model_validate(v)
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
+    @staticmethod
+    def _serialize(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v.model_dump()
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
+    
+    
     
     def render(self, verbose: bool = False) -> str:
-        from .renderers2 import render
-        return render(copy.deepcopy(self))
+        from .renderers3 import render
+        return render(self)
 
     def print(self, verbose: bool = False):
         print(self.render(verbose=verbose))

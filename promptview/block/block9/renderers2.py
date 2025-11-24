@@ -1,6 +1,6 @@
 import contextvars
 import textwrap
-from typing import Any, Generic, Text, Type, TypeVar
+from typing import Any, Generator, Generic, Text, Type, TypeVar
 from typing import get_type_hints, List
 from typing import get_args, get_origin, List
 from uuid import uuid4
@@ -17,6 +17,7 @@ style_registry_ctx = contextvars.ContextVar("style_registry_ctx", default={})
 
 def _style_key(style: str, target: str, effects: str="all") -> str:
     return f"{style}_{target}_{effects}"   
+
 class StyleContext:
         
     def __init__(
@@ -71,25 +72,54 @@ class StyleMeta(type):
         current = style_registry_ctx.get()
         return list(current.keys())
     
+    # @classmethod
+    # def resolve(cls, styles: list[str], target: str, effects: str="all", default: "BlockStyle | TextStyle | ChunkStyle | None"=None) -> "BlockStyle | TextStyle | ChunkStyle | None":
+    #     current = style_registry_ctx.get()
+    #     for style in styles:
+    #         if style_obj := current.get(_style_key(style, target, effects)):
+    #             return style_obj
+    #     return default
     @classmethod
-    def resolve(cls, styles: list[str], target: str, effects: str="all", default: "BlockStyle | TextStyle | ChunkStyle | None"=None) -> "BlockStyle | TextStyle | ChunkStyle | None":
+    def resolve(cls, styles: list[str], target: str, effects: str="all", default: "BlockStyle | TextStyle | ChunkStyle | None"=None) -> "Generator[BlockStyle | TextStyle | ChunkStyle]":
         current = style_registry_ctx.get()
+        if not styles and default is not None:
+            yield default
         for style in styles:
             if style_obj := current.get(_style_key(style, target, effects)):
-                return style_obj
-        return default
+                yield style_obj
+        # yield default
 
+
+
+# def apply_style(target):
+#     if styler:= StyleMeta.resolve(target.styles, "text", "content", default=TextStyle()):
+#         target.content = styler(target.content)
+#     if target.parent:
+#         if styler:= StyleMeta.resolve(target.parent.styles, "text", "children"):
+#             target.content = styler(target.content)
+#     if styler:= StyleMeta.resolve(target.styles, "block", default=BlockStyle()):
+#         target = styler(target)
+    
+#     return target
+
+
+# def apply_chunk_style(target):
+#     # lookup = {}
+#     if target.parent is not None and target.parent.parent is not None:
+#     # if styler:=lookup.get("chunk", ChunkStyle()):
+#         if styler:=StyleMeta.resolve(target.parent.parent.styles, "chunk"):
+#             target = styler(target)
+#     return target
 
 
 def apply_style(target):
-    if styler:= StyleMeta.resolve(target.styles, "text", "content", default=TextStyle()):
+    for styler in StyleMeta.resolve(target.styles, "text", "content", default=TextStyle()):
         target.content = styler(target.content)
     if target.parent:
-        if styler:= StyleMeta.resolve(target.parent.styles, "text", "children"):
+        for styler in StyleMeta.resolve(target.parent.styles, "text", "children"):
             target.content = styler(target.content)
-    if styler:= StyleMeta.resolve(target.styles, "block", default=BlockStyle()):
+    for styler in StyleMeta.resolve(target.styles, "block", default=BlockStyle()):
         target = styler(target)
-    
     return target
 
 
@@ -97,7 +127,7 @@ def apply_chunk_style(target):
     # lookup = {}
     if target.parent is not None and target.parent.parent is not None:
     # if styler:=lookup.get("chunk", ChunkStyle()):
-        if styler:=StyleMeta.resolve(target.parent.parent.styles, "chunk"):
+        for styler in StyleMeta.resolve(target.parent.parent.styles, "chunk"):
             target = styler(target)
     return target
 
@@ -220,21 +250,37 @@ class Markdown(TextStyle):
         #     content=block,
         #     postfix="\n"            
         # )
+# class BlockPath(BlockStyle):
     
+#     styles = ["path"]
+#     # effects = "content"
     
+#     def __call__(self, block: Block):
+#         block.prefix += f"{block.path} "
+#         return block   
+
+
+
+class PathStyle(TextStyle):
+    
+    styles = ["path"]
+    effects = "all"
+    
+    def __call__(self, text: BlockSent):
+        text.prefix += ".".join([str(p) for p in text.parent.path]) + ": "
+        return text   
+
+
 class AstrixList(TextStyle):
     styles = ["ast-li"]
     effects = "children"
     
     def __call__(self, text: BlockSent):
         text.prefix ="* " + text.prefix
-        # text.postfix = "\n"
         return text
-        # return Block(
-        #     prefix=Block(f"*", postfix="\n"),
-        #     content=block,
-        # )
-    
+
+
+
 
 
 class NumberedList(TextStyle):

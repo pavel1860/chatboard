@@ -80,7 +80,7 @@ class BaseBlock(Generic[CONTENT]):
 
 
 CHILD = TypeVar("CHILD", bound=BaseBlock)
-PathType = list[int] | int
+PathType = list[int] | int | str
 
 
 class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
@@ -113,10 +113,11 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
     @property
     def path(self) -> list[int]:
         if self.parent is None:
-            return []
+            return [0]
         if self.index is None:
             return self.parent.path
         return self.parent.path + [self.index]
+
     
     @property
     def index(self) -> int | None:
@@ -128,6 +129,8 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         return self.children.index(child)
     
     def _parse_path(self, path: PathType):
+        if isinstance(path, str):
+            return [int(p) for p in path.split(".")]
         if isinstance(path, int):
             return [path]
         return [p for p in path]
