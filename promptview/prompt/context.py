@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterator, Type
 
+from fastapi import UploadFile
 from pydantic import BaseModel
 from ..auth.user_manager2 import AuthModel
 from ..model.model3 import Model
@@ -11,6 +12,7 @@ from ..model.versioning.models import Branch, ExecutionSpan, SpanType, Turn, Tur
 from dataclasses import dataclass
 from .events import StreamEvent
 from ..utils.function_utils import call_function
+from ..block import Block
 if TYPE_CHECKING:
     from fastapi import Request
     from .span_tree import SpanTree
@@ -70,6 +72,8 @@ class Context(BaseModel):
     _evaluation_context: "EvaluationContext | None" = None  # Evaluation context if in eval mode
     _index: int = 0
     events: list[StreamEvent] = []
+    message: Block | None = None
+    state: dict | None = None
     
     
     def __init__(
@@ -79,6 +83,8 @@ class Context(BaseModel):
         turn: Turn | None = None,
         branch_id: int | None = None,
         turn_id: int | None = None,
+        message: Block | None = None,
+        state: dict | None = None,        
         request: "Request | None" = None,
         auth: AuthModel | None = None,
         eval_ctx: "EvaluationContext | None" = None,
@@ -101,6 +107,8 @@ class Context(BaseModel):
         self._evaluation_context = eval_ctx
         self._index = 0
         self.events = []
+        self.message = message
+        self.state = state
         
     @property
     def request_id(self):
@@ -109,7 +117,7 @@ class Context(BaseModel):
         return None
 
     @classmethod
-    def current(cls) -> "Context | None":
+    def current_or_none(cls) -> "Context | None":
         """
         Get the current context from ContextVar.
 
@@ -117,6 +125,14 @@ class Context(BaseModel):
             The current Context instance, or None if no context is active
         """
         return _context_var.get()
+    
+    
+    @classmethod
+    def current(cls) -> "Context":
+        ctx = cls.current_or_none()
+        if ctx is None:
+            raise ValueError("Context not set")
+        return ctx
     
     @property
     def eval_ctx(self) -> "EvaluationContext":

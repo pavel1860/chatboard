@@ -1,5 +1,6 @@
-from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, TYPE_CHECKING
+from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, TYPE_CHECKING, Type
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from ..prompt import PipeController, SpanTree
 from ..prompt.context import Context
 from ..prompt.flow_components import EventLogLevel, FlowRunner
@@ -7,7 +8,7 @@ from ..block.util import StreamEvent
 from ..block import Block
 from ..api.utils import get_auth, get_request_content, get_request_ctx
 from ..auth.user_manager2 import AuthModel
-from fastapi import APIRouter, FastAPI, Query, Request, Depends
+from fastapi import APIRouter, FastAPI, Query, Request, Depends, UploadFile
 import datetime as dt
 from ..evaluation import EvaluationContext
 if TYPE_CHECKING:   
@@ -46,7 +47,16 @@ async def get_ctx_from_request(request: Request):
 #             with partition:
 #                 with branch:
 #                     yield message, user, partition, branch
-
+def process_state(state: dict) -> dict:    
+    for key in state.keys():
+        value = state[key]
+        if isinstance(value, dict):
+            if "_type" in value:
+                if value["_type"] == "Block":
+                    state[key] = Block.model_validate(value)
+            else:
+                state[key] = process_state(value)
+    return state
 
 P = ParamSpec("P")
 
@@ -56,12 +66,13 @@ class Agent(Generic[P]):
     agent_component: Callable[P, PipeController]
     ingress_router: APIRouter
     
-    def __init__(self, agent_component, name: str | None = None):
+    def __init__(self, agent_component, name: str | None = None, state_model: Type[BaseModel] | None = None):
         self.name = name or "default"
         self.agent_component = agent_component
         self.ingress_router = APIRouter(prefix=f"/{name}" if name else "")
         self._setup_ingress()
-
+        self.state_model = state_model
+        
     def connect_ingress(self, app: FastAPI):          
         app.include_router(self.ingress_router, prefix="/api")
         print(f"{self.name} agent conntected")
@@ -78,7 +89,7 @@ class Agent(Generic[P]):
         @self.ingress_router.post("/complete")
         async def complete(       
             request: Request,
-            payload: str = Depends(get_request_content),
+            payload: tuple[str, dict, dict, list[UploadFile]] = Depends(get_request_content),
             ctx: dict = Depends(get_request_ctx),
             auth: AuthModel = Depends(get_auth),
             # ctx: tuple[User, Branch, Partition, Message, ExecutionContext] = Depends(get_ctx),
@@ -86,9 +97,12 @@ class Agent(Generic[P]):
             # context = await Context.from_request(request)
             content, options, state, files = payload
             message = self._block_from_content(content, options['role'])
-            context = await Context.from_kwargs(**ctx, auth=auth)            
+            # state = process_state(state)
+            if self.state_model is not None:
+                state = self.state_model.model_validate(state)
+            context = await Context.from_kwargs(**ctx, auth=auth, message=message, state=state)            
             context = context.start_turn()
-            agent_gen = self.stream_agent_with_context(context, message)
+            agent_gen = self.stream_agent_with_context(context, message, state=state)
             return StreamingResponse(agent_gen, media_type="text/plain")
         
         @self.ingress_router.post("/replay")
@@ -138,6 +152,8 @@ class Agent(Generic[P]):
         self,
         ctx: Context,       
         message: Block,
+        state: dict | None = None,
+        # files: list[UploadFile] | None = None,
         serialize: bool = True,
         filter_events: Set[str] | None = None,
         auto_commit: bool = True,
@@ -244,7 +260,8 @@ class Agent(Generic[P]):
 
     async def run_debug(
         self,
-        message: Block | str,                
+        message: Block | str,  
+        state: BaseModel | None = None,
         auth: AuthModel | None = None,
         branch_id: int | None = None, 
         branch: "Branch | None" = None,         
@@ -253,6 +270,8 @@ class Agent(Generic[P]):
         **kwargs: dict,
     ):
         ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id)
+        if state is not None:
+            ctx.state = state
         async with ctx.start_turn(auto_commit=auto_commit) as turn:            
             async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
                 print("--------------------------------")

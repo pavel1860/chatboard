@@ -1348,7 +1348,7 @@ class ObservableProcess(Process):
         from .context import Context
         if self._ctx:
             return self._ctx
-        ctx = Context.current()
+        ctx = Context.current_or_none()
         if ctx is None:
             raise ValueError("StreamController requires Context. Use 'async with Context():'")
         return ctx
@@ -1811,6 +1811,7 @@ class StreamController(ObservableProcess):
                 if self._parser and self._parser.res_ctx.instance is not None:
                     value = await self.span.log_value(self._parser.res_ctx.instance, io_kind="output")
                 elif self._accumulator:
+                    raise FlowException("Accumulator is not supported for StreamController")
                     value = await self.span.log_value(self._accumulator.result, io_kind="output")
                 self._stream_value = value
 
@@ -2124,7 +2125,7 @@ class FlowRunner:
         self._event_level = event_level
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
-        self.ctx = ctx or Context.current()
+        self.ctx = ctx or Context.current_or_none()
 
     @property
     def current(self) -> Process:
@@ -2580,7 +2581,7 @@ class Parser(Process):
             return self._event_queue.pop(0)
         
         # Try to get more chunks and process them
-        max_iterations = 20
+        max_iterations = 20000
         for _ in range(max_iterations):
             try:
                 # Get next chunk from upstream
@@ -2600,6 +2601,8 @@ class Parser(Process):
                     return self._event_queue.pop(0)
                 # No more events, we're done
                 raise StopAsyncIteration
+        else:
+            print("no more chunks")
         
         # Hit max iterations without producing event
         raise StopAsyncIteration

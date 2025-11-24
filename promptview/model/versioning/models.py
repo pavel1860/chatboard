@@ -587,7 +587,7 @@ class VersionedModel(Model):
     ):
         # Import here to avoid circular dependency        
         from ...prompt.context import Context, ContextError
-        ctx = Context.current()
+        ctx = Context.current_or_none()
         if ctx is None:            
             raise ContextError("Context not found")
         
@@ -836,50 +836,52 @@ class BlockTree(VersionedModel):
     _block: "Block | None" = None
     
     
-    # @classmethod
-    # def query(
-    #     cls: Type[Self], 
-    #     include_branch_turn: bool = False,
-    #     alias: str | None = None, 
-    #     use_ctx: bool = True,
-    #     branch: Branch | int | None = None,
-    #     turn_cte: "PgSelectQuerySet[Turn] | None" = None,
-    #     use_liniage: bool = True,
-    #     limit: int | None = None, 
-    #     offset: int | None = None, 
-    #     statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
-    #     direction: Literal["asc", "desc"] = "desc",
+    @classmethod
+    def query(
+        cls: Type[Self], 
+        include_branch_turn: bool = False,
+        alias: str | None = None, 
+        use_ctx: bool = True,
+        branch: Branch | int | None = None,
+        turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+        use_liniage: bool = True,
+        limit: int | None = None, 
+        offset: int | None = None, 
+        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+        direction: Literal["asc", "desc"] = "desc",
 
-    # ):
-    #     from ..sql2.pg_query_builder import select, PgQueryBuilder
-    #     from ..block_models.block_log import load_block_dump
-    #     async def to_block(trees: list[BlockTree]):
-    #         blocks = []
-    #         for tree in trees:
-    #             dump = tree.model_dump()
-    #             blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
-    #         return blocks
-    #     query =(
-    #         super()
-    #         .query(
-    #             include_branch_turn=include_branch_turn,
-    #             alias=alias,
-    #             use_ctx=use_ctx,
-    #             branch=branch,
-    #             turn_cte=turn_cte,
-    #             use_liniage=use_liniage,
-    #             limit=limit,
-    #             offset=offset,
-    #             statuses=statuses,
-    #         )
-    #         .include(
-    #             BlockNode.query().include(
-    #                 BlockModel
-    #             )
-    #         )
-    #         .parse(to_block, target="models")
-    #     )
-    #     return query
+    ):
+        from ..sql2.pg_query_builder import select, PgQueryBuilder
+        from ..block_models.block_log import load_block_dump
+        async def to_block(trees: list[BlockTree]):
+            blocks = []
+            for tree in trees:
+                dump = tree.model_dump()
+                blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
+            return blocks
+        query =(
+            super()
+            .query(
+                include_branch_turn=include_branch_turn,
+                alias=alias,
+                use_ctx=use_ctx,
+                branch=branch,
+                turn_cte=turn_cte,
+                use_liniage=use_liniage,
+                limit=limit,
+                offset=offset,
+                statuses=statuses,
+            )
+            .include(
+                BlockNode.query(alias="bn")
+                    # .order_by("id")
+                    .include(
+                        BlockSignature.query(alias="bs").include(BlockModel)
+                    )
+                ).order_by("created_at")
+            .parse(to_block, target="models")
+        )
+        return query
     
 
 
@@ -1141,8 +1143,10 @@ class DataFlowNode(Model):
             else:
                 dump["value"] = [v.model_dump() for v in self.value]
                 dump["list_kind"] = self.list_kind
-        elif self._value is not None:     
+        elif self._value is not None and hasattr(self._value, "model_dump"):     
             dump["value"] = self._value.model_dump()
+        elif self.kind == "parameter":
+            dump["value"] = self._value
         else:
             dump["value"] = None
         return dump
@@ -1189,7 +1193,7 @@ class ExecutionSpan(VersionedModel):
     @property
     def ctx(self) -> "Context":
         from ...prompt.context import Context
-        ctx = Context.current()
+        ctx = Context.current_or_none()
         if ctx is None:
             raise ValueError("Context is not set")
         return ctx

@@ -112,7 +112,8 @@ def dump_block(blk: Block):
             "postfix": dump_sent(blk.postfix) if blk.postfix is not None else None,
         }
         dump["styles"] = blk.styles
-        dump["path"] = ".".join(str(p) for p in [0] +blk.path)
+        # dump["path"] = ".".join(str(p) for p in [0] +blk.path)
+        dump["path"] = ".".join(str(p) for p in blk.path)
         dump["tags"] = blk.tags
         dump["role"] = blk.role
         dump["attrs"] = dump_attrs(blk.attrs)
@@ -204,13 +205,14 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int 
                     styles_array,
                     node["role"],
                     tags_array,
-                    json.dumps(node["attrs"])
+                    json.dumps(node["attrs"]),
+                    dt.datetime.now()
                 ))
                 seen_signatures.add(sig_id)
 
         if signature_rows:
             await tx.executemany(
-                "INSERT INTO block_signatures (id, block_id, styles, role, tags, attrs) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO block_signatures (id, block_id, styles, role, tags, attrs, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING",
                 signature_rows
             )
 

@@ -193,7 +193,7 @@ class ArtifactLog:
     async def log_value(cls, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None, ctx: Context | None = None):
         
         
-        ctx = Context.current() if ctx is None else ctx
+        ctx = Context.current_or_none() if ctx is None else ctx
         if ctx is None:
             raise ValueError("Context is not set")
         span_id = None
