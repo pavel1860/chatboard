@@ -86,7 +86,8 @@ PathType = list[int] | int | str
 class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
     
     __slots__ = [
-        "children",  
+        "children", 
+        "is_wrapper" 
     ]
     
     def __init__(
@@ -97,18 +98,37 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         postfix: CONTENT,
         parent: "BlockSequence | None" = None,
         id: str | None = None,
+        is_wrapper: bool = False,
 
     ):
         BaseBlock.__init__(self, content=content, parent=parent, prefix=prefix, postfix=postfix, id=id)
         self.children: list[CHILD] = []
         self.parent: "BlockSequence | None" = parent
         self.id: str = uuid4().hex[:8]
+        self.is_wrapper = is_wrapper
         if children is not None:
             for child in children:
                 self.append(child)
                 
     def promote_content(self, content: Any, prefix: CONTENT | None = None, postfix: CONTENT | None = None) -> CHILD:
         raise NotImplementedError("promote_content is not implemented")
+    
+    
+    @property
+    def is_no_content(self) -> bool:
+        if isinstance(self.content, list):
+            return len(self.content) == 0
+        elif isinstance(self.content, str):
+            return len(self.content) == 0
+        elif self.content is None:
+            return True
+        else:
+            return False
+    
+    @property
+    def is_empty(self) -> bool:
+        return self.is_no_content and len(self.children) == 0
+
         
     @property
     def path(self) -> list[int]:
@@ -117,6 +137,19 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         if self.index is None:
             return self.parent.path
         return self.parent.path + [self.index]
+    
+    
+    @property
+    def rel_path(self) -> list[int]:       
+        if self.is_wrapper:
+            return []
+        if self.parent is None:
+            if self.is_no_content:
+                return []
+            return [0]
+        if self.index is None or self.is_no_content:
+            return self.parent.rel_path
+        return self.parent.rel_path + [self.index]
 
     
     @property

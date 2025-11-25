@@ -1,7 +1,8 @@
+from ast import TypeVar
 import copy
 import json
 import textwrap
-from typing import Any, Callable, List, Type
+from typing import Any, Callable, Generic, List, Literal, Type
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
 from ...utils.model_utils import is_list_type
@@ -29,6 +30,20 @@ def parse_style(style: str | List[str] | None) -> List[str]:
 #     else:
 #         raise ValueError(f"Invalid block type: {data.get('_type')}")
 
+def _block_traverse_tag(block: "Block", tag: str):
+    block_list = BlockList()
+    for blk in block.traverse():
+        if tag in blk.tags:
+            block_list.append(blk)
+    return block_list
+
+
+def _block_list_find_tag(block_list: "BlockList", tag: str):
+    new_block_list = BlockList()
+    for blk in block_list:
+        sub_bl = _block_traverse_tag(blk, tag)
+        new_block_list.extend(sub_bl)
+    return new_block_list
 
 class BlockChunk(BaseBlock[str]):
     
@@ -148,7 +163,11 @@ class BlockSent(BlockSequence[str, BlockChunk]):
     # def index_of(self, child: Block) -> int | None:
     #     if child
     #     return super().index_of(child)
-        
+    
+    
+    @property
+    def is_no_content(self) -> bool:
+        return len(self.children) == 0
     @property
     def logprob(self) -> float | None:
         logprob = sum(blk.logprob for blk in self.children if blk.logprob is not None) or 0
@@ -223,7 +242,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "attrs",
         "postfix",
         "prefix",
-        "artifact_id",
+        "artifact_id"
     ]
     
     def __init__(
@@ -240,23 +259,26 @@ class Block(BlockSequence[BlockSent, "Block"]):
         postfix: BlockSent | str | None = None,
         parent: "Block | None" = None,
         artifact_id: int | None = None,
+        is_wrapper: bool = False,
     ):
+        styles = styles or parse_style(style)
         super().__init__(
             content=self._init_content(content),
             children=children or [], 
             parent=parent, 
             prefix=self._parse_sent(prefix), 
             postfix=self._parse_sent(postfix), 
-            id=id
+            id=id,
+            is_wrapper=is_wrapper or len([s for s in styles if s.startswith("wrapper")]) > 0,
         )
         self.role: str | None = role
         self.tags: list[str] = tags or []
-        self.styles: list[str] = styles or parse_style(style)
+        self.styles: list[str] = styles
         # self.attrs: dict[str, AttrBlock] = get_attrs(attrs)
         # self.attrs: dict[str, str] | None = attrs or {}
         self.attrs: dict[str, AttrBlock] = get_attrs(attrs) if attrs is not None else {}
         self.artifact_id: str | None = artifact_id
-        self.content = self._init_content(content)
+        self.content = self._init_content(content) 
         # if content is None:
         #     self.content = BlockSent(parent=self)
         # elif isinstance(content, BlockSent):
@@ -267,6 +289,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         # else:
         #     self.content = BlockSent(parent=self)
         #     self.content.append(content)
+        
     @property
     def tag(self):
         """
@@ -275,6 +298,10 @@ class Block(BlockSequence[BlockSent, "Block"]):
         if self.tags:
             return self.tags[0]
         return None
+    
+    @property
+    def is_no_content(self) -> bool:
+        return self.content.is_no_content
         
     def _parse_sent(self, sent: BlockSent | str | None) -> BlockSent:
         if sent is None:
@@ -326,7 +353,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
             return Block(str(content), prefix=prefix, postfix=postfix)
         elif isinstance(content, Block):
             # content = content.copy()
-            content = copy.deepcopy(content)
+            # content = copy.deepcopy(content)
             if prefix is not None:
                 content.prefix = prefix
             if postfix is not None:
@@ -398,6 +425,43 @@ class Block(BlockSequence[BlockSent, "Block"]):
             ge=ge,
             le=le,
         )
+        
+        
+    def get_first(self, tag: str):
+        tags = tag.split(".")
+        curr = self
+        for tag in tags:
+            for blk in self.traverse():
+                if tag in blk.tags:
+                    curr = blk
+                    break
+        return curr
+
+    
+    def get_all2(self, tag: str):
+        tags = tag.split(".")
+        block_list = BlockList()        
+        curr = self
+        for tag in tags:
+            block_list = BlockList()
+            for blk in self.traverse():
+                if tag in blk.tags:
+                    block_list.append(blk)
+        return block_list
+        
+        
+    def get_all(self, tag: str):
+        tags = tag.split(".")
+        block_list = BlockList()        
+        curr = self
+        for idx, tag in enumerate(tags):
+            if idx == 0:
+                block_list = _block_traverse_tag(curr, tag)
+            else:
+                block_list = _block_list_find_tag(block_list, tag)
+                
+        return block_list
+            
             
     def get(self, tag: str):
         tag = tag.lower()
@@ -517,7 +581,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
                 "tags": [t for t in self.tags],
                 "attrs": {k: attr.model_dump() if isinstance(attr, AttrBlock) else attr for k, attr in self.attrs.items() if attr is not None},
                 # "attrs": self.attrs,
-                "role": self.role,            
+                "role": self.role,  
+                "is_wrapper": self.is_no_content,
             }
         except Exception as e:
             print(e)
@@ -534,6 +599,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
             tags=data.get("tags"),
             styles=data.get("styles"),
             attrs=data.get("attrs"),
+            is_wrapper=data.get("is_wrapper"),
         )
         return block
     # def model_dump(self):
@@ -580,6 +646,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.append_child(block)
         return block
     
+
     
     def _process_tuple_content(self, other: tuple[BaseContent, ...]):
         block = BlockSent()
@@ -887,7 +954,200 @@ class BlockSchema(Block):
 
 
 
+PropNameType = Literal["content", "prefix", "postfix", "role", "tags", "styles", "attrs"]
 
+
+
+MutatorType = TypeVar("MutatorType")
+
+class ListMutator[MutatorType]:
+    
+    def __init__(self, lst: list[Block]):
+        self.lst = lst
+        
+    def __itruediv__(self, value: MutatorType):
+        self.append(value)
+        return self
+    
+    def __iand__(self, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+        
+        
+    def append(self, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+
+    def prepend(self, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+
+    def replace(self, index: int, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+
+    # def __getitem__(self, index: int) -> Block:
+    #     return self.lst[index]
+
+    # def __setitem__(self, index: int, value: Block):
+    #     self.lst[index] = value
+    
+# class ListItemMutator(ListMutator):
+
+
+class ContentPrefixMutator(ListMutator[str]):
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.prefix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.prefix = value + blk.content.prefix
+
+    def replace(self, index: int, value: str):
+        self.lst[index].content.prefix = value
+        return self
+
+
+class ContentPostfixMutator(ListMutator[str]):
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.postfix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.postfix = value + blk.content.postfix
+        return self
+
+    def replace(self, index: int, value: str):
+        self.lst[index].content.postfix = value
+        return self
+    
+    
+class BlockListPrefixMutator(ListMutator[str]):
+    
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.prefix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.prefix = value + blk.prefix
+
+    def replace(self, index: int, value: str):
+        self.lst[index].prefix = value
+        return self
+
+
+class BlockListPostfixMutator(ListMutator[str]):
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.postfix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.postfix = value + blk.postfix
+
+    def replace(self, index: int, value: str):
+        self.lst[index].postfix = value
+        return self
+
+
+class SentMutator(ListMutator):
+    
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.append(value)
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.prepend(value)
+        return self
+    
+
+class BlockListContentMutator(ListMutator[str]):
+    
+    
+    @property
+    def prefix(self) -> ListMutator:
+        return ContentPrefixMutator(self.lst)
+    
+    @prefix.setter
+    def prefix(self, value: str):
+        pass
+    
+    @property
+    def postfix(self) -> ListMutator:
+        return ContentPostfixMutator(self.lst)
+    
+    @postfix.setter
+    def postfix(self, value: str):
+        pass
+    
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.append(value)
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.prepend(value)
+        return self
+
+    def replace(self, index: int, value: str):
+        self.lst[index] = value
+        return self
+    
+    
 
 class BlockList(list[Block]):
-    pass
+    
+    
+    @property
+    def content(self) -> BlockListContentMutator:
+        return BlockListContentMutator(self)
+    
+    
+    @content.setter
+    def content(self, value: str):
+        pass
+    
+    @property
+    def prefix(self) -> BlockListPrefixMutator:
+        return BlockListPrefixMutator(self)
+    
+    @prefix.setter
+    def prefix(self, value: str):
+        pass
+    
+    @property
+    def postfix(self) -> BlockListPostfixMutator:
+        return BlockListPostfixMutator(self)
+    
+    @postfix.setter
+    def postfix(self, value: str):
+        pass
+    
+    def replace_all(self, prop: PropNameType, value: Any):
+        for blk in self:
+            setattr(blk, prop, value)
+        return self
+            
+            
+    def prefix_append(self, value: str):
+        for blk in self:
+            blk.prefix += value
+        return self
+            
+    def postfix_append(self, value: str):
+        for blk in self:
+            blk.postfix += value
+        return self        
+    
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
