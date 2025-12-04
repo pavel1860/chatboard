@@ -2,11 +2,12 @@ from ast import TypeVar
 import copy
 import json
 import textwrap
-from typing import Any, Callable, Generic, List, Literal, Type
+from typing import Any, Callable, Generic, List, Literal, Self, Type
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
 from ...utils.model_utils import is_list_type
 from .base_blocks import BaseBlock, BaseContent, BlockSequence
+from ...utils.string_utils import camel_to_snake
 import annotated_types
 
 
@@ -231,7 +232,72 @@ class BlockSent(BlockSequence[str, BlockChunk]):
         return self
     
 BlockContent = BlockSent | BlockChunk | BaseContent 
- 
+
+
+
+
+def pydantic_object_description(obj: BaseModel) -> "Block":
+    with Block("action", style="xml", tags=["tool", camel_to_snake(obj.__class__.__name__)]) as b:
+        b.field("name", camel_to_snake(obj.__class__.__name__))
+        # b.field("name", description=camel_to_snake(obj.__class__.__name__))
+        # with b("name", style="xml", tags=["tool_name"]) as tn:
+            # tn /= camel_to_snake(obj.__class__.__name__)
+        for key, value in obj.model_dump().items():
+            with b(key, style="xml", tags=[key, "field"]) as bf:
+                bf /= value
+    return b
+
+def pydantic_class_description(cls: Type[BaseModel], examples: list[BaseModel] | None = None) -> "Block":
+    tool_name = camel_to_snake(cls.__name__)
+    with Block(f"Tool: {tool_name}", style="md", tags=["tool", tool_name]) as b:
+        with b("tool", tags=["tool_name"], style="xml-def") as tn:
+            tn.field("name", tool_name)
+        if not cls.__doc__:
+            raise ValueError(f"description is required for Tool {cls.__name__}")
+        b /= cls.__doc__
+        with b("Argument tags", style="md") as args:
+            for field_name, field_info in cls.model_fields.items():
+                if not field_info.description:
+                    raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
+                with args(field_name, style="xml-def", tags=["field_name", field_name]) as bf:
+                    bf /= "description: ", field_info.description
+                    bf /= "type: ", field_info.annotation.__name__
+            
+        if examples:
+            example_str = "Examples" if len(examples) > 1 else "Example"
+            with b(example_str, style="md", tags=["examples"]) as exs:
+                for example in examples:                    
+                    exs /= pydantic_object_description(example)
+    return b
+
+
+KIND = TypeVar("KIND")
+
+def _copy_kind_aux[KIND](
+    target: "Block",
+    kind: KIND,        
+) -> KIND | list[KIND] | None:
+    children = []
+    children_copies = [_copy_kind_aux(c, kind) for c in target.children]
+    for cld in children_copies:
+        if cld is None:
+            continue
+        elif type(cld) is list:
+            children += cld
+        else:
+            children.append(cld)
+    # print(target.tags, "||||", [type(c) for c in children_copies])
+    if type(target) is kind:
+        block_copy = target.copy(overrides={"children": children, "parent": None})
+        # for c in children:
+        #     block_copy.append(c)
+        return block_copy
+    if not children:
+        return None
+    return children
+
+
+
 
 class Block(BlockSequence[BlockSent, "Block"]):
     
@@ -298,6 +364,14 @@ class Block(BlockSequence[BlockSent, "Block"]):
         if self.tags:
             return self.tags[0]
         return None
+    
+    
+    @property
+    def subtree_size(self) -> int:
+        total = len(self.children)
+        for child in self.children:
+            total += child.subtree_size
+        return total
     
     @property
     def is_no_content(self) -> bool:
@@ -387,7 +461,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
 
     
     
-    def view(self, name: str, type: Type, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockSchema":
+    def view(self, name: str, type: Type | None = None, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockSchema":
         # block = FieldBlock(name, type, attrs=attrs)
         block = BlockSchema(
             name,
@@ -402,11 +476,54 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.append(block)
         return block
     
+    def view_list(self, name: str, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockSchema":
+        block = BlockSchema(
+            name,
+            type=list[Any],
+            attrs=attrs,
+            role=self.role,
+            parent=self.parent,
+            is_wrapper=True,
+            tags=tags,
+            # styles=["xsd"],
+        )
+        self.append(block)
+        return block
+    
+    def schema_view(self, target: BaseModel, tags: list[str] | None = None) -> "BlockSchema":
+        
+        block = BlockSchema(
+            name=camel_to_snake(target.__class__.__name__),
+            type=target.__class__,
+            # attrs=attrs,
+            role=self.role,
+            parent=self.parent,
+            tags=[camel_to_snake(target.__class__.__name__)] + (tags or []),
+            is_wrapper=True,
+            # styles=["xml"],
+        )
+        self.append(block)
+        block.describe(target)
+        return block
+    
+    def describe(self, target: BaseModel | Type[BaseModel], examples: list[BaseModel] | None = None) -> "Block":
+        if isinstance(target, BaseModel):
+            block = pydantic_object_description(target)
+        elif isinstance(target, type) and issubclass(target, BaseModel):
+            block = pydantic_class_description(target, examples)
+        else:
+            raise ValueError(f"Invalid target type: {type(target)}")
+        self.append(block)
+        return block
+    
+    
+    
     def field(
         self, 
         name: str,
-        type: Type, 
-        description: str,
+        value: Any | None = None,
+        type: Type | None = None, 
+        description: str | None = None,
         gt: int | float | None = None,
         lt: int | float | None = None,
         ge: int | float | None = None,
@@ -418,7 +535,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
         if le is not None: annotated_types.Le(le)
         self.attrs[name] = AttrBlock(
             name=name,
-            type=type,
+            value=value,
+            _type=type,
             description=description,
             gt=gt,
             lt=lt,
@@ -450,8 +568,9 @@ class Block(BlockSequence[BlockSent, "Block"]):
         return block_list
         
         
-    def get_all(self, tag: str):
-        tags = tag.split(".")
+    def get_all(self, tags: str | list[str]):
+        if type(tags) is str:            
+            tags = tags.split(".")
         block_list = BlockList()        
         curr = self
         for idx, tag in enumerate(tags):
@@ -461,6 +580,19 @@ class Block(BlockSequence[BlockSent, "Block"]):
                 block_list = _block_list_find_tag(block_list, tag)
                 
         return block_list
+    
+    def get_one(self, tag: str | list[str]):
+        res = self.get_all(tag)
+        if not res:
+            raise ValueError(f'path "{tag}" does not exists')
+        return res[0]
+    
+    def get_one_or_none(self, tag:str):
+        res = self.get_all(tag)
+        if not res:
+            return None
+        return res[0]
+        
             
             
     def get(self, tag: str):
@@ -673,11 +805,54 @@ class Block(BlockSequence[BlockSent, "Block"]):
             parent=self.parent if copy_parent else None,
         )
         
-    def traverse(self):
-        yield self
+    
+    # def copy_kind_children(
+    #     self,
+    #     kind: "Type[Block]",        
+    # ):
+    #     if type(self) is kind:
+    #         block_copy = self.copy(overrides={"children": [], "parent": None})  # pyright: ignore[reportUnusedVariable]
+    #     else:
+    
+    # def _copy_kind_aux(
+    #     self,
+    #     kind: "Type[Block]",        
+    # ):
+    #     children = []
+    #     for cld in [c._copy_kind_aux(kind) for c in self.children]:
+    #         if cld is None:
+    #             continue
+    #         if type(cld) is list:
+    #             children += cld
+    #         children.append(cld)
+            
+    #     if type(self) is kind:
+    #         block_copy = self.copy(overrides={"children": children, "parent": None})
+    #         # for c in children:
+    #         #     block_copy.append(c)
+    #         return block_copy
+    #     if not children:
+    #         return None
+    #     return children
+    
+    def copy_kind(self, kind: "Type[Block]") -> "Block":
+        res = _copy_kind_aux(self, kind)
+        if type(res) is list:
+            return Block(
+                children=res
+            )
+        return res
+            
+            
+        
+    
+        
+    def traverse(self, target: Literal["schema", "block", "all"] = "all"):
+        if target in ("block", "all"):
+            yield self
         for child in self.children:
             if isinstance(child, Block):
-                yield from child.traverse()
+                yield from child.traverse(target)
             else:
                 yield child
 
@@ -817,8 +992,9 @@ REVERSE_TYPE_REGISTRY = {v: k for k, v in TYPE_REGISTRY.items()}
 
 class AttrBlock:
     name: str
+    value: Any | None = None
     type: Type = str
-    description: str
+    description: str | None = None
     gt: annotated_types.Gt | None = None
     lt: annotated_types.Lt | None = None
     ge: annotated_types.Ge | None = None
@@ -826,17 +1002,23 @@ class AttrBlock:
     
     def __init__(
         self, 
-        name: str,          
-        description: str, 
-        type: Type = str,
+        name: str,
+        description: str | None = None,
+        value: Any | None = None,
+        _type: Type | None = None,
         gt: annotated_types.Gt | None = None, 
         lt: annotated_types.Lt | None = None, 
         ge: annotated_types.Ge | None = None, 
         le: annotated_types.Le | None = None
     ):
+        if _type is None and value is not None:
+            _type = type(value)
+        else:
+            raise ValueError(f"Type is required when value is not provided")
         self.name = name
-        self.type = type
+        self.type = _type
         self.description = description
+        self.value = value
         self.gt = gt
         self.lt = lt
         self.ge = ge
@@ -893,7 +1075,7 @@ class BlockSchema(Block):
     def __init__(
         self, 
         name: str,
-        type: Type,
+        type: Type | None = None,
         attrs: dict[str, AttrBlock] | None = None,        
         role: str | None = None,
         tags: list[str] | None = None,
@@ -903,17 +1085,47 @@ class BlockSchema(Block):
         styles: list[str] | None = None,
         prefix: BaseContent | None = None,
         postfix: BaseContent | None = None,
+        is_wrapper: bool = False,
     ):
         tags = tags or []
         if name not in tags:
             tags.insert(0, name)
-        super().__init__(name, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix)
-        if not type:
-            raise ValueError("type is required")
+        super().__init__(name if not is_wrapper else None, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
+        # if not type:
+            # raise ValueError("type is required")
         self.type = type
         self.name = name
         self.is_list = is_list_type(type)
         self.is_list_item = False
+        
+    @property
+    def schema_path(self):
+        path = []
+        for b in self.traverse_path():
+            idx = b.index_in_parent(BlockSchema)
+            if idx > -1:
+                path.insert(0, idx)
+        return path
+            # if type(b) is BlockSchema:
+            #     if b.parent is None:
+            #         path.append(0)
+            #     else:
+            
+    def instantiate(self, value):
+        if self.type and not type(value) is self.type:
+            raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
+        blk = Block(
+                self.name,
+                styles=self.styles,
+                tags=self.tags,
+                role=self.role,
+                prefix=self.prefix,
+                postfix=self.postfix,
+                id=self.id,                        
+            )
+        if value is not None:
+            blk /= value
+        return blk
         
     def copy(
         self,
@@ -938,6 +1150,36 @@ class BlockSchema(Block):
         
         
         return blk
+    
+    
+    
+    def copy_kind(self, kind: "Type[Block]") -> "BlockSchema":
+        res = _copy_kind_aux(self, kind)
+        if type(res) is list:
+            return BlockSchema(
+                "wrapper",
+                children=res
+            )
+        return res
+    
+
+    
+    
+    def traverse(self, target: Literal["schema", "block", "all"] = "all"):
+        if target in ("schema", "all"):
+            yield self
+        for child in self.children:
+            if isinstance(child, Block):
+                yield from child.traverse(target)
+            else:
+                yield child
+            
+    
+
+
+    
+    # def instantiate(payload: dict):
+    #     for 
         
         
     def repr_tree(self, verbose: bool = False):
@@ -951,7 +1193,10 @@ class BlockSchema(Block):
 
 
 
-
+class BlockListSchema(BlockSchema):
+    pass
+    
+    
 
 
 PropNameType = Literal["content", "prefix", "postfix", "role", "tags", "styles", "attrs"]

@@ -105,7 +105,7 @@ class BlockBuilderContext:
                     value = schema.attrs[k].parse(v)
                     view.attrs[k] = value
                 else:
-                    raise BlockBuilderError(f"Attribute {k} not found in schema")
+                    raise BlockBuilderError(f'Attribute "{k}" not found in schema')
                 
         return view
     
@@ -243,7 +243,15 @@ class BlockBuilderContext:
                 raise BlockBuilderError(f"previous view '{view_name}' is not closed")
             else:
                 raise BlockBuilderError(f"View '{view_name}' is already instantiated")
-        return self.inst_view(schema, content, tags, attrs), schema
+        if schema.is_list:
+            if view is None:
+                view = self.inst_view(schema)
+                if attrs is None or "name" not in attrs:
+                    raise BlockBuilderError(f"Attribute 'name' is required for list item")
+                item_name = attrs["name"]
+            return self.inst_list_item(view, schema, item_name, content, tags, attrs)
+        else:
+            return self.inst_view(schema, content, tags, attrs), schema
     
     # def append_list_item(
     #     self, 
@@ -268,6 +276,23 @@ class BlockBuilderContext:
     #         self.set_attributes(view_name, blk, attrs)
     #     self._push_event(blk)
     #     return blk, schema
+    
+    
+    def inst_list_item(
+        self, 
+        list_view: Block,
+        list_schema: BlockSchema,
+        view_name: str, 
+        content: list[BlockChunk] | BlockChunk | str | None = None, 
+        tags: list[str] | None = None, 
+        attrs: dict[str, str] | None = None
+    ) -> tuple[Block, BlockSchema]:
+        schema, _ = self.get_view_info(view_name, is_last=True)
+        item_view = self._build_response_block(schema, content, tags, attrs)
+        list_view.append(item_view)
+        item_view = self.set_attributes(schema, item_view, attrs)
+        self._push_event(item_view)
+        return item_view, schema
             
             
             

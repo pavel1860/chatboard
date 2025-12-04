@@ -1611,7 +1611,8 @@ class ObservableProcess(Process):
         self._ctx = ctx
         self._load_eval_args = load_eval_args
         return FlowRunner(self, ctx=ctx, event_level=event_level).stream_events()
-
+    
+    
     def get_response(self):
         """
         Get the response/result from this process.
@@ -1700,6 +1701,7 @@ class StreamController(ObservableProcess):
         In replay mode (when span has saved outputs), sets up replay buffer instead of
         executing the generator function.
         """
+        from ..block import Block
         bound, kwargs =await self._resolve_dependencies()
         gen_instance = self._gen_func(*bound.args, **bound.kwargs)
 
@@ -1714,7 +1716,7 @@ class StreamController(ObservableProcess):
             if os.path.exists(self._save_filepath):
                 os.remove(self._save_filepath)
             stream.save_stream(self._save_filepath)
-        accumulator = Accumulator()
+        accumulator = Accumulator(Block())
         self._stream = stream | accumulator
         if self._parser is not None:
             self._stream |= self._parser
@@ -1729,9 +1731,13 @@ class StreamController(ObservableProcess):
         """
         from .events import StreamEvent
         from ..model.versioning.artifact_log import ArtifactLog
-        
-        
+               
         if self._temp_data_flow is None:
+            if self._parser is None:
+                if self._accumulator is None:
+                    raise FlowException("Accumulator is not initialized")
+                payload = self._accumulator.result
+ 
             data_flow = ArtifactLog.build_data_flow_node(self.span, payload, io_kind="output")
             self._temp_data_flow = data_flow
             return self.ctx.build_event(
@@ -1741,6 +1747,7 @@ class StreamController(ObservableProcess):
                 name=self._name,
                 
             )
+
         
         return self.ctx.build_event(
             path=self._temp_data_flow.path,
@@ -1811,7 +1818,7 @@ class StreamController(ObservableProcess):
                 if self._parser and self._parser.res_ctx.instance is not None:
                     value = await self.span.log_value(self._parser.res_ctx.instance, io_kind="output")
                 elif self._accumulator:
-                    raise FlowException("Accumulator is not supported for StreamController")
+                    # raise FlowException("Accumulator is not supported for StreamController")
                     value = await self.span.log_value(self._accumulator.result, io_kind="output")
                 self._stream_value = value
 
@@ -1858,6 +1865,7 @@ class StreamController(ObservableProcess):
         self._load_filepath = filename
         self._load_delay = delay
         return self
+
 
 
 # ============================================================================
@@ -2400,6 +2408,7 @@ class FlowRunner:
         self._output_events = True
         return self
 
+    # def print(self):
 
 # ============================================================================
 # Phase 5: Parser Integration

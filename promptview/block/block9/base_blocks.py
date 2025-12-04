@@ -1,4 +1,4 @@
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Type, TypeVar
 from uuid import uuid4
 
 
@@ -76,6 +76,27 @@ class BaseBlock(Generic[CONTENT]):
             return self.id == other.id
         else:
             return False
+        
+    def traverse_path(self):
+        curr = self
+        while curr is not None:
+            yield curr
+            curr = curr.parent
+            
+            
+    def index_in_parent(self, kind: "Type[BaseBlock] | None" = None) -> int:
+        if self.parent is None:
+            return 0 if kind is None or type(self) is kind else -1
+        idx = -1
+        for b in self.parent:
+            if kind is None or type(b) is kind:
+                idx += 1
+            if b == self:
+                return idx
+        return idx
+                
+            
+            
     
 
 
