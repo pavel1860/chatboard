@@ -880,10 +880,10 @@ import asyncio
 
 from ..evaluation.decorators import EvalCtx
 from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
-
+from ..block.block9.block_builder import SchemaBuildContext
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
-    from ..block import Block
+    from ..block import Block, BlockChunk, BlockSchema, BaseBlock
     from .context import Context
 
 
@@ -1185,6 +1185,14 @@ class Stream(Process):
                     yield block
 
         return cls(load_stream(), name=f"stream_from_{filepath}")
+    
+    @classmethod
+    def from_list(cls, chunks: list[str], name: str = "stream_from_list"):
+        async def gen():
+            from ..block import BlockChunk
+            for chunk in chunks:
+                yield BlockChunk(content=chunk, logprob=1.0)
+        return cls(gen(), name=name)
 
     async def __anext__(self):
         """
@@ -2414,8 +2422,122 @@ class FlowRunner:
 # Phase 5: Parser Integration
 # ============================================================================
 
-
 class Parser(Process):
+    def __init__(self, schema: "BlockSchema"):
+        from xml.parsers import expat
+        super().__init__()
+        self.schema = schema
+        self.build_ctx = SchemaBuildContext(schema)
+        self.parser = expat.ParserCreate()
+        self.parser.buffer_text = True
+        self.parser.StartElementHandler = self._on_start
+        self.parser.EndElementHandler = self._on_end
+        self.parser.CharacterDataHandler = self._on_chardata
+        
+        self.chunks = []  # (start_byte, end_byte, chunk)
+        self.total_bytes = 0
+        self.pending = None  # (event_type, event_data, start_byte)
+        self.chunk_queue = []
+        self._tag_path = []
+        
+    @property
+    def result(self):
+        return self.build_ctx.result
+    
+    def feed(self, chunk: "BlockChunk", isfinal=False):
+        # data = chunk.content.encode() if isinstance(chunk.data, str) else chunk.data
+        data = chunk.content.encode("utf-8")
+        start = self.total_bytes
+        end = start + len(data)
+        self.chunks.append((start, end, chunk))
+        self.total_bytes = end
+        self.parser.Parse(data, isfinal)
+        
+        
+    def _push_block(self, block: "BaseBlock"):
+        self.chunk_queue.append(block)
+        
+    def _push_block_list(self, blocks: list["BaseBlock"]):
+        self.chunk_queue.extend(blocks)
+        
+    def _pop_block(self):
+        return self.chunk_queue.pop(0)
+    
+    def _has_outputs(self):
+        return len(self.chunk_queue) > 0
+    
+    def close(self):
+        self.parser.Parse(b'', True)
+        # Flush any pending event
+        self._flush_pending(self.total_bytes)
+    
+    def _get_chunks_in_range(self, start, end):
+        """Return all chunks overlapping [start, end)"""
+        result = []
+        for chunk_start, chunk_end, chunk in self.chunks:
+            if chunk_start < end and chunk_end > start:
+                result.append(chunk)
+        return result
+    
+    def _flush_pending(self, end_byte):
+        if self.pending is None:
+            return
+        
+        event_type, event_data, start_byte = self.pending
+        chunks = self._get_chunks_in_range(start_byte, end_byte)
+        metas = [c.logprob for c in chunks]
+        # print(event_type)
+        if event_type == 'start':
+            name, attrs = event_data
+            blocks = self.build_ctx.inst_view(self._tag_path, chunks)
+            self._push_block_list(blocks)
+            # print(f"StartElement '{name}' {attrs or ''} from chunks: {metas}")
+        elif event_type == 'end':
+            view = self.build_ctx.commit_view(chunks)
+            self._push_block(view.postfix)
+            # self.build_ctx.commit_view()
+            # print(f"EndElement '{event_data}' from chunks: {metas}")
+        elif event_type == 'chardata':
+            for chunk in chunks:
+                cb = self.build_ctx.append(chunk)
+                self._push_block(cb)
+            # print(f"CharData {repr(event_data)} from chunks: {metas}")
+        
+        self.pending = None
+    
+    def _on_start(self, name, attrs):
+        current_pos = self.parser.CurrentByteIndex
+        self._flush_pending(current_pos)
+        self._tag_path.append(name)
+        self.pending = ('start', (name, attrs), current_pos)
+    
+    def _on_end(self, name):
+        current_pos = self.parser.CurrentByteIndex
+        self._flush_pending(current_pos)
+        self._tag_path.pop()
+        self.pending = ('end', name, current_pos)
+    
+    def _on_chardata(self, data):
+        current_pos = self.parser.CurrentByteIndex
+        self._flush_pending(current_pos)
+        # For chardata we could compute end directly, but for consistency
+        # we'll use the deferred approach too
+        self.pending = ('chardata', data, current_pos)
+        
+        
+    async def on_stop(self):
+        self.close()
+        
+    
+    async def __anext__(self):
+        while not self._has_outputs():
+            value = await super().__anext__()
+            # print("anext", value.content)
+            self.feed(value)        
+        block = self._pop_block()
+        return block
+
+class Parser2(Process):
     """
     Parser process - transforms XML-tagged chunks into Block structures.
     

@@ -885,8 +885,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
             
     
     
-    def __itruediv__(self, other: "BaseContent | BlockChunk | Block | BlockSent | tuple[BaseContent, ...]"):        
-        if isinstance(other, tuple):
+    def __itruediv__(self, other: "BaseContent | BlockChunk | Block | BlockSent | tuple[BaseContent, ...] | list[BaseContent]"):        
+        if isinstance(other, tuple) or isinstance(other, list):
             other =self._process_tuple_content(other)        
         self.append(other)
         return self
@@ -1115,16 +1115,17 @@ class BlockSchema(Block):
         if self.type and not type(value) is self.type:
             raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
         blk = Block(
-                self.name,
-                styles=self.styles,
+                value,
+                # self.name,
+                # styles=self.styles,
                 tags=self.tags,
                 role=self.role,
                 prefix=self.prefix,
                 postfix=self.postfix,
                 id=self.id,                        
             )
-        if value is not None:
-            blk /= value
+        # if value is not None:
+            # blk.content.extend(value)
         return blk
         
     def copy(
