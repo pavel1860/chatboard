@@ -71,6 +71,10 @@ class BaseBlock(Generic[CONTENT]):
         print(self.repr_tree(verbose=verbose))
         
         
+    def is_space(self) -> bool:
+        return self.content.isspace()
+                
+        
     def __eq__(self, other: object):
         if isinstance(other, BaseBlock):
             return self.id == other.id
@@ -306,7 +310,30 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         target.replace_child(idx, child)
         return child
     
+    def is_space(self) -> bool:
+        return all(c.is_space() for c in self.children)
     
+    
+    def strip_range(self):
+        start_index = 0
+        end_index = len(self.children)
+        for c in self.children:
+            if c.is_space():
+                start_index += 1
+            else:
+                break  
+        if start_index == len(self.children):
+            return start_index, end_index
+        for i in range(len(self.children) - 1, -1, -1):
+            if i < start_index:
+                break
+            if self.children[i].is_space():
+                end_index -= i
+            else:
+                break
+        return start_index, end_index
+        
+        
     
     def __iter__(self):
         return iter(self.children)

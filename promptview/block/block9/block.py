@@ -101,6 +101,9 @@ class BlockChunk(BaseBlock[str]):
             parent=self.parent if copy_parent else None,
             id=self.id if copy_id else None
         )
+        
+    def is_space(self) -> bool:
+        return self.content.isspace()
     
     @classmethod
     def model_validate(cls, data: Any) -> "BlockChunk":        
@@ -179,6 +182,14 @@ class BlockSent(BlockSequence[str, BlockChunk]):
         if len(self) == 0:
             return True
         return self.children[-1].is_eol
+    
+    def is_space(self) -> bool:
+        return all(c.is_space() for c in self.children)
+    
+    def strip(self) -> "BlockSent":
+        start_index, end_index = self.strip_range()
+        chunks = self.children[start_index:end_index]
+        return self.copy(overrides={"children": chunks})
     
     
     def render(self, verbose: bool = False) -> str:
@@ -275,7 +286,8 @@ KIND = TypeVar("KIND")
 
 def _copy_kind_aux[KIND](
     target: "Block",
-    kind: KIND,        
+    kind: KIND, 
+    # include_subkinds: bool = False,       
 ) -> KIND | list[KIND] | None:
     children = []
     children_copies = [_copy_kind_aux(c, kind) for c in target.children]
@@ -286,12 +298,13 @@ def _copy_kind_aux[KIND](
             children += cld
         else:
             children.append(cld)
-    # print(target.tags, "||||", [type(c) for c in children_copies])
-    if type(target) is kind:
+    
+    # if type(target) is kind or (include_subkinds and isinstance(target, kind)):
+    if isinstance(target, kind):
         block_copy = target.copy(overrides={"children": children, "parent": None})
         # for c in children:
         #     block_copy.append(c)
-        return block_copy
+        return block_copy    
     if not children:
         return None
     return children
@@ -477,15 +490,23 @@ class Block(BlockSequence[BlockSent, "Block"]):
         return block
     
     def view_list(self, name: str, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockSchema":
-        block = BlockSchema(
+        # block = BlockSchema(
+        #     name,
+        #     type=list[Any],
+        #     attrs=attrs,
+        #     role=self.role,
+        #     parent=self.parent,
+        #     is_wrapper=True,
+        #     tags=tags,
+        #     # styles=["xsd"],
+        # )
+        block = BlockListSchema(
             name,
-            type=list[Any],
             attrs=attrs,
             role=self.role,
             parent=self.parent,
-            is_wrapper=True,
             tags=tags,
-            # styles=["xsd"],
+            styles=["xml"],
         )
         self.append(block)
         return block
@@ -805,6 +826,12 @@ class Block(BlockSequence[BlockSent, "Block"]):
             parent=self.parent if copy_parent else None,
         )
         
+        
+    def strip(self) -> "Block":
+        self.content = self.content.strip()
+        start_index, end_index = self.strip_range()
+        return self.copy(overrides={"children": self.children[start_index:end_index]})
+        
     
     # def copy_kind_children(
     #     self,
@@ -1112,14 +1139,14 @@ class BlockSchema(Block):
             #     else:
             
     def instantiate(self, value):
-        if self.type and not type(value) is self.type:
-            raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
+        # if self.type and not type(value) is self.type:
+            # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
         blk = Block(
                 value,
                 # self.name,
                 # styles=self.styles,
                 tags=self.tags,
-                role=self.role,
+                # role=self.role,
                 prefix=self.prefix,
                 postfix=self.postfix,
                 id=self.id,                        
@@ -1194,8 +1221,7 @@ class BlockSchema(Block):
 
 
 
-class BlockListSchema(BlockSchema):
-    pass
+
     
     
 
@@ -1397,3 +1423,35 @@ class BlockList(list[Block]):
     
     def __exit__(self, exc_type, exc_value, traceback):
         pass
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+class BlockListSchema(BlockSchema):
+    
+    
+    def __init__(
+        self, 
+        name: str,
+        type: Type | None = None,
+        attrs: dict[str, AttrBlock] | None = None,        
+        role: str | None = None,
+        tags: list[str] | None = None,
+        style: str | None = None,
+        id: str | None = None,
+        parent: "BaseBlock | None" = None,  
+        styles: list[str] | None = None,
+        prefix: BaseContent | None = None,
+        postfix: BaseContent | None = None,
+        is_wrapper: bool = True,
+    ):
+        super().__init__(name, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
+
+    

@@ -1101,6 +1101,13 @@ class Process:
         """
         downstream._upstream = self
         return downstream
+    
+    async def athrow(self, typ, val=None, tb=None):
+        return await self.upstream.athrow(typ, val, tb)
+
+    async def aclose(self):
+        return await self.upstream.aclose()
+
 
 
 class Stream(Process):
@@ -1147,6 +1154,12 @@ class Stream(Process):
 
             async def __anext__(self):
                 return await self._gen.__anext__()
+            
+            async def athrow(self, typ, val=None, tb=None):
+                return await self._gen.athrow(typ, val, tb)
+            
+            async def aclose(self):
+                return await self._gen.aclose()
 
         super().__init__(upstream=GeneratorWrapper(gen))
         self._name = name
@@ -1214,6 +1227,9 @@ class Stream(Process):
                 f.write(json.dumps(data) + "\n")
 
         return ip
+    
+
+
 
 
 class Accumulator(Process):
@@ -1631,6 +1647,12 @@ class ObservableProcess(Process):
         if isinstance(self._last_ip, ObservableProcess):
             return self._last_ip.get_response()
         return self._last_ip
+    
+    
+
+    
+
+
 
 
 # ============================================================================
@@ -1692,6 +1714,7 @@ class StreamController(ObservableProcess):
         self._stream: Process | None = None
         self._accumulator: Accumulator | None = None
         self._parser: Parser | None = None
+        self._gen: AsyncGenerator | None = None
         self._save_filepath: str | None = None
         self._load_filepath: str | None = None
         self._stream_value: DataFlow | None = None
@@ -1725,10 +1748,12 @@ class StreamController(ObservableProcess):
                 os.remove(self._save_filepath)
             stream.save_stream(self._save_filepath)
         accumulator = Accumulator(Block())
-        self._stream = stream | accumulator
-        if self._parser is not None:
-            self._stream |= self._parser
         self._accumulator = accumulator
+        self._stream = stream
+        self._gen = stream | accumulator
+        if self._parser is not None:
+            self._gen |= self._parser
+        
         
     async def on_value_event(self, payload: Any = None):
         """
@@ -1770,7 +1795,7 @@ class StreamController(ObservableProcess):
             raise FlowException("Parser already initialized")
         if self._gen_func is None:
             raise FlowException("StreamController is not initialized")
-        self._parser = Parser(response_schema=block_schema)      
+        self._parser = Parser(block_schema)      
         return self
     
     def name(self, name: str):
@@ -1807,7 +1832,7 @@ class StreamController(ObservableProcess):
                 return ip
             else:
                 # Normal mode: get next IP from stream (which passes through Accumulator)
-                ip = await self._stream.__anext__()
+                ip = await self._gen.__anext__()
                 self._last_ip = ip
 
                 # Don't log individual values - they're stream deltas
@@ -1823,8 +1848,8 @@ class StreamController(ObservableProcess):
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
             if self.span:
                 value = None
-                if self._parser and self._parser.res_ctx.instance is not None:
-                    value = await self.span.log_value(self._parser.res_ctx.instance, io_kind="output")
+                if self._parser and self._parser.result is not None:
+                    value = await self.span.log_value(self._parser.result, io_kind="output")
                 elif self._accumulator:
                     # raise FlowException("Accumulator is not supported for StreamController")
                     value = await self.span.log_value(self._accumulator.result, io_kind="output")
@@ -1857,7 +1882,7 @@ class StreamController(ObservableProcess):
         #         return self._stream_value.value._block
         #     return self._stream_value.value
         if self._parser:
-            return self._parser.res_ctx.instance
+            return self._parser.result
         # return self.acc
         return None
     
@@ -1873,6 +1898,17 @@ class StreamController(ObservableProcess):
         self._load_filepath = filename
         self._load_delay = delay
         return self
+    
+    async def athrow(self, typ, val=None, tb=None):
+        if self._stream is None:
+            raise FlowException("StreamController is not initialized")
+        return await self._stream.athrow(typ, val, tb)
+
+    async def aclose(self):
+        if self._stream is None:
+            raise FlowException("StreamController is not initialized")
+        return await self._stream.aclose()
+
 
 
 
@@ -2053,6 +2089,18 @@ class PipeController(ObservableProcess):
         """
         # Delegate to asend with None (equivalent to __anext__)
         return await self.asend(None)
+    
+    
+    async def athrow(self, typ, val=None, tb=None):
+        if self._gen is None:
+            raise FlowException("Process is not initialized")
+        return await self._gen.athrow(typ, val, tb)
+
+    async def aclose(self):
+        if self._gen is None:
+            raise FlowException("Process is not initialized")
+        return await self._gen.aclose()
+
 
 
 
@@ -2149,6 +2197,11 @@ class FlowRunner:
         if not self.stack:
             raise StopAsyncIteration
         return self.stack[-1]
+    
+    @property
+    def result(self) -> Any:
+        """Get result from root process."""
+        return self._get_response()
 
     @property
     def should_output_events(self) -> bool:
@@ -2290,6 +2343,13 @@ class FlowRunner:
 
             except Exception as e:
                 # Error occurred, pop from stack
+                
+                try:
+                    await self.current.athrow(e)
+                except Exception as sub_ex:
+                    pass
+                
+                
                 process = self.pop()
 
                 # Emit error event if needed
@@ -2429,7 +2489,7 @@ class Parser(Process):
         self.schema = schema
         self.build_ctx = SchemaBuildContext(schema)
         self.parser = expat.ParserCreate()
-        self.parser.buffer_text = True
+        self.parser.buffer_text = False
         self.parser.StartElementHandler = self._on_start
         self.parser.EndElementHandler = self._on_end
         self.parser.CharacterDataHandler = self._on_chardata
@@ -2518,6 +2578,7 @@ class Parser(Process):
         self.pending = ('end', name, current_pos)
     
     def _on_chardata(self, data):
+        # print(f"chardata: '{data}'")
         current_pos = self.parser.CurrentByteIndex
         self._flush_pending(current_pos)
         # For chardata we could compute end directly, but for consistency
