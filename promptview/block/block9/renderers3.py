@@ -118,6 +118,7 @@ class RenderContext:
     ctx_renderers: "list[BaseRenderer]" = field(default_factory=list)
     ctx_block: Block | None = None    
     parent_ctx: "RenderContext | None" = None
+    is_wrapper: bool = False
     
     
 class BaseRenderer(metaclass=StyleMeta):
@@ -335,7 +336,8 @@ def build_fiber_context(ctx: RenderContext, block: Block) -> tuple[RenderContext
         renderers=list(renderers.values()),
         ctx_renderers=list(children_renderers.values()),
         ctx_block=block,
-        parent_ctx=ctx
+        parent_ctx=ctx,
+        is_wrapper=block.is_wrapper
     )
     
     fiber = BlockFiber(_block=block)
@@ -377,9 +379,10 @@ def build_fiber_context(ctx: RenderContext, block: Block) -> tuple[RenderContext
 def build_fiber(ctx: RenderContext, block: Block) -> BlockFiber:
     ctx, fiber = build_fiber_context(ctx, block)
     # print("-----")
-    for renderer in ctx.renderers:
-        # print("renderer", renderer.__class__.__name__)
-        fiber = renderer(fiber, block, ctx)
+    if not ctx.is_wrapper:
+        for renderer in ctx.renderers:
+            # print("renderer", renderer.__class__.__name__)
+            fiber = renderer(fiber, block, ctx)
     fiber.children = [build_fiber(ctx, child) for child in block.children]    
     return fiber
 

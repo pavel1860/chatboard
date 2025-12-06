@@ -258,9 +258,31 @@ def pydantic_object_description(obj: BaseModel) -> "Block":
                 bf /= value
     return b
 
-def pydantic_class_description(cls: Type[BaseModel], examples: list[BaseModel] | None = None) -> "Block":
+# def pydantic_class_description(cls: Type[BaseModel], examples: list[BaseModel] | None = None) -> "Block":
+#     tool_name = camel_to_snake(cls.__name__)
+#     with Block(f"Tool: {tool_name}", style="md", tags=["tool", tool_name]) as b:
+#         with b("tool", tags=["tool_name"], style="xml-def") as tn:
+#             tn.field("name", tool_name)
+#         if not cls.__doc__:
+#             raise ValueError(f"description is required for Tool {cls.__name__}")
+#         b /= cls.__doc__
+#         with b("Argument tags", style="md") as args:
+#             for field_name, field_info in cls.model_fields.items():
+#                 if not field_info.description:
+#                     raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
+#                 with args(field_name, style="xml-def", tags=["field_name", field_name]) as bf:
+#                     bf /= "description: ", field_info.description
+#                     bf /= "type: ", field_info.annotation.__name__
+            
+#         if examples:
+#             example_str = "Examples" if len(examples) > 1 else "Example"
+#             with b(example_str, style="md", tags=["examples"]) as exs:
+#                 for example in examples:                    
+#                     exs /= pydantic_object_description(example)
+#     return b
+def pydantic_class_description(name: str, cls: Type[BaseModel]) -> "Block":
     tool_name = camel_to_snake(cls.__name__)
-    with Block(f"Tool: {tool_name}", style="md", tags=["tool", tool_name]) as b:
+    with Block(f"{name}: {tool_name}", style="md", tags=[tool_name]) as b:
         with b("tool", tags=["tool_name"], style="xml-def") as tn:
             tn.field("name", tool_name)
         if not cls.__doc__:
@@ -272,13 +294,7 @@ def pydantic_class_description(cls: Type[BaseModel], examples: list[BaseModel] |
                     raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
                 with args(field_name, style="xml-def", tags=["field_name", field_name]) as bf:
                     bf /= "description: ", field_info.description
-                    bf /= "type: ", field_info.annotation.__name__
-            
-        if examples:
-            example_str = "Examples" if len(examples) > 1 else "Example"
-            with b(example_str, style="md", tags=["examples"]) as exs:
-                for example in examples:                    
-                    exs /= pydantic_object_description(example)
+                    bf /= "type: ", field_info.annotation.__name__            
     return b
 
 
@@ -377,6 +393,10 @@ class Block(BlockSequence[BlockSent, "Block"]):
         if self.tags:
             return self.tags[0]
         return None
+    
+    
+    def get_field(self, name: str) -> Any:
+        return self.attrs.get(name).value
     
     
     @property
@@ -489,7 +509,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.append(block)
         return block
     
-    def view_list(self, name: str, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockSchema":
+    def view_list(self, name: str, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockListSchema":
         # block = BlockSchema(
         #     name,
         #     type=list[Any],
@@ -536,6 +556,16 @@ class Block(BlockSequence[BlockSent, "Block"]):
             raise ValueError(f"Invalid target type: {type(target)}")
         self.append(block)
         return block
+    
+    
+    def example(self, value: dict, schema: "BlockSchema | None" = None, style: str | None = "md") -> "Block":
+        from .block_builder import SchemaBuildContext
+        ctx = SchemaBuildContext(schema or self)
+        inst = ctx.inst_dict(value)
+        with Block("Example", style=style or "md") as ex:
+            ex /= inst
+        self.append(ex)
+        return ex
     
     
     
@@ -1038,10 +1068,11 @@ class AttrBlock:
         ge: annotated_types.Ge | None = None, 
         le: annotated_types.Le | None = None
     ):
-        if _type is None and value is not None:
-            _type = type(value)
-        else:
-            raise ValueError(f"Type is required when value is not provided")
+        # if _type is None and value is not None:
+        #     _type = type(value)
+        # else:
+        #     raise ValueError(f"Type is required when value is not provided")
+        
         self.name = name
         self.type = _type
         self.description = description
@@ -1138,21 +1169,43 @@ class BlockSchema(Block):
             #         path.append(0)
             #     else:
             
-    def instantiate(self, value):
+            
+    def inst_dict(self, value: dict):
+        from .block_builder import SchemaBuildContext
+        ctx = SchemaBuildContext(self)
+        ctx.inst_dict(value)
+        return ctx.result
+            
+    def instantiate(
+        self, 
+        value = None, 
+        content = None, 
+        attrs: dict[str, str] | None = None,
+        ignore_tags = False, 
+        ignore_style = False,         
+    ) -> "Block":
         # if self.type and not type(value) is self.type:
             # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
         blk = Block(
-                value,
+                content or self.name,
                 # self.name,
-                # styles=self.styles,
-                tags=self.tags,
+                styles=self.styles if not ignore_style else None,
+                tags=self.tags if not ignore_tags else None,
                 # role=self.role,
                 prefix=self.prefix,
                 postfix=self.postfix,
                 id=self.id,                        
             )
-        # if value is not None:
-            # blk.content.extend(value)
+        if attrs:
+            for k, v in attrs.items():
+                attr_schema = self.attrs.get(k)
+                if attr_schema is None:
+                    raise ValueError(f"Attribute '{k}' not found in schema")
+                parsed_value = attr_schema.parse(v)                
+                blk.field(k, parsed_value, type=attr_schema.type)
+                
+        if value is not None:
+            blk /= value
         return blk
         
     def copy(
@@ -1222,6 +1275,7 @@ class BlockSchema(Block):
 
 
 
+        
     
     
 
@@ -1436,6 +1490,11 @@ class BlockList(list[Block]):
     
 class BlockListSchema(BlockSchema):
     
+    __slots__ = [
+        "list_schemas",
+        "list_models"
+    ]
+    
     
     def __init__(
         self, 
@@ -1453,5 +1512,82 @@ class BlockListSchema(BlockSchema):
         is_wrapper: bool = True,
     ):
         super().__init__(name, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
+        self.list_schemas = []
+        self.list_models = {}
 
     
+    
+    
+    
+    
+    def register(self, target: BlockSchema | Type[BaseModel]):
+        # if isinstance(target, BaseModel):
+            # block = pydantic_object_description(target)
+        if isinstance(target, type) and issubclass(target, BaseModel):
+            block = pydantic_class_description(self.name, target)
+            self.list_models[target.__name__] = target
+        elif isinstance(target, BlockSchema):
+            block = target
+        else:
+            raise ValueError(f"Invalid target type: {type(target)}")
+        self.list_schemas.append(block)
+        self.append(block)
+        return block
+    
+    
+    
+    
+    def instantiate_item(self, value = None, content = None, ignore_tags = False, ignore_style = False):
+        # if self.type and not type(value) is self.type:
+            # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
+        if isinstance(value, BaseModel):
+            if not value.__class__.__name__ in self.list_models:
+                raise ValueError(f"Model {value.__class__.__name__} is not registered")
+            blk = pydantic_object_description(value)
+            return blk
+        # elif isinstance(value, list):
+        #     for item in value:
+        #         self.instantiate(item)
+        #     return self
+        else:
+        # else:
+        #     raise ValueError(f"Invalid value type: {type(value)}")
+            blk = Block(
+                    value or self.name,
+                    # self.name,
+                    styles=self.styles if not ignore_style else None,
+                    tags=self.tags if not ignore_tags else None,
+                    # role=self.role,
+                    prefix=self.prefix,
+                    postfix=self.postfix,
+                    id=self.id,                        
+                )
+            # if value is not None:
+                # blk.content.extend(value)
+            return blk
+
+    def copy(
+        self,
+        overrides: dict[str, Any] | None = None,
+        copy_id: bool = False,
+        copy_parent: bool = False,
+    ):
+        blk = BlockListSchema(
+            name=self.name if not overrides or "name" not in overrides else overrides["name"],
+            type=self.type if not overrides or "type" not in overrides else overrides["type"],
+            attrs=self.attrs if not overrides or "attrs" not in overrides else overrides["attrs"],
+            role=self.role if not overrides or "role" not in overrides else overrides["role"],
+            tags=self.tags if not overrides or "tags" not in overrides else overrides["tags"],
+            styles=self.styles if not overrides or "styles" not in overrides else overrides["styles"],
+            prefix=self.prefix if not overrides or "prefix" not in overrides else overrides["prefix"],
+            postfix=self.postfix if not overrides or "postfix" not in overrides else overrides["postfix"],
+            id=self.id if copy_id else None,
+            parent=self.parent if copy_parent else None,
+        )
+        blk.content = self.content.copy() if not overrides or "content" not in overrides else overrides["content"]
+        blk.children = [c.copy() for c in self.children] if not overrides or "children" not in overrides else overrides["children"]
+        blk.list_schemas = [c.copy() for c in self.list_schemas] if not overrides or "list_schemas" not in overrides else overrides["list_schemas"]
+        blk.list_models = self.list_models if not overrides or "list_models" not in overrides else overrides["list_models"]
+        
+        
+        return blk

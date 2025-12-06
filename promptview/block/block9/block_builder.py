@@ -5,7 +5,11 @@ from .block import Block, BlockSchema, BlockSent
 def traverse_dict(target, path: list[int]=[], label_path: list[str] = []):
     for i, (k, v) in enumerate(target.items()):  
         if type(v) is dict:
+            yield k, None, [*path, i], [*label_path, k]
             yield from traverse_dict(v, [*path, i], [*label_path, k])
+        elif type(v) is list:
+            for item in v:
+                yield k, item, [*path, i], [*label_path, k]
         else:
             yield k, v, [*path, i], [*label_path, k]
 
@@ -33,6 +37,9 @@ class SchemaBuildContext:
         view_schema = self.schema.get_one(path)
         block = view_schema.instantiate(value)
         return block
+    
+    def curr_path(self):
+        return [b.tags[0] for b in self.stack]
     
     def _push(self, block: Block):
         if self.stack:
@@ -62,9 +69,9 @@ class SchemaBuildContext:
                 self.stack.append(target_inst)
         return instances
     
-    def inst_view(self, label_path, value) -> list[Block]:
+    def inst_view(self, label_path, value, attrs: dict[str, str] | None = None) -> list[Block]:
         view_schema = self.schema.get_one(label_path)
-        block = view_schema.instantiate(value)
+        block = view_schema.instantiate(content=value, attrs=attrs, ignore_tags=True, ignore_style=True)
         self._push(block)
         return [block]
             
@@ -80,9 +87,34 @@ class SchemaBuildContext:
             view.postfix = BlockSent(value)        
         # view = view.strip()
         return view
-        
-        
+    
+    
     def inst_dict(self, payload):
+        from .block import BlockListSchema
+        for key, value, path, label_path in traverse_dict(payload):            
+            view_schema = self.schema.get_one(label_path)
+            if isinstance(view_schema, BlockListSchema):
+                if self.inst is None:
+                    raise ValueError("inst is not set")                 
+                view_list = self.inst.get_one_or_none(label_path)
+                if view_list is None:
+                    view_list = view_schema.instantiate()
+                    parent = self.inst.get_one(label_path[:-1])
+                    parent.append(view_list)
+                block = view_schema.instantiate_item(value)
+                view_list.append(block)
+                # block = view_schema.instantiate()
+            else:
+                block = view_schema.instantiate(value=value)                
+                if self.inst is None:
+                    self.inst = block
+                else:
+                    parent = self.inst.get_one(label_path[:-1])
+                    parent.append(block)
+        return self.inst
+        
+        
+    def inst_dict2(self, payload):
         for key, value, path, label_path in traverse_dict(payload):
             curr_path = []
             for i, label in enumerate(label_path):
