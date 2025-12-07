@@ -65,7 +65,8 @@ class BaseBlock(Generic[CONTENT]):
         }
         
     def repr_tree(self, verbose: bool = False):
-        return f"{self.path}  BaseBlock({self.content})"
+        space = " empty" if self.is_space() else ""
+        return f"{self.path}  BaseBlock({self.content}){space}"
     
     def print_tree(self, verbose: bool = False):
         print(self.repr_tree(verbose=verbose))

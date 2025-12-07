@@ -23,6 +23,7 @@ class SchemaBuildContext:
         # self.inst = Block(role=role, tags=tags or [])
         self.inst = None
         self.stack = []
+        self.schema_stack = []
         self._did_finish = False
         
     @property
@@ -41,38 +42,68 @@ class SchemaBuildContext:
     def curr_path(self):
         return [b.tags[0] for b in self.stack]
     
-    def _push(self, block: Block):
+    def _push(self, schema: BlockSchema, block: Block):
         if self.stack:
             self.stack[-1].append(block)
         else:
             self.inst = block
         self.stack.append(block)
+        self.schema_stack.append(schema)
         return block
         
     def _pop(self):
-        return self.stack.pop()
+        # while not self.schema_stack[-1] != self.stack[-1].schema:
+            # self.schema_stack.pop()
+        return self.stack.pop(), self.schema_stack.pop()
     
-    def inst_view2(self, label_path, value) -> list[Block]:
-        curr_path = []
-        instances = []
-        for i, label in enumerate(label_path):
-            is_last = i == len(label_path) - 1
-            curr_path.append(label)
-            # if i+1 < len(label_path) and label in self.stack[i+1].tags:
-                # continue
-            target_inst = self.inst.get_one_or_none(curr_path) if self.inst else None
-            if not target_inst:
-                view_schema = self.schema.get_one(curr_path)
-                target_inst = view_schema.instantiate(value if is_last else None)    
-                self.stack[-1].append(target_inst)
-                instances.append(target_inst)                
-                self.stack.append(target_inst)
-        return instances
     
-    def inst_view(self, label_path, value, attrs: dict[str, str] | None = None) -> list[Block]:
-        view_schema = self.schema.get_one(label_path)
-        block = view_schema.instantiate(content=value, attrs=attrs, ignore_tags=True, ignore_style=True)
-        self._push(block)
+    def _get_schema(self, view_name: str, attrs: dict[str, str] | None = None) -> BlockSchema:
+        from .block import BlockListSchema
+        if not self.schema_stack:
+            return self.schema.get_one(view_name)
+        # if isinstance(self.schema_stack[-1], BlockListSchema):
+        #     if not attrs:
+        #         raise ValueError("Attribute 'name' is required for list item")
+        #     list_tag = attrs["name"]
+        #     list_view = self.schema_stack[-1].get(list_tag)
+        #     if list_view is None:
+        #         raise ValueError(f"List view {list_tag} not found")
+        #     # if not isinstance(list_view, Block):
+        #     #     raise ValueError(f"List view {list_tag} is not a block")
+        #     return list_view.get_one(view_name)
+            
+        return self.schema_stack[-1].get(view_name)
+    
+    # def inst_view2(self, label_path, value) -> list[Block]:
+    #     curr_path = []
+    #     instances = []
+    #     for i, label in enumerate(label_path):
+    #         is_last = i == len(label_path) - 1
+    #         curr_path.append(label)
+    #         # if i+1 < len(label_path) and label in self.stack[i+1].tags:
+    #             # continue
+    #         target_inst = self.inst.get_one_or_none(curr_path) if self.inst else None
+    #         if not target_inst:
+    #             view_schema = self.schema.get_one(curr_path)
+    #             target_inst = view_schema.instantiate(value if is_last else None)    
+    #             self.stack[-1].append(target_inst)
+    #             instances.append(target_inst)                
+    #             self.stack.append(target_inst)
+    #     return instances
+    
+    def inst_view(self, view_name: str, value, attrs: dict[str, str] | None = None) -> list[Block]:
+        from .block import BlockListSchema
+        # view_schema = self.schema.get_one(label_path)
+        view_schema = self._get_schema(view_name, attrs)
+        block = view_schema.instantiate(content=value, attrs=attrs, ignore_style=True)
+        self._push(view_schema, block)
+        if isinstance(view_schema, BlockListSchema):
+            if not attrs:
+                raise ValueError("Attribute 'name' is required for list item")
+            item_schema = view_schema.get(attrs["name"])
+            if item_schema is None:
+                raise ValueError(f"List view '{attrs["name"]}' not found")
+            self.schema_stack.append(item_schema)
         return [block]
             
     def append(self, value):
@@ -82,7 +113,7 @@ class SchemaBuildContext:
             
     def commit_view(self, value = None):
         
-        view = self.stack.pop()
+        view, schema = self._pop()
         if value is not None:
             view.postfix = BlockSent(value)        
         # view = view.strip()

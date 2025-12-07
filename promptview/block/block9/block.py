@@ -80,9 +80,10 @@ class BlockChunk(BaseBlock[str]):
     def repr_tree(self, verbose: bool = False):
         logprob = f" logprob={self.logprob:.3f}" if self.logprob is not None else ""
         content = self.content.replace("\n", "\\n")
+        space = " empty" if self.is_space() else ""
         # prefix = " prefix='" + self.prefix.replace("\n", "\\n") + "'" if self.prefix is not None else ""
         # postfix = " postfix='" + self.postfix.replace("\n", "\\n") + "'"if self.postfix is not None else ""
-        return f"{self.path}  BlockChunk('{content}'{logprob})"
+        return f"{self.path}  BlockChunk('{content}'{logprob}){space}"
     
     def __repr__(self):
         return f"BlockChunk(content={self.content} , logprob={self.logprob})"
@@ -218,8 +219,9 @@ class BlockSent(BlockSequence[str, BlockChunk]):
     def repr_tree(self, verbose: bool = False): 
         # prefix = " prefix='" + self.prefix.replace("\n", "\\n") + "'" if self.prefix is not None else ""
         # postfix = " postfix='" + self.postfix.replace("\n", "\\n") + "'"if self.postfix is not None else ""
+        space = " empty" if self.is_space() else ""
         content = "content=" + self.content if self.content else ''
-        res = f"{self.path}  BlockSent({content}id={self.id})"
+        res = f"{self.path}  BlockSent({content}id={self.id}){space}"
         for child in self.children:
             res += f"\n{child.repr_tree(verbose=verbose)}"
         return res
@@ -280,21 +282,39 @@ def pydantic_object_description(obj: BaseModel) -> "Block":
 #                 for example in examples:                    
 #                     exs /= pydantic_object_description(example)
 #     return b
+
+# def pydantic_class_description(name: str, cls: Type[BaseModel]) -> "Block":
+#     tool_name = camel_to_snake(cls.__name__)
+#     with Block(f"{name}: {tool_name}", style="md", tags=[tool_name]) as b:
+#         with b("tool", tags=["tool_name"], style="xml-def") as tn:
+#             tn.field("name", tool_name)
+#         if not cls.__doc__:
+#             raise ValueError(f"description is required for Tool {cls.__name__}")
+#         b /= cls.__doc__
+#         with b("Argument tags", style="md") as args:
+#             for field_name, field_info in cls.model_fields.items():
+#                 if not field_info.description:
+#                     raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
+#                 with args(field_name, style="xml-def", tags=["field_name", field_name]) as bf:
+#                     bf /= "description: ", field_info.description
+#                     bf /= "type: ", field_info.annotation.__name__            
+#     return b
+
+
+
 def pydantic_class_description(name: str, cls: Type[BaseModel]) -> "Block":
     tool_name = camel_to_snake(cls.__name__)
-    with Block(f"{name}: {tool_name}", style="md", tags=[tool_name]) as b:
-        with b("tool", tags=["tool_name"], style="xml-def") as tn:
-            tn.field("name", tool_name)
+    with BlockSchema("tool", tags=[tool_name]) as b:
+        b.field("name", tool_name)
         if not cls.__doc__:
             raise ValueError(f"description is required for Tool {cls.__name__}")
         b /= cls.__doc__
-        with b("Argument tags", style="md") as args:
-            for field_name, field_info in cls.model_fields.items():
-                if not field_info.description:
-                    raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
-                with args(field_name, style="xml-def", tags=["field_name", field_name]) as bf:
-                    bf /= "description: ", field_info.description
-                    bf /= "type: ", field_info.annotation.__name__            
+        
+        for field_name, field_info in cls.model_fields.items():
+            if not field_info.description:
+                raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
+            with b.view(field_name, type=field_info.annotation, tags=["field_name", field_name]) as bf:
+                bf /= field_info.description
     return b
 
 
@@ -337,7 +357,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "attrs",
         "postfix",
         "prefix",
-        "artifact_id"
+        "artifact_id",
+        "schema"
     ]
     
     def __init__(
@@ -355,6 +376,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         parent: "Block | None" = None,
         artifact_id: int | None = None,
         is_wrapper: bool = False,
+        schema: "BlockSchema | None" = None,
     ):
         styles = styles or parse_style(style)
         super().__init__(
@@ -384,7 +406,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         # else:
         #     self.content = BlockSent(parent=self)
         #     self.content.append(content)
-        
+        self.schema = schema
     @property
     def tag(self):
         """
@@ -856,6 +878,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
             parent=self.parent if copy_parent else None,
         )
         
+    def is_space(self) -> bool:
+        return self.content.is_space() and all(c.is_space() for c in self.children)
         
     def strip(self) -> "Block":
         self.content = self.content.strip()
@@ -959,10 +983,11 @@ class Block(BlockSequence[BlockSent, "Block"]):
         tags = ','.join(self.tags) if self.tags else ''
         tags = f"[{tags}] " if tags else ''
         role = f" role={self.role} " if self.role else ''
+        space = " empty" if self.is_space() else ""
         styles = "styles=[" + ','.join(self.styles) + "] " if self.styles else ''
         # prefix = " prefix='" + self.prefix.replace("\n", "\\n") + "'" if self.prefix is not None else ""
         # postfix = " postfix='" + self.postfix.replace("\n", "\\n") + "'"if self.postfix is not None else ""
-        res = f"{self.path}  Block({tags}{role}{styles}id={self.id})"
+        res = f"{self.path}  Block({tags}{role}{styles}id={self.id}){space}"
         if self.content and verbose:
             # res += f"\ncontent-{self.content.repr_tree()}"
             res += f"\n{self.content.repr_tree()}"
@@ -1194,7 +1219,8 @@ class BlockSchema(Block):
                 # role=self.role,
                 prefix=self.prefix,
                 postfix=self.postfix,
-                id=self.id,                        
+                id=self.id,
+                schema=self,
             )
         if attrs:
             for k, v in attrs.items():
@@ -1266,8 +1292,9 @@ class BlockSchema(Block):
     def repr_tree(self, verbose: bool = False):
         tags = ','.join(self.tags) if self.tags else ''
         tags = f"[{tags}] " if tags else ''
+        space = " empty" if self.is_space() else ""
         role = f"role={self.role} " if self.role else ''
-        res = f"{self.path}  BlockSchema({tags}id={self.id}, type={self.type})"
+        res = f"{self.path}  BlockSchema({tags}id={self.id}, type={self.type}){space}"
         for child in self.children:
             res += f"\n{child.repr_tree(verbose=verbose)}"
         return res
