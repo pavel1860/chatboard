@@ -302,11 +302,11 @@ def pydantic_object_description(name: str, obj: BaseModel) -> "Block":
 
 
 
-def pydantic_class_description(name: str, cls: Type[BaseModel], key_field: str, key_type: Type) -> "Block":
+def pydantic_class_description(name: str, cls: Type[BaseModel], key_field: str, key_type: Type, class_model: Type[BaseModel] | None = None) -> "BlockSchema":
     if key_field is None:
         raise ValueError("key_field is required")
     tool_name = camel_to_snake(cls.__name__)
-    with BlockSchema(name, tags=[tool_name], style="xml") as b:
+    with BlockSchema(name, type=class_model, tags=[tool_name], style="xml") as b:
         b.field(key_field, tool_name, type=key_type)
         if not cls.__doc__:
             raise ValueError(f"description is required for Tool {cls.__name__}")
@@ -363,6 +363,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "prefix",
         "artifact_id",
         "schema",
+        "model",
     ]
     
     def __init__(
@@ -411,6 +412,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
         #     self.content = BlockSent(parent=self)
         #     self.content.append(content)
         self.schema = schema
+        self.model = None
+        
     @property
     def tag(self):
         """
@@ -430,7 +433,15 @@ class Block(BlockSequence[BlockSent, "Block"]):
         return self.attrs.get(name).value
     
     
+    @property
+    def value(self) -> Any:
+        if self.schema is None:
+            raise ValueError("Schema is required")
+        return self.schema.parse(self)
+        
+            
     
+
     @property
     def subtree_size(self) -> int:
         total = len(self.children)
@@ -1077,6 +1088,10 @@ class Block(BlockSequence[BlockSent, "Block"]):
         from .renderers3 import render
         return render(self)
 
+    def render_children(self, verbose: bool = False) -> str:
+        from .renderers3 import render
+        return render(self, children_only=True)
+
     def print(self, verbose: bool = False):
         print(self.render(verbose=verbose))
         
@@ -1116,6 +1131,23 @@ TYPE_REGISTRY = {
     "list": list,
     "dict": dict,
 }
+
+
+def parse_content(content: str, type: Type) -> Any:
+    if type == int:
+        return int(content)
+    elif type == float:
+        return float(content)
+    elif type == bool:
+        return bool(content)
+    elif type == str:
+        return content
+    elif type == list:
+        return content.split(",")
+    elif type == dict:
+        return json.loads(content)
+    else:
+        raise ValueError(f"Invalid type: {type}")
 
 REVERSE_TYPE_REGISTRY = {v: k for k, v in TYPE_REGISTRY.items()}
 
@@ -1290,6 +1322,31 @@ class BlockSchema(Block):
         if value is not None:
             blk /= value
         return blk
+    
+    
+    def parse(self, block: Block):        
+        if self.type is not None:
+            if issubclass(self.type, BaseModel):
+                root_path = block.tag_path
+                def set_dict_attr(target: dict, path: list[str], value: Any):
+                    curr = target
+                    for p in path[:-1]:
+                        curr = curr[p]
+                    curr[path[-1]] = value
+                    return curr
+
+                target = {}  
+                for f in block.traverse():
+                    if root_path == f.tag_path or f.schema is None:
+                        continue
+                    set_dict_attr(target, f.tag_path[len(root_path):], f.value)
+                return self.type(**target)
+
+            else:
+                content = block.render_children()
+                content = content.strip()
+                return parse_content(content, self.type)
+        raise ValueError(f"Invalid type: {self.type}")
         
     def copy(
         self,
@@ -1616,7 +1673,7 @@ class BlockListSchema(BlockSchema):
         if isinstance(target, type) and issubclass(target, BaseModel):
             if self.key is None:
                 raise ValueError("key_field is required")
-            block = pydantic_class_description(self.name, target, self.key, self.attrs[self.key].type)
+            block = pydantic_class_description(self.name, target, self.key, self.attrs[self.key].type, class_model=target)
             self.list_models[target.__name__] = target
         elif isinstance(target, BlockSchema):
             block = target

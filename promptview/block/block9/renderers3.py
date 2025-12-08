@@ -399,16 +399,17 @@ def build_fiber(ctx: RenderContext, block: Block) -> BlockFiber:
     return fiber
 
 
-def render_fiber(fiber: BlockFiber) -> str:
+def render_fiber(fiber: BlockFiber, children_only: bool = False) -> str:
     prompt = ""
-    prompt += fiber.line_start + fiber.block_prefix + fiber.prefix + fiber.content + fiber.postfix + fiber.line_end + fiber.content_separator
+    if not children_only:
+        prompt += fiber.line_start + fiber.block_prefix + fiber.prefix + fiber.content + fiber.postfix + fiber.line_end + fiber.content_separator
     for child in fiber.children:
         cld_prompt = render_fiber(child)
         cld_prompt += fiber.children_separator
         if fiber.children_tab:
             cld_prompt = textwrap.indent(cld_prompt, fiber.children_tab)
         prompt += cld_prompt
-    if fiber.block_postfix:
+    if not children_only and fiber.block_postfix:
         tabs = ""
         if fiber.line_start:
             tabs = " " * (len(fiber.line_start))
@@ -433,7 +434,7 @@ def build_render_context(block: Block) -> RenderContext:
         parent_ctx=None
     )
 
-def render(block: Block) -> str:
+def render(block: Block, children_only: bool = False) -> str:
     ctx = build_render_context(block)
     fiber = build_fiber(ctx, block)
-    return render_fiber(fiber)
+    return render_fiber(fiber, children_only=children_only)

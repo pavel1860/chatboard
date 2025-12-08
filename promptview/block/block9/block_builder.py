@@ -93,6 +93,16 @@ class BlockBuildContext:
             raise ValueError(f"Schema {view_name} is not a schema")
         return schema
     
+    
+    def commit(self, postfix: str | None = None):
+        if not self._did_initialize:
+            raise ValueError("Block not initialized")
+        if self.block is None:
+            raise ValueError("Block is not initialized")
+        if postfix is not None:
+            self.block.postfix = BlockSent(postfix)
+        self._did_finish = True
+        return self.block
 
     
     
@@ -202,9 +212,6 @@ class SchemaBuildContext:
     #     return [block]
     
     def inst_view(self, view_name: str, value, attrs: dict[str, str] | None = None) -> list[Block]:
-        from .block import BlockListSchema
-        # view_schema = self.schema.get_one(label_path)
-        print(value)
         bld_ctx = self._get_schema_build_ctx(view_name, attrs) 
         if bld_ctx.is_list:
             if not bld_ctx._did_initialize:
@@ -242,7 +249,6 @@ class SchemaBuildContext:
         from pydantic import BaseModel
         from ...utils.string_utils import camel_to_snake
         for key, value, path, label_path in traverse_dict(payload):
-            print(key)
             self.inst_view(key, key)
             if self._top().is_list:
                 if isinstance(value, BaseModel):
@@ -287,8 +293,7 @@ class SchemaBuildContext:
                 if not target_inst:
                     view_schema = self.schema.get_one(curr_path)
                     target_inst = view_schema.instantiate(value if is_last else None)    
-                    self.stack[-1].append(target_inst)
-                    # print("build block for", curr_path)               
+                    self.stack[-1].append(target_inst)           
                 self.stack.append(target_inst)
             self._reset_stack()
         return self.inst
