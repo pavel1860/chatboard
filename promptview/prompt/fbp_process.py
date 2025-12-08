@@ -2485,6 +2485,7 @@ class FlowRunner:
 class Parser(Process):
     def __init__(self, schema: "BlockSchema"):
         from xml.parsers import expat
+        from ..block.block9.block import BlockChunk
         super().__init__()
         self.schema = schema
         self.build_ctx = SchemaBuildContext(schema)
@@ -2499,12 +2500,19 @@ class Parser(Process):
         self.pending = None  # (event_type, event_data, start_byte)
         self.chunk_queue = []
         self._tag_path = []
+        self._has_synthetic_root_tag = False
+        if self.schema.is_wrapper:
+            self.feed(BlockChunk(content=f"<{self.schema.name}>"))
+            self._has_synthetic_root_tag = True
+        # self._root_tag_in_schema = not self.schema.is_wrapper
+        # self._synthetic_root_tag: str | None = "root" if self.schema.is_wrapper else None
         
     @property
     def result(self):
         return self.build_ctx.result
     
     def feed(self, chunk: "BlockChunk", isfinal=False):
+        # print(chunk.content)
         # data = chunk.content.encode() if isinstance(chunk.data, str) else chunk.data
         data = chunk.content.encode("utf-8")
         start = self.total_bytes
@@ -2527,6 +2535,9 @@ class Parser(Process):
         return len(self.chunk_queue) > 0
     
     def close(self):
+        from ..block.block9.block import BlockChunk
+        if self._has_synthetic_root_tag:
+            self.feed(BlockChunk(content=f"</{self.schema.name}>"))        
         self.parser.Parse(b'', True)
         # Flush any pending event
         self._flush_pending(self.total_bytes)

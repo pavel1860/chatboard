@@ -1,4 +1,5 @@
-from .block import Block, BlockSchema, BlockSent
+from .block import Block, BlockSchema, BlockSent, BlockListSchema
+from typing import Any
 
 
 
@@ -15,11 +16,92 @@ def traverse_dict(target, path: list[int]=[], label_path: list[str] = []):
 
 
 
+class BlockBuildContext:
+    
+    def __init__(self, schema: BlockSchema):
+        self.schema = schema
+        self.block = None
+        self.schema_stack = []
+        self._did_initialize = False
+        self._did_finish = False
+        
+        
+    @property
+    def is_list(self) -> bool:
+        return type(self.schema) is BlockListSchema
+    
+    @property
+    def did_finish(self) -> bool:
+        return self._did_finish
+        
+    def instantiate(
+        self, 
+        value: str | None = None, 
+        content: str | None = None,
+        attrs: dict[str, str] | None = None, 
+        ignore_style: bool = False,
+        ignore_tags: bool = False,
+    ):
+        if not self._did_initialize:
+            self.block = self.schema.instantiate(value=value, content=content, attrs=attrs, ignore_style=ignore_style, ignore_tags=ignore_tags)
+            self._did_initialize = True
+        return self.block
+    
+    
+    def instantiate_item(
+        self, 
+        value: str | None = None, 
+        content: str | None = None,
+        attrs: dict[str, str] | None = None, 
+        ignore_style: bool = False,
+        ignore_tags: bool = False,
+    ):
+        if not self._did_initialize:
+            raise ValueError("Block not initialized")
+        if self.block is None:
+            raise ValueError("Block is not initialized")
+        if type(self.schema) is not BlockListSchema:
+            raise ValueError("Schema is not a list")
+        self.block = self.schema.instantiate_item(value=value, content=content, attrs=attrs, ignore_style=ignore_style, ignore_tags=ignore_tags)
+        return self.block
+    
+    
+    def append(self, value: Any):
+        if not self._did_initialize:
+            raise ValueError("Block not initialized")
+        if self.block is None:
+            raise ValueError("Block is not initialized")
+        self.block.append(value)
+        return self.block
+    
+    def inline_append(self, value: Any):
+        if not self._did_initialize:
+            raise ValueError("Block not initialized")
+        if self.block is None:
+            raise ValueError("Block is not initialized")
+        if len(self.block) == 0:
+            self.block.append(Block())        
+        self.block.inline_append(value)
+        return self.block
+    
+    
+    def get_schema(self, view_name: str) -> BlockSchema:
+        schema = self.schema.get_one(view_name)
+        if schema is None:
+            raise ValueError(f"Schema {view_name} not found")
+        if not isinstance(schema, BlockSchema):
+            raise ValueError(f"Schema {view_name} is not a schema")
+        return schema
+    
+
+    
+    
+    
+
 class SchemaBuildContext:
     schema: BlockSchema
-    inst: Block | None
-    stack: list[Block]
-    schema_stack: list[BlockSchema]
+    inst: BlockBuildContext | None
+    stack: list[BlockBuildContext]
     _did_finish: bool
     
     
@@ -28,12 +110,11 @@ class SchemaBuildContext:
         # self.inst = Block(role=role, tags=tags or [])
         self.inst = None
         self.stack = []
-        self.schema_stack = []
         self._did_finish = False
         
     @property
     def result(self):
-        return self.inst
+        return self.inst.block
         
     def _reset_stack(self):
         self.stack = []
@@ -47,37 +128,46 @@ class SchemaBuildContext:
     def curr_path(self):
         return [b.tags[0] for b in self.stack]
     
-    def _push(self, schema: BlockSchema, block: Block):
+    def _push(self, bld_ctx: BlockBuildContext):
         if self.stack:
-            self.stack[-1].append(block)
+            self.stack[-1].append(bld_ctx.block)
         else:
-            self.inst = block
-        self.stack.append(block)
-        self.schema_stack.append(schema)
-        return block
+            self.inst = bld_ctx
+        self.stack.append(bld_ctx)
+        return bld_ctx
         
     def _pop(self):
         # while not self.schema_stack[-1] != self.stack[-1].schema:
             # self.schema_stack.pop()
-        return self.stack.pop(), self.schema_stack.pop()
+        return self.stack.pop()
     
+    def _top(self) -> BlockBuildContext:
+        if not self.stack:
+            raise ValueError("Stack is empty")
+        return self.stack[-1]
     
-    def _get_schema(self, view_name: str, attrs: dict[str, str] | None = None) -> BlockSchema:
+    def _get_schema_build_ctx(self, view_name: str, attrs: dict[str, str] | None = None) -> BlockBuildContext:
         from .block import BlockListSchema
-        if not self.schema_stack:
-            return self.schema.get_one(view_name)
-        # if isinstance(self.schema_stack[-1], BlockListSchema):
-        #     if not attrs:
-        #         raise ValueError("Attribute 'name' is required for list item")
-        #     list_tag = attrs["name"]
-        #     list_view = self.schema_stack[-1].get(list_tag)
-        #     if list_view is None:
-        #         raise ValueError(f"List view {list_tag} not found")
-        #     # if not isinstance(list_view, Block):
-        #     #     raise ValueError(f"List view {list_tag} is not a block")
-        #     return list_view.get_one(view_name)
+        if not self.stack:
+            schema = self.schema.get_one(view_name)
+            if schema is None:
+                raise ValueError(f"Schema {view_name} not found")
+            if not isinstance(schema, BlockSchema):
+                raise ValueError(f"Schema {view_name} is not a schema")
+            return BlockBuildContext(schema)
             
-        return self.schema_stack[-1].get(view_name)
+        schema = self.stack[-1].get_schema(view_name)
+        return BlockBuildContext(schema)
+    
+    
+    def _get_list_schema_build_ctx(self, attrs: dict[str, str]) -> BlockBuildContext:
+        if not self.stack:
+            raise ValueError("Stack is empty")
+        bld_ctx = self.stack[-1]
+        if not type(bld_ctx.schema) is BlockListSchema or bld_ctx.schema.key is None:
+            raise ValueError("Schema is not a list or key is not set")
+        schema = bld_ctx.get_schema(attrs[bld_ctx.schema.key])
+        return BlockBuildContext(schema)
     
     # def inst_view2(self, label_path, value) -> list[Block]:
     #     curr_path = []
@@ -96,36 +186,73 @@ class SchemaBuildContext:
     #             self.stack.append(target_inst)
     #     return instances
     
+    # def inst_view(self, view_name: str, value, attrs: dict[str, str] | None = None) -> list[Block]:
+    #     from .block import BlockListSchema
+    #     # view_schema = self.schema.get_one(label_path)
+    #     view_schema = self._get_schema(view_name, attrs)
+    #     block = view_schema.instantiate(content=value, attrs=attrs, ignore_style=True)
+    #     self._push(view_schema, block)
+    #     if isinstance(view_schema, BlockListSchema):
+    #         if not attrs:
+    #             raise ValueError("Attribute 'name' is required for list item")
+    #         item_schema = view_schema.get(attrs["name"])
+    #         if item_schema is None:
+    #             raise ValueError(f"List view '{attrs["name"]}' not found")
+    #         self.schema_stack.append(item_schema)
+    #     return [block]
+    
     def inst_view(self, view_name: str, value, attrs: dict[str, str] | None = None) -> list[Block]:
         from .block import BlockListSchema
         # view_schema = self.schema.get_one(label_path)
-        view_schema = self._get_schema(view_name, attrs)
-        block = view_schema.instantiate(content=value, attrs=attrs, ignore_style=True)
-        self._push(view_schema, block)
-        if isinstance(view_schema, BlockListSchema):
+        print(value)
+        bld_ctx = self._get_schema_build_ctx(view_name, attrs) 
+        if bld_ctx.is_list:
+            if not bld_ctx._did_initialize:
+                block = bld_ctx.instantiate(None)
+                self._push(bld_ctx)  
+            
             if not attrs:
                 raise ValueError("Attribute 'name' is required for list item")
-            item_schema = view_schema.get(attrs["name"])
-            if item_schema is None:
-                raise ValueError(f"List view '{attrs["name"]}' not found")
-            self.schema_stack.append(item_schema)
+            item_bld_ctx = self._get_list_schema_build_ctx(attrs)
+            block = item_bld_ctx.instantiate(content=value, attrs=attrs, ignore_style=True)
+            self._push(item_bld_ctx)        
+        else:
+            block = bld_ctx.instantiate(content=value, attrs=attrs, ignore_style=True)
+            self._push(bld_ctx)
+        if block is None:
+            raise ValueError("Block is not initialized")
         return [block]
             
     def append(self, value):
-        if len(self.stack[-1]) == 0:
-            self.stack[-1].append(Block())
+        if not self.stack:
+            raise ValueError("Stack is empty")
         return self.stack[-1].inline_append(value)
             
     def commit_view(self, value = None):
         
-        view, schema = self._pop()
+        bld_ctx = self._pop()
         if value is not None:
-            view.postfix = BlockSent(value)        
+            bld_ctx.block.postfix = BlockSent(value)        
+        bld_ctx._did_finish = True
         # view = view.strip()
-        return view
-    
+        return bld_ctx.block
     
     def inst_dict(self, payload):
+        from .block import BlockListSchema
+        from pydantic import BaseModel
+        from ...utils.string_utils import camel_to_snake
+        for key, value, path, label_path in traverse_dict(payload):
+            print(key)
+            self.inst_view(key, key)
+            if self._top().is_list:
+                if isinstance(value, BaseModel):
+                    pass
+            if value is not None:
+                self.stack[-1].append(value)
+            self.commit_view()
+        return self.inst
+    
+    def inst_dict3(self, payload):
         from .block import BlockListSchema
         for key, value, path, label_path in traverse_dict(payload):
             view_schema = self.schema.get_one(label_path)

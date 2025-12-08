@@ -302,12 +302,12 @@ def pydantic_object_description(name: str, obj: BaseModel) -> "Block":
 
 
 
-def pydantic_class_description(name: str, cls: Type[BaseModel], key_field: str) -> "Block":
+def pydantic_class_description(name: str, cls: Type[BaseModel], key_field: str, key_type: Type) -> "Block":
     if key_field is None:
         raise ValueError("key_field is required")
     tool_name = camel_to_snake(cls.__name__)
     with BlockSchema(name, tags=[tool_name], style="xml") as b:
-        b.field(key_field, tool_name)
+        b.field(key_field, tool_name, type=key_type)
         if not cls.__doc__:
             raise ValueError(f"description is required for Tool {cls.__name__}")
         b(cls.__doc__, tags=["description"])
@@ -362,7 +362,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "postfix",
         "prefix",
         "artifact_id",
-        "schema"
+        "schema",
     ]
     
     def __init__(
@@ -1260,12 +1260,14 @@ class BlockSchema(Block):
         attrs: dict[str, str] | None = None,
         ignore_tags = False, 
         ignore_style = False, 
-        is_wrapper = False,        
+        is_wrapper: bool | None = None,        
     ) -> "Block":
         # if self.type and not type(value) is self.type:
             # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
+        is_wrapper = is_wrapper if is_wrapper is not None else self.is_wrapper
+        content = content or self.name if not is_wrapper else None
         blk = Block(
-                content or self.name,
+                content,
                 # self.name,
                 styles=self.styles if not ignore_style else None,
                 tags=self.tags if not ignore_tags else None,
@@ -1274,7 +1276,8 @@ class BlockSchema(Block):
                 postfix=self.postfix,
                 id=self.id,
                 schema=self,
-                is_wrapper=is_wrapper or self.is_wrapper,
+                is_wrapper=is_wrapper,
+                # is_wrapper=is_wrapper,
             )
         if attrs:
             for k, v in attrs.items():
@@ -1613,7 +1616,7 @@ class BlockListSchema(BlockSchema):
         if isinstance(target, type) and issubclass(target, BaseModel):
             if self.key is None:
                 raise ValueError("key_field is required")
-            block = pydantic_class_description(self.name, target, self.key)
+            block = pydantic_class_description(self.name, target, self.key, self.attrs[self.key].type)
             self.list_models[target.__name__] = target
         elif isinstance(target, BlockSchema):
             block = target
@@ -1626,33 +1629,28 @@ class BlockListSchema(BlockSchema):
     
     
     
-    def instantiate_item(self, value = None, content = None, ignore_tags = False, ignore_style = False):
-        # if self.type and not type(value) is self.type:
-            # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
+    def instantiate_item(
+        self, 
+        value = None, 
+        content = None, 
+        attrs: dict[str, str] | None = None,
+        ignore_tags = False, 
+        ignore_style = False, 
+    ):
         if isinstance(value, BaseModel):
             if not value.__class__.__name__ in self.list_models:
                 raise ValueError(f"Model {value.__class__.__name__} is not registered")
             blk = pydantic_object_description(self.name, value)
             return blk
-        # elif isinstance(value, list):
-        #     for item in value:
-        #         self.instantiate(item)
-        #     return self
         else:
-        # else:
-        #     raise ValueError(f"Invalid value type: {type(value)}")
-            blk = Block(
-                    value or self.name,
-                    # self.name,
-                    styles=self.styles if not ignore_style else None,
-                    tags=self.tags if not ignore_tags else None,
-                    # role=self.role,
-                    prefix=self.prefix,
-                    postfix=self.postfix,
-                    id=self.id,                        
-                )
-            # if value is not None:
-                # blk.content.extend(value)
+            blk = super().instantiate(
+                value, 
+                content, 
+                attrs=attrs, 
+                ignore_tags=ignore_tags, 
+                ignore_style=ignore_style,
+                is_wrapper=False,
+            )
             return blk
 
     def copy(
@@ -1674,6 +1672,7 @@ class BlockListSchema(BlockSchema):
             parent=self.parent if copy_parent else None,
             is_wrapper=self.is_wrapper if not overrides or "is_wrapper" not in overrides else overrides["is_wrapper"],
         )
+        blk.key = self.key if not overrides or "key" not in overrides else overrides["key"]
         blk.content = self.content.copy() if not overrides or "content" not in overrides else overrides["content"]
         blk.children = [c.copy() for c in self.children] if not overrides or "children" not in overrides else overrides["children"]
         blk.list_schemas = [c.copy() for c in self.list_schemas] if not overrides or "list_schemas" not in overrides else overrides["list_schemas"]
