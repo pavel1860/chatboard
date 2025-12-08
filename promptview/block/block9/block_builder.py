@@ -16,9 +16,14 @@ def traverse_dict(target, path: list[int]=[], label_path: list[str] = []):
 
 
 class SchemaBuildContext:
+    schema: BlockSchema
+    inst: Block | None
+    stack: list[Block]
+    schema_stack: list[BlockSchema]
+    _did_finish: bool
     
     
-    def __init__(self, schema, role="assistant", tags: list[str] | None = None):
+    def __init__(self, schema: BlockSchema | Block, role="assistant", tags: list[str] | None = None):
         self.schema  = schema.copy_kind(BlockSchema)
         # self.inst = Block(role=role, tags=tags or [])
         self.inst = None
@@ -34,10 +39,10 @@ class SchemaBuildContext:
         self.stack = []
         
         
-    def _build_view_inst(self, path, value):
-        view_schema = self.schema.get_one(path)
-        block = view_schema.instantiate(value)
-        return block
+    # def _build_view_inst(self, path, value):
+    #     view_schema = self.schema.get_one(path)
+    #     block = view_schema.instantiate(value)
+    #     return block
     
     def curr_path(self):
         return [b.tags[0] for b in self.stack]
@@ -122,14 +127,14 @@ class SchemaBuildContext:
     
     def inst_dict(self, payload):
         from .block import BlockListSchema
-        for key, value, path, label_path in traverse_dict(payload):            
+        for key, value, path, label_path in traverse_dict(payload):
             view_schema = self.schema.get_one(label_path)
             if isinstance(view_schema, BlockListSchema):
                 if self.inst is None:
-                    raise ValueError("inst is not set")                 
+                    raise ValueError("inst is not set")
                 view_list = self.inst.get_one_or_none(label_path)
                 if view_list is None:
-                    view_list = view_schema.instantiate()
+                    view_list = view_schema.instantiate(is_wrapper=True)
                     parent = self.inst.get_one(label_path[:-1])
                     parent.append(view_list)
                 block = view_schema.instantiate_item(value)

@@ -333,8 +333,7 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
             else:
                 break
         return start_index, end_index
-        
-        
+    
     
     def __iter__(self):
         return iter(self.children)

@@ -2,7 +2,7 @@ from ast import TypeVar
 import copy
 import json
 import textwrap
-from typing import Any, Callable, Generic, List, Literal, Self, Type
+from typing import Any, Callable, Generator, Generic, List, Literal, Self, Type
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
 from ...utils.model_utils import is_list_type
@@ -249,8 +249,8 @@ BlockContent = BlockSent | BlockChunk | BaseContent
 
 
 
-def pydantic_object_description(obj: BaseModel) -> "Block":
-    with Block("action", style="xml", tags=["tool", camel_to_snake(obj.__class__.__name__)]) as b:
+def pydantic_object_description(name: str, obj: BaseModel) -> "Block":
+    with Block(name, style="xml", tags=["tool", camel_to_snake(obj.__class__.__name__)]) as b:
         b.field("name", camel_to_snake(obj.__class__.__name__))
         # b.field("name", description=camel_to_snake(obj.__class__.__name__))
         # with b("name", style="xml", tags=["tool_name"]) as tn:
@@ -302,18 +302,20 @@ def pydantic_object_description(obj: BaseModel) -> "Block":
 
 
 
-def pydantic_class_description(name: str, cls: Type[BaseModel]) -> "Block":
+def pydantic_class_description(name: str, cls: Type[BaseModel], key_field: str) -> "Block":
+    if key_field is None:
+        raise ValueError("key_field is required")
     tool_name = camel_to_snake(cls.__name__)
-    with BlockSchema("tool", tags=[tool_name]) as b:
-        b.field("name", tool_name)
+    with BlockSchema(name, tags=[tool_name], style="xml") as b:
+        b.field(key_field, tool_name)
         if not cls.__doc__:
             raise ValueError(f"description is required for Tool {cls.__name__}")
-        b /= cls.__doc__
+        b(cls.__doc__, tags=["description"])
         
         for field_name, field_info in cls.model_fields.items():
             if not field_info.description:
                 raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
-            with b.view(field_name, type=field_info.annotation, tags=["field_name", field_name]) as bf:
+            with b.view(field_name, type=field_info.annotation, tags=[field_name, "field"]) as bf:
                 bf /= field_info.description
     return b
 
@@ -338,6 +340,8 @@ def _copy_kind_aux[KIND](
     # if type(target) is kind or (include_subkinds and isinstance(target, kind)):
     if isinstance(target, kind):
         block_copy = target.copy(overrides={"children": children, "parent": None})
+        for child in children:
+            child.parent = block_copy
         # for c in children:
         #     block_copy.append(c)
         return block_copy    
@@ -417,8 +421,14 @@ class Block(BlockSequence[BlockSent, "Block"]):
         return None
     
     
+    @property
+    def tag_path(self) -> list[str]:
+        return list(reversed([b.tags[0] for b in self.traverse_path() if b.tags]))
+    
+    
     def get_field(self, name: str) -> Any:
         return self.attrs.get(name).value
+    
     
     
     @property
@@ -516,7 +526,15 @@ class Block(BlockSequence[BlockSent, "Block"]):
 
     
     
-    def view(self, name: str, type: Type | None = None, attrs: dict[str, str] | None = None, tags: list[str] | None = None) -> "BlockSchema":
+    def view(
+        self, 
+        name: str, 
+        type: Type | None = None, 
+        attrs: dict[str, str] | None = None, 
+        tags: list[str] | None = None, 
+        style: str | None = None, 
+        is_wrapper: bool = False
+    ) -> "BlockSchema":
         # block = FieldBlock(name, type, attrs=attrs)
         block = BlockSchema(
             name,
@@ -525,7 +543,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
             role=self.role,
             parent=self.parent,
             tags=tags,
-            styles=["xml"],
+            styles=["xml"] if style is None else parse_style(style),
+            is_wrapper=is_wrapper,
             # styles=["xsd"],
         )
         self.append(block)
@@ -553,31 +572,31 @@ class Block(BlockSequence[BlockSent, "Block"]):
         self.append(block)
         return block
     
-    def schema_view(self, target: BaseModel, tags: list[str] | None = None) -> "BlockSchema":
+    # def schema_view(self, target: BaseModel, tags: list[str] | None = None) -> "BlockSchema":
         
-        block = BlockSchema(
-            name=camel_to_snake(target.__class__.__name__),
-            type=target.__class__,
-            # attrs=attrs,
-            role=self.role,
-            parent=self.parent,
-            tags=[camel_to_snake(target.__class__.__name__)] + (tags or []),
-            is_wrapper=True,
-            # styles=["xml"],
-        )
-        self.append(block)
-        block.describe(target)
-        return block
+    #     block = BlockSchema(
+    #         name=camel_to_snake(target.__class__.__name__),
+    #         type=target.__class__,
+    #         # attrs=attrs,
+    #         role=self.role,
+    #         parent=self.parent,
+    #         tags=[camel_to_snake(target.__class__.__name__)] + (tags or []),
+    #         is_wrapper=True,
+    #         # styles=["xml"],
+    #     )
+    #     self.append(block)
+    #     block.describe(target)
+    #     return block
     
-    def describe(self, target: BaseModel | Type[BaseModel], examples: list[BaseModel] | None = None) -> "Block":
-        if isinstance(target, BaseModel):
-            block = pydantic_object_description(target)
-        elif isinstance(target, type) and issubclass(target, BaseModel):
-            block = pydantic_class_description(target, examples)
-        else:
-            raise ValueError(f"Invalid target type: {type(target)}")
-        self.append(block)
-        return block
+    # def describe(self, target: BaseModel | Type[BaseModel], examples: list[BaseModel] | None = None) -> "Block":
+    #     if isinstance(target, BaseModel):
+    #         block = pydantic_object_description(target)
+    #     elif isinstance(target, type) and issubclass(target, BaseModel):
+    #         block = pydantic_class_description(target, examples)
+    #     else:
+    #         raise ValueError(f"Invalid target type: {type(target)}")
+    #     self.append(block)
+    #     return block
     
     
     def example(self, value: dict, schema: "BlockSchema | None" = None, style: str | None = "md") -> "Block":
@@ -839,19 +858,46 @@ class Block(BlockSequence[BlockSent, "Block"]):
         tags: list[str] | None = None,
         style: str | None = None,
         attrs: "dict[str, AttrBlock] | None" = None,
-    ) -> "Block":        
-        block = Block(
-            content,
-            role=role,
-            tags=tags,            
-            parent=self,            
-            style=style,
-            attrs=attrs,
-        )      
+        is_wrapper: bool = False,
+    ) -> "Block":  
+        if isinstance(content, Block):
+            override = {}
+            if role is not None:
+                override["role"] = role
+            if tags is not None:
+                override["tags"] = tags
+            if style is not None:
+                override["styles"] = parse_style(style)
+            if attrs is not None:
+                override["attrs"] = attrs
+            block = content.copy(overrides=override)
+        else:
+            block = Block(
+                content,
+                role=role,
+                tags=tags,            
+                parent=self,            
+                style=style,
+                attrs=attrs,
+                is_wrapper=is_wrapper,
+            )      
         self.append_child(block)
         return block
     
-
+    
+    def iter_kind(self, kinds: set[Type[BaseBlock]]) -> Generator[BaseBlock, None, None]:
+        if self.__class__ in kinds:
+            yield self
+        for child in self.children:
+            if isinstance(child, Block):
+                yield from child.iter_kind(kinds)
+            else:
+                yield child
+    
+    def iter_schema(self):
+        schema = self.copy_kind(BlockSchema)
+        return schema.iter_kind(set([BlockSchema, BlockListSchema]))
+        
     
     def _process_tuple_content(self, other: tuple[BaseContent, ...]):
         block = BlockSent()
@@ -876,6 +922,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
             styles=self.styles if not overrides or "styles" not in overrides else overrides["styles"],
             id=self.id if copy_id else None,
             parent=self.parent if copy_parent else None,
+            is_wrapper=self.is_wrapper if not overrides or "is_wrapper" not in overrides else overrides["is_wrapper"],
         )
         
     def is_space(self) -> bool:
@@ -977,7 +1024,8 @@ class Block(BlockSequence[BlockSent, "Block"]):
         content = self.content.render() if self.content else ''
         tags = ','.join(self.tags) if self.tags else ''
         tags = f"[{tags}] " if tags else ''
-        return f"{self.__class__.__name__}({tags}content={content}, children={self.children})"
+        styles = "styles=[" + ','.join(self.styles) + "] " if self.styles else ''
+        return f"{self.__class__.__name__}({tags}{styles}content={content}, children={self.children})"
 
     def repr_tree(self, verbose: bool = False):
         tags = ','.join(self.tags) if self.tags else ''
@@ -1159,6 +1207,7 @@ class BlockSchema(Block):
         self, 
         name: str,
         type: Type | None = None,
+        children: list["Block"] | None = None,
         attrs: dict[str, AttrBlock] | None = None,        
         role: str | None = None,
         tags: list[str] | None = None,
@@ -1170,10 +1219,13 @@ class BlockSchema(Block):
         postfix: BaseContent | None = None,
         is_wrapper: bool = False,
     ):
-        tags = tags or []
+        tags = tags or []        
         if name not in tags:
             tags.insert(0, name)
-        super().__init__(name if not is_wrapper else None, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
+        styles = styles or parse_style(style)
+        if not styles:
+            styles = ["xml"]
+        super().__init__(name if not is_wrapper else None, children=children, tags=tags, role=role or"view", styles=styles, parent=parent, attrs=attrs, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
         # if not type:
             # raise ValueError("type is required")
         self.type = type
@@ -1207,7 +1259,8 @@ class BlockSchema(Block):
         content = None, 
         attrs: dict[str, str] | None = None,
         ignore_tags = False, 
-        ignore_style = False,         
+        ignore_style = False, 
+        is_wrapper = False,        
     ) -> "Block":
         # if self.type and not type(value) is self.type:
             # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
@@ -1221,6 +1274,7 @@ class BlockSchema(Block):
                 postfix=self.postfix,
                 id=self.id,
                 schema=self,
+                is_wrapper=is_wrapper or self.is_wrapper,
             )
         if attrs:
             for k, v in attrs.items():
@@ -1251,6 +1305,7 @@ class BlockSchema(Block):
             postfix=self.postfix if not overrides or "postfix" not in overrides else overrides["postfix"],
             id=self.id if copy_id else None,
             parent=self.parent if copy_parent else None,
+            is_wrapper=self.is_wrapper if not overrides or "is_wrapper" not in overrides else overrides["is_wrapper"],
         )
         blk.content = self.content.copy() if not overrides or "content" not in overrides else overrides["content"]
         blk.children = [c.copy() for c in self.children] if not overrides or "children" not in overrides else overrides["children"]
@@ -1258,14 +1313,13 @@ class BlockSchema(Block):
         
         return blk
     
-    
-    
-    def copy_kind(self, kind: "Type[Block]") -> "BlockSchema":
+    def copy_kind(self, kind: "Type[Block] | Type[BlockSchema]") -> "BlockSchema":
         res = _copy_kind_aux(self, kind)
         if type(res) is list:
             return BlockSchema(
                 "wrapper",
-                children=res
+                children=res,
+                is_wrapper=True,
             )
         return res
     
@@ -1519,7 +1573,8 @@ class BlockListSchema(BlockSchema):
     
     __slots__ = [
         "list_schemas",
-        "list_models"
+        "list_models",
+        "key",
     ]
     
     
@@ -1541,7 +1596,12 @@ class BlockListSchema(BlockSchema):
         super().__init__(name, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
         self.list_schemas = []
         self.list_models = {}
-
+        self.key = None
+        
+        
+    def key_field(self, name: str, type: Type | None = None, description: str | None = None):
+        super().field(name, type=type, description=description)
+        self.key = name
     
     
     
@@ -1551,7 +1611,9 @@ class BlockListSchema(BlockSchema):
         # if isinstance(target, BaseModel):
             # block = pydantic_object_description(target)
         if isinstance(target, type) and issubclass(target, BaseModel):
-            block = pydantic_class_description(self.name, target)
+            if self.key is None:
+                raise ValueError("key_field is required")
+            block = pydantic_class_description(self.name, target, self.key)
             self.list_models[target.__name__] = target
         elif isinstance(target, BlockSchema):
             block = target
@@ -1570,7 +1632,7 @@ class BlockListSchema(BlockSchema):
         if isinstance(value, BaseModel):
             if not value.__class__.__name__ in self.list_models:
                 raise ValueError(f"Model {value.__class__.__name__} is not registered")
-            blk = pydantic_object_description(value)
+            blk = pydantic_object_description(self.name, value)
             return blk
         # elif isinstance(value, list):
         #     for item in value:
@@ -1610,6 +1672,7 @@ class BlockListSchema(BlockSchema):
             postfix=self.postfix if not overrides or "postfix" not in overrides else overrides["postfix"],
             id=self.id if copy_id else None,
             parent=self.parent if copy_parent else None,
+            is_wrapper=self.is_wrapper if not overrides or "is_wrapper" not in overrides else overrides["is_wrapper"],
         )
         blk.content = self.content.copy() if not overrides or "content" not in overrides else overrides["content"]
         blk.children = [c.copy() for c in self.children] if not overrides or "children" not in overrides else overrides["children"]

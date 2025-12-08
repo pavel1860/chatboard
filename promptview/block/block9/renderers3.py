@@ -167,6 +167,18 @@ class MarkdownRenderer(BaseRenderer):
         return fiber
     
     
+class BannerRenderer(BaseRenderer):
+    styles = ["banner"]
+    target = {"block"}
+    
+    def __call__(self, fiber: BlockFiber, block: Block, ctx: RenderContext):
+        banner = "==================================================="
+        fiber.prefix = banner + "\n"
+        # fiber.content_separator = "\n"
+        fiber.postfix = "\n" + banner + "\n"
+        return fiber
+    
+    
 class XMLRenderer(BaseRenderer):
     styles = ["xml"]
     target = {"block"}
