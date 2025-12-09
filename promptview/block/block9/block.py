@@ -1664,9 +1664,6 @@ class BlockListSchema(BlockSchema):
         self.key = name
     
     
-    
-    
-    
     def register(self, target: BlockSchema | Type[BaseModel]):
         # if isinstance(target, BaseModel):
             # block = pydantic_object_description(target)
@@ -1682,8 +1679,6 @@ class BlockListSchema(BlockSchema):
         self.list_schemas.append(block)
         self.append(block)
         return block
-    
-    
     
     
     def instantiate_item(

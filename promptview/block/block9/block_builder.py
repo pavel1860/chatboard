@@ -1,4 +1,5 @@
-from .block import Block, BlockSchema, BlockSent, BlockListSchema
+from .block import Block, BlockSchema, BlockSent, BlockListSchema, BlockChunk
+from .base_blocks import BaseContent
 from typing import Any
 
 
@@ -36,7 +37,7 @@ class BlockBuildContext:
         
     def instantiate(
         self, 
-        value: str | None = None, 
+        value: str | list[BlockChunk] | None = None, 
         content: str | None = None,
         attrs: dict[str, str] | None = None, 
         ignore_style: bool = False,
@@ -50,7 +51,7 @@ class BlockBuildContext:
     
     def instantiate_item(
         self, 
-        value: str | None = None, 
+        value: str | list[BlockChunk] | None = None, 
         content: str | None = None,
         attrs: dict[str, str] | None = None, 
         ignore_style: bool = False,
@@ -66,7 +67,7 @@ class BlockBuildContext:
         return self.block
     
     
-    def append(self, value: Any):
+    def append(self, value: Block | BaseContent):
         if not self._did_initialize:
             raise ValueError("Block not initialized")
         if self.block is None:
@@ -74,7 +75,7 @@ class BlockBuildContext:
         self.block.append(value)
         return self.block
     
-    def inline_append(self, value: Any):
+    def inline_append(self, value: BlockChunk | BaseContent):
         if not self._did_initialize:
             raise ValueError("Block not initialized")
         if self.block is None:
@@ -151,9 +152,9 @@ class SchemaBuildContext:
             # self.schema_stack.pop()
         return self.stack.pop()
     
-    def _top(self) -> BlockBuildContext:
+    def _top(self) -> BlockBuildContext | None:
         if not self.stack:
-            raise ValueError("Stack is empty")
+            return None
         return self.stack[-1]
     
     def _get_schema_build_ctx(self, view_name: str, attrs: dict[str, str] | None = None) -> BlockBuildContext:
@@ -230,12 +231,12 @@ class SchemaBuildContext:
             raise ValueError("Block is not initialized")
         return [block]
             
-    def append(self, value):
+    def append(self, value: BlockChunk | BaseContent):
         if not self.stack:
             raise ValueError("Stack is empty")
         return self.stack[-1].inline_append(value)
             
-    def commit_view(self, value = None):
+    def commit_view(self, value: str | list[BlockChunk] | None = None):
         
         bld_ctx = self._pop()
         if value is not None:
@@ -244,15 +245,24 @@ class SchemaBuildContext:
         # view = view.strip()
         return bld_ctx.block
     
-    def inst_dict(self, payload):
+    def inst_dict(self, payload: dict[str, Any]):
         from .block import BlockListSchema
         from pydantic import BaseModel
         from ...utils.string_utils import camel_to_snake
         for key, value, path, label_path in traverse_dict(payload):
-            self.inst_view(key, key)
-            if self._top().is_list:
-                if isinstance(value, BaseModel):
-                    pass
+                       
+            # if self._top() and self._top().is_list:
+            #     if isinstance(value, BaseModel):
+            #         model_name = camel_to_snake(value.__class__.__name__)
+            #         attr = {self._top().schema.key: model_name}                    
+            #         self.inst_view(key, key, attrs=attr)
+            # else:
+            #     self.inst_view(key, key)
+            attr = None 
+            if isinstance(value, BaseModel):
+                model_name = camel_to_snake(value.__class__.__name__)
+                attr = {self._top().schema.key: model_name}                    
+            self.inst_view(key, key, attrs=attr)
             if value is not None:
                 self.stack[-1].append(value)
             self.commit_view()
