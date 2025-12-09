@@ -611,9 +611,9 @@ class Block(BlockSequence[BlockSent, "Block"]):
     
     
     def example(self, value: dict, schema: "BlockSchema | None" = None, style: str | None = "md") -> "Block":
-        from .block_builder import SchemaBuildContext
-        ctx = SchemaBuildContext(schema or self)
-        inst = ctx.inst_dict(value)
+        from .block_builder import StreamingBlockBuilder
+        ctx = StreamingBlockBuilder(schema or self)
+        inst = ctx.build_from_dict(value)
         with Block("Example", style=style or "md") as ex:
             ex /= inst
         self.append(ex)
@@ -1280,9 +1280,9 @@ class BlockSchema(Block):
             
             
     def inst_dict(self, value: dict):
-        from .block_builder import SchemaBuildContext
-        ctx = SchemaBuildContext(self)
-        ctx.inst_dict(value)
+        from .block_builder import StreamingBlockBuilder
+        ctx = StreamingBlockBuilder(self)
+        ctx.build_from_dict(value)
         return ctx.result
             
     def instantiate(

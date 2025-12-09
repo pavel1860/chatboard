@@ -880,7 +880,7 @@ import asyncio
 
 from ..evaluation.decorators import EvalCtx
 from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
-from ..block.block9.block_builder import SchemaBuildContext
+from ..block.block9.block_builder import StreamingBlockBuilder
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
     from ..block import Block, BlockChunk, BlockSchema, BaseBlock
@@ -2488,7 +2488,7 @@ class Parser(Process):
         from ..block.block9.block import BlockChunk
         super().__init__()
         self.schema = schema
-        self.build_ctx = SchemaBuildContext(schema)
+        self.build_ctx = StreamingBlockBuilder(schema)
         self.parser = expat.ParserCreate()
         self.parser.buffer_text = False
         self.parser.StartElementHandler = self._on_start
@@ -2560,11 +2560,11 @@ class Parser(Process):
         # print(event_type)
         if event_type == 'start':
             name, attrs = event_data
-            blocks = self.build_ctx.inst_view(name, chunks, attrs=attrs)
+            blocks = self.build_ctx.open_view(name, chunks, attrs=attrs)
             self._push_block_list(blocks)
             # print(f"StartElement '{name}' {attrs or ''} from chunks: {metas}")
         elif event_type == 'end':
-            view = self.build_ctx.commit_view(chunks)
+            view = self.build_ctx.close_view(chunks)
             self._push_block(view.postfix)
             # self.build_ctx.commit_view()
             # print(f"EndElement '{event_data}' from chunks: {metas}")
