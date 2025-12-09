@@ -2560,7 +2560,7 @@ class Parser(Process):
         # print(event_type)
         if event_type == 'start':
             name, attrs = event_data
-            blocks = self.build_ctx.open_view(name, chunks, attrs=attrs)
+            blocks = self.build_ctx.open_view(name, chunks, attrs=attrs, ignore_style=True)
             self._push_block_list(blocks)
             # print(f"StartElement '{name}' {attrs or ''} from chunks: {metas}")
         elif event_type == 'end':

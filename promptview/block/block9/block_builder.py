@@ -554,6 +554,8 @@ class StreamingBlockBuilder:
         view_name: str,
         value: str | list[BlockChunk] | None = None,
         attrs: dict[str, str] | None = None,
+        ignore_style: bool = False,
+        ignore_tags: bool = False,
     ) -> list[Block]:
         """
         Open a new nested view/block.
@@ -576,7 +578,7 @@ class StreamingBlockBuilder:
             # Get item schema and create item builder
             item_schema = self._get_list_item_schema(attrs)
             item_builder = BlockBuilder(item_schema)
-            block = item_builder.start(content=value, attrs=attrs, ignore_style=True)
+            block = item_builder.start(content=value, attrs=attrs, ignore_style=ignore_style, ignore_tags=ignore_tags)
             self._push(item_builder)
             return [block]
 
@@ -594,10 +596,10 @@ class StreamingBlockBuilder:
             # Get item schema and create item builder
             item_schema = self._get_list_item_schema(attrs)
             item_builder = BlockBuilder(item_schema)
-            block = item_builder.start(content=value, attrs=attrs, ignore_style=True)
+            block = item_builder.start(content=value, attrs=attrs, ignore_style=ignore_style, ignore_tags=ignore_tags)
             self._push(item_builder)
         else:
-            block = builder.start(content=value, attrs=attrs, ignore_style=True)
+            block = builder.start(content=value, attrs=attrs, ignore_style=ignore_style, ignore_tags=ignore_tags)
             self._push(builder)
 
         if block is None:
