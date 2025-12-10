@@ -482,7 +482,8 @@ def test_inst_dict_with_list_schema(list_schema):
     tags_found = set()
     for child in result.children:
         if child.tags:
-            tags_found.add(child.tags[0])
+            for t in child.tags:
+                tags_found.add(t)
 
     assert 'thought' in tags_found
     assert 'answer' in tags_found

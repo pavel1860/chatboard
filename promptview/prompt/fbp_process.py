@@ -933,6 +933,7 @@ class Process:
         self._upstream = upstream
         self._did_start = False
         self._did_yield = False
+        self._did_end = False
         self._last_ip: Any = None
         self._span_tree: "SpanTree | None" = None
 
@@ -1035,6 +1036,7 @@ class Process:
         except StopAsyncIteration:
             # Upstream exhausted - cleanup and propagate
             await self.on_stop()
+            self._did_end = True
             raise StopAsyncIteration
 
         except Exception as e:
@@ -1107,6 +1109,14 @@ class Process:
 
     async def aclose(self):
         return await self.upstream.aclose()
+    
+    def did_end(self):
+        return self._did_end
+    
+    def did_upstream_end(self):
+        if self._upstream is None:
+            raise ValueError("Upstream is not set")
+        return self._upstream.did_end()
 
 
 
@@ -1366,6 +1376,7 @@ class ObservableProcess(Process):
         self._load_eval_args: bool = False
         self._input_data_flows: dict[str, "DataFlowNode"] = {}
         
+        
     @property
     def ctx(self):
         """Get current context."""
@@ -1398,6 +1409,10 @@ class ObservableProcess(Process):
     def span_id(self):
         """Get the span ID."""
         return self.span.id if self.span else None
+    
+    
+    def get_output(self, idx: int | None = None) -> Any:
+        raise NotImplementedError("get_output is not implemented")
 
     async def _resolve_dependencies(self):
         """
@@ -1722,6 +1737,14 @@ class StreamController(ObservableProcess):
         self._load_delay: float | None = None
         self._temp_data_flow: DataFlowNode | None = None
 
+
+    def get_output(self, idx: int | None = None) -> Any:
+        if self._parser is not None:
+            return self._parser.result
+        if self._accumulator is not None:
+            return self._accumulator.result        
+        return None
+    
     async def on_start(self):
         """
         Build subnetwork and register with context.
@@ -1976,6 +1999,14 @@ class PipeController(ObservableProcess):
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
         self._last_value: DataFlow | None = None
+        self._output_data_flows: list[DataFlow] = []
+        
+        
+    def get_output(self, idx: int | None = None) -> Any:
+        if idx is None:
+            return self._output_data_flows[-1]
+        else:
+            return self._output_data_flows[idx]
         
 
     async def on_start(self):
@@ -2034,7 +2065,7 @@ class PipeController(ObservableProcess):
                 child = self._replay_outputs[self._replay_index]
                 self._replay_index += 1
                 self._last_ip = child
-
+                self._output_data_flows.append(child)
                 if not self._did_yield:
                     self._did_yield = True
                     
@@ -2053,6 +2084,7 @@ class PipeController(ObservableProcess):
                 # Normal mode: send value into the internal generator using asend()
                 child = await self._gen.asend(value)
                 self._last_ip = child
+                self._output_data_flows.append(child)
 
                 # Set parent reference and index on child
                 if isinstance(child, (StreamController, PipeController)):
@@ -2189,6 +2221,7 @@ class FlowRunner:
         self._event_level = event_level
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
+        self._exited_processes: list[ObservableProcess] = []
         self.ctx = ctx or Context.current_or_none()
 
     @property
@@ -2216,7 +2249,17 @@ class FlowRunner:
         """Pop process from stack."""
         process = self.stack.pop()
         self._last_process = process
+        self._exited_processes.append(process)
         return process
+    
+    def get_output(self, name: str | None = None) -> Any:
+        if name is None:
+            return self._exited_processes[-1].get_response()
+        else:
+            for process in self._exited_processes:
+                if process.name == name:
+                    return process.get_output()
+            return None
 
     def _get_response(self) -> Any:
         """
@@ -2230,6 +2273,8 @@ class FlowRunner:
             self._response_to_send = None
             return response
         return None
+
+        
 
     def __aiter__(self):
         """Make FlowRunner async iterable."""
@@ -2543,11 +2588,73 @@ class Parser(Process):
         self._flush_pending(self.total_bytes)
     
     def _get_chunks_in_range(self, start, end):
-        """Return all chunks overlapping [start, end)"""
+        """
+        Return all chunks overlapping [start, end), splitting chunks at boundaries.
+
+        When a chunk partially overlaps the range, it is split so that only the
+        portion within [start, end) is returned. This handles cases where the LLM
+        returns mixed content like "Hello<tag>" in a single chunk.
+
+        The original chunks in self.chunks remain intact - only the returned
+        list contains the split portions.
+
+        Args:
+            start: Start byte position (inclusive)
+            end: End byte position (exclusive)
+
+        Returns:
+            List of BlockChunk objects, potentially split at byte boundaries
+        """
+        from ..block.block9.block import BlockChunk
+
         result = []
         for chunk_start, chunk_end, chunk in self.chunks:
+            # Check if chunk overlaps with [start, end)
             if chunk_start < end and chunk_end > start:
-                result.append(chunk)
+                # Calculate the overlap
+                overlap_start = max(chunk_start, start)
+                overlap_end = min(chunk_end, end)
+
+                # Check if we need to split (chunk extends beyond the range)
+                if overlap_start == chunk_start and overlap_end == chunk_end:
+                    # Full chunk is within range, no split needed
+                    result.append(chunk)
+                else:
+                    # Need to split the chunk - extract only the overlapping portion
+                    content_bytes = chunk.content.encode("utf-8")
+
+                    # Calculate byte offsets relative to chunk start
+                    slice_start = overlap_start - chunk_start
+                    slice_end = overlap_end - chunk_start
+
+                    # Adjust slice boundaries to respect UTF-8 character boundaries
+                    # UTF-8 continuation bytes start with 10xxxxxx (0x80-0xBF)
+                    # Move slice_start forward to skip continuation bytes
+                    while slice_start < len(content_bytes) and (content_bytes[slice_start] & 0xC0) == 0x80:
+                        slice_start += 1
+
+                    # Move slice_end forward to include full character
+                    while slice_end < len(content_bytes) and (content_bytes[slice_end] & 0xC0) == 0x80:
+                        slice_end += 1
+
+                    # Extract the slice and decode back to string
+                    sliced_bytes = content_bytes[slice_start:slice_end]
+
+                    # Skip if slice is empty after boundary adjustment
+                    if not sliced_bytes:
+                        continue
+
+                    sliced_content = sliced_bytes.decode("utf-8")
+
+                    # Create a new chunk with the sliced content
+                    # Preserve logprob from original chunk
+                    split_chunk = BlockChunk(
+                        content=sliced_content,
+                        logprob=chunk.logprob,
+                        prefix=chunk.prefix if slice_start == 0 else "",
+                        postfix=chunk.postfix if slice_end == len(content_bytes) else "",
+                    )
+                    result.append(split_chunk)
         return result
     
     def _flush_pending(self, end_byte):
@@ -2600,6 +2707,19 @@ class Parser(Process):
     async def on_stop(self):
         self.close()
         
+    
+    # async def __anext__(self):
+    #     while not self._has_outputs() and not self.did_upstream_end():
+    #         try:
+    #             value = await super().__anext__()
+    #             # print("anext", value.content)
+    #             self.feed(value)        
+    #         except Exception as e:
+    #             pass
+    #     if not self._has_outputs() and self.did_upstream_end():
+    #         raise StopAsyncIteration
+    #     block = self._pop_block()
+    #     return block
     
     async def __anext__(self):
         while not self._has_outputs():
