@@ -9,7 +9,7 @@ from ...utils.model_utils import is_list_type
 from .base_blocks import BaseBlock, BaseContent, BlockSequence
 from ...utils.string_utils import camel_to_snake
 import annotated_types
-
+import inspect
 
 
 def parse_style(style: str | List[str] | None) -> List[str]:
@@ -249,8 +249,13 @@ BlockContent = BlockSent | BlockChunk | BaseContent
 
 
 
-def pydantic_object_description(name: str, obj: BaseModel) -> "Block":
-    with Block(name, style="xml", tags=["tool", camel_to_snake(obj.__class__.__name__)]) as b:
+def pydantic_object_description(
+    name: str, 
+    obj: BaseModel,
+    style: str | None = None,
+    content_source: BlockContent | None = None
+) -> "Block":
+    with Block(name, style=style if style is not None else "xml", tags=["tool", camel_to_snake(obj.__class__.__name__)], content_source=content_source) as b:
         b.field("name", camel_to_snake(obj.__class__.__name__))
         # b.field("name", description=camel_to_snake(obj.__class__.__name__))
         # with b("name", style="xml", tags=["tool_name"]) as tn:
@@ -363,7 +368,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         "prefix",
         "artifact_id",
         "schema",
-        "model",
+        "content_source",
     ]
     
     def __init__(
@@ -382,6 +387,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         artifact_id: int | None = None,
         is_wrapper: bool = False,
         schema: "BlockSchema | None" = None,
+        content_source: BlockContent | None = None
     ):
         styles = styles or parse_style(style)
         super().__init__(
@@ -412,7 +418,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         #     self.content = BlockSent(parent=self)
         #     self.content.append(content)
         self.schema = schema
-        self.model = None
+        self.content_source = content_source
         
     @property
     def tag(self):
@@ -439,7 +445,10 @@ class Block(BlockSequence[BlockSent, "Block"]):
             raise ValueError("Schema is required")
         return self.schema.parse(self)
         
-            
+    
+    @property
+    def is_list(self) -> bool:
+        return self.schema is not None and isinstance(self.schema, BlockListSchema)
     
 
     @property
@@ -501,6 +510,10 @@ class Block(BlockSequence[BlockSent, "Block"]):
             return Block(str(content), prefix=prefix, postfix=postfix)
         elif isinstance(content, bool):
             return Block(str(content), prefix=prefix, postfix=postfix)
+        elif isinstance(content, BaseModel):
+            return pydantic_object_description(content.__class__.__name__, content, style=style, content_source=content_source)
+        # elif inspect.isclass(content) and issubclass(content, BaseModel):
+        #     return pydantic_class_description(content.__name__, content)
         elif isinstance(content, Block):
             # content = content.copy()
             # content = copy.deepcopy(content)
@@ -535,6 +548,28 @@ class Block(BlockSequence[BlockSent, "Block"]):
             logprob += self.prefix.logprob or 0
         return logprob
 
+    
+    @staticmethod
+    def schema_view(
+        name: str,
+        type: Type | None = None,
+        role: str = "assistant",
+        attrs: dict[str, str] | None = None,
+        tags: list[str] | None = None,
+        style: str | None = None,
+        is_wrapper: bool = False
+    ):
+        block = BlockSchema(
+            name,
+            type=type,
+            attrs=attrs,
+            role=role,
+            tags=tags,
+            styles=["xml"] if style is None else parse_style(style),
+            is_wrapper=is_wrapper,
+            # styles=["xsd"],
+        )
+        return block
     
     
     def view(
@@ -648,6 +683,21 @@ class Block(BlockSequence[BlockSent, "Block"]):
         )
         
         
+    def has_tags(self, tags: list[str] | str) -> bool:
+        if isinstance(tags, str):
+            tags = [tags]
+        return any(tag in self.tags for tag in tags)
+    
+    def has_all_tags(self, tags: list[str] | str) -> bool:
+        if isinstance(tags, str):
+            tags = [tags]
+        return all(tag in self.tags for tag in tags)
+    
+    def has_no_tags(self, tags: list[str] | str) -> bool:
+        if isinstance(tags, str):
+            tags = [tags]
+        return not any(tag in self.tags for tag in tags)
+        
     def get_first(self, tag: str):
         tags = tag.split(".")
         curr = self
@@ -671,7 +721,7 @@ class Block(BlockSequence[BlockSent, "Block"]):
         return block_list
         
         
-    def get_all(self, tags: str | list[str]):
+    def get_all(self, tags: str | list[str]) -> "BlockList":
         if type(tags) is str:            
             tags = tags.split(".")
         block_list = BlockList()        
@@ -684,13 +734,13 @@ class Block(BlockSequence[BlockSent, "Block"]):
                 
         return block_list
     
-    def get_one(self, tag: str | list[str]):
+    def get_one(self, tag: str | list[str]) -> "Block":
         res = self.get_all(tag)
         if not res:
             raise ValueError(f'path "{tag}" does not exists')
         return res[0]
     
-    def get_one_or_none(self, tag:str):
+    def get_one_or_none(self, tag:str) -> "Block | None":
         res = self.get_all(tag)
         if not res:
             return None
@@ -908,7 +958,24 @@ class Block(BlockSequence[BlockSent, "Block"]):
     def iter_schema(self):
         schema = self.copy_kind(BlockSchema)
         return schema.iter_kind(set([BlockSchema, BlockListSchema]))
+    
+    
+    def _iter(self, tags: list[str] | str | None = None, no_tags: list[str] | str | None = None, depth: int = 0, min_depth: int = 0, max_depth: int = 100) -> Generator[BaseBlock, None, None]:
+        if depth >= max_depth:
+            return
+        if depth >= min_depth and (tags is None or self.has_tags(tags)) and (no_tags is None or self.has_no_tags(no_tags)):
+            yield self
+        for child in self.children:
+            if isinstance(child, Block):
+                yield from child._iter(tags=tags, no_tags=no_tags, depth=depth+1, min_depth=min_depth, max_depth=max_depth)
+            else:
+                yield child
         
+    def iter(self, tags: list[str] | str, no_tags: list[str] | str | None = None, min_depth: int = 0, max_depth: int = 100) -> Generator[BaseBlock, None, None]:
+        return self._iter(tags=tags, no_tags=no_tags, depth=0, min_depth=min_depth, max_depth=max_depth)
+    
+    def iter_children(self, tags: list[str] | str | None = None, no_tags: list[str] | str | None = None) -> Generator[BaseBlock, None, None]:
+        return self._iter(tags=tags, no_tags=no_tags, depth=0, min_depth=1, max_depth=2)
     
     def _process_tuple_content(self, other: tuple[BaseContent, ...]):
         block = BlockSent()
@@ -1565,15 +1632,17 @@ class BlockListContentMutator(ListMutator[str]):
     def replace(self, index: int, value: str):
         self.lst[index] = value
         return self
-    
-    
 
-class BlockList(list[Block]):
+
+
+class ListEditor:
     
+    def __init__(self, block_list: "BlockList"):
+        self.block_list = block_list
     
     @property
     def content(self) -> BlockListContentMutator:
-        return BlockListContentMutator(self)
+        return BlockListContentMutator(self.block_list)
     
     
     @content.setter
@@ -1582,7 +1651,7 @@ class BlockList(list[Block]):
     
     @property
     def prefix(self) -> BlockListPrefixMutator:
-        return BlockListPrefixMutator(self)
+        return BlockListPrefixMutator(self.block_list)
     
     @prefix.setter
     def prefix(self, value: str):
@@ -1590,11 +1659,36 @@ class BlockList(list[Block]):
     
     @property
     def postfix(self) -> BlockListPostfixMutator:
-        return BlockListPostfixMutator(self)
+        return BlockListPostfixMutator(self.block_list)
     
     @postfix.setter
     def postfix(self, value: str):
         pass
+
+
+class BlockList(Block):
+    
+    
+    def __init__(
+        self, 
+        children: list[str] | list["Block"] | None = None,
+        role: str | None = None,
+        tags: list[str] | None = None,
+        style: str | None = None,
+        styles: list[str] | None = None,
+        attrs: dict[str, str] | None = None,
+        id: str | None = None,
+        prefix: BlockSent | str | None = None,
+        postfix: BlockSent | str | None = None,
+        parent: "Block | None" = None,
+        artifact_id: int | None = None,
+        is_wrapper: bool = False,
+        schema: "BlockSchema | None" = None,
+    ):
+        super().__init__(children=children, role=role, tags=tags, style=style, styles=styles, attrs=attrs, id=id, prefix=prefix, postfix=postfix, parent=parent, artifact_id=artifact_id, is_wrapper=is_wrapper, schema=schema)
+    
+    def edit(self) -> ListEditor:
+        return ListEditor(self)
     
     def replace_all(self, prop: PropNameType, value: Any):
         for blk in self:
@@ -1612,6 +1706,10 @@ class BlockList(list[Block]):
             blk.postfix += value
         return self        
     
+    def values(self) -> Generator[Any, None, None]:
+        for blk in self:
+            yield blk.value
+    
     
     def __enter__(self):
         return self
@@ -1619,7 +1717,8 @@ class BlockList(list[Block]):
     def __exit__(self, exc_type, exc_value, traceback):
         pass
     
-    
+    def __repr__(self) -> str:        
+        return f"BlockList({self.children})"
     
     
     
@@ -1652,8 +1751,9 @@ class BlockListSchema(BlockSchema):
         prefix: BaseContent | None = None,
         postfix: BaseContent | None = None,
         is_wrapper: bool = True,
-    ):
+    ):        
         super().__init__(name, tags=tags, role=role or"view", style=style, parent=parent, attrs=attrs, styles=styles, prefix=prefix, postfix=postfix, is_wrapper=is_wrapper)
+        self.tags.insert(0, f"{name}_list")
         self.list_schemas = []
         self.list_models = {}
         self.key = None
@@ -1679,6 +1779,48 @@ class BlockListSchema(BlockSchema):
         self.list_schemas.append(block)
         self.append(block)
         return block
+    
+    
+    def instantiate(
+        self, 
+        value = None, 
+        content = None, 
+        attrs: dict[str, str] | None = None,
+        ignore_tags = False, 
+        ignore_style = False, 
+        is_wrapper: bool | None = None,        
+    ) -> "Block":
+        # if self.type and not type(value) is self.type:
+            # raise ValueError(f'Error instantiating "{self.name}" block. Block type is "{self.type}" but supplied value is "{type(value)}" ')
+        is_wrapper = is_wrapper if is_wrapper is not None else self.is_wrapper
+        content = content or self.name if not is_wrapper else None
+        if value is not None and not isinstance(value, list):
+            value = [value]
+        blk = BlockList(
+                value,
+                # self.name,
+                styles=self.styles if not ignore_style else None,
+                tags=self.tags if not ignore_tags else None,
+                # role=self.role,
+                prefix=self.prefix,
+                postfix=self.postfix,
+                id=self.id,
+                schema=self,
+                is_wrapper=is_wrapper,
+                # is_wrapper=is_wrapper,
+            )
+        if attrs:
+            for k, v in attrs.items():
+                attr_schema = self.attrs.get(k)
+                if attr_schema is None:
+                    raise ValueError(f"Attribute '{k}' not found in schema")
+                parsed_value = attr_schema.parse(v)                
+                blk.field(k, parsed_value, type=attr_schema.type)
+                
+        if value is not None:
+            blk /= value
+        return blk
+
     
     
     def instantiate_item(
