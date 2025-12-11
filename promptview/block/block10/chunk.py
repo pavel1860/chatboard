@@ -252,6 +252,30 @@ class BlockText:
         self._length += 1
 
         return chunk
+    
+    
+    def extend(self, chunks: list[Chunk], after: Chunk | None = None):
+        result = []
+        if after is None:
+            for chunk in chunks:
+                result.append(self.append(chunk))
+        else:
+            for chunk in chunks:
+                after = self.insert_after(after, chunk)
+                result.append(after)
+        return result
+    
+    
+    def left_extend(self, chunks: list[Chunk], before: Chunk | None = None):
+        result = []
+        if before is None:
+            for chunk in reversed(chunks):
+                result.append(self.prepend(chunk))
+        else:
+            for chunk in reversed(chunks):
+                before = self.insert_before(before, chunk)
+                result.append(before)
+        return list(reversed(result))
 
     def prepend(self, chunk: Chunk) -> Chunk:
         """
@@ -490,3 +514,9 @@ class BlockText:
             content = chunk.content[:20] + "..." if len(chunk.content) > 20 else chunk.content
             chunks_preview.append(f'"{content}"')
         return f"BlockText([{', '.join(chunks_preview)}], len={self._length})"
+    
+    
+    def print_chunk_linage(self):
+        str_linage = "\n".join([f"{chunk.prev.id if chunk.prev else 'None'} -> [{chunk.id}] -> {chunk.next.id if chunk.next else 'None'} : {chunk.content}" for chunk in self])
+        print(str_linage)
+        # return str_linage
