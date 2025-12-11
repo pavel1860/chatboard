@@ -474,18 +474,52 @@ class BlockText:
         """
         return "".join(chunk.content for chunk in self)
 
-    def fork(self) -> BlockText:
+    def fork(
+        self,
+        start: Chunk | None = None,
+        end: Chunk | None = None,
+    ) -> BlockText:
         """
         Create an independent copy of this BlockText.
 
         All chunks are copied (new IDs), allowing independent editing.
+        Optionally specify a range of chunks to copy.
+
+        Args:
+            start: First chunk to copy (inclusive). If None, starts from head.
+            end: Last chunk to copy (inclusive). If None, copies to tail.
 
         Returns:
             New BlockText with copied chunks
+
+        Example:
+            # Copy entire BlockText
+            new_text = text.fork()
+
+            # Copy from chunk A to chunk B (inclusive)
+            new_text = text.fork(start=chunk_a, end=chunk_b)
+
+            # Copy from start to chunk B
+            new_text = text.fork(end=chunk_b)
+
+            # Copy from chunk A to end
+            new_text = text.fork(start=chunk_a)
         """
         new_text = BlockText()
-        for chunk in self:
-            new_text.append(chunk.copy())
+
+        # Determine start chunk
+        current = start if start is not None else self.head
+
+        # Iterate and copy chunks until we reach end (inclusive)
+        while current is not None:
+            new_text.append(current.copy())
+
+            # Stop after copying the end chunk
+            if current is end:
+                break
+
+            current = current.next
+
         return new_text
 
     def chunks_list(self) -> list[Chunk]:

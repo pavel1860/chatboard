@@ -6,6 +6,7 @@ from abc import ABC
 
 from .chunk import Chunk, BlockText
 from .span import Span, SpanAnchor, VirtualBlockText
+from .path import Path
 
 if TYPE_CHECKING:
     pass
@@ -49,20 +50,23 @@ class BlockBase(ABC):
         "children",
         "_postfix_span",
         "_prefix_span",
+        "role",
     ]
     
     def __init__(
         self, 
         content: ContentType | None = None, 
         children: list["BlockBase"] | None = None,
+        role: str | None = None,
         style: str | None = None, 
-        tags: list[str] = [],
-        parent: "Block | None" = None,
+        tags: list[str] | None = None,
+        parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
     ):
         self.styles = parse_style(style) if style is not None else styles or []
-        self.tags = tags
+        self.role = role
+        self.tags = tags or []
         self.parent = parent
         self._block_text = block_text or BlockText()
         content = self.promote_content(content)
@@ -100,7 +104,247 @@ class BlockBase(ABC):
             return self.start_chunk
         return self._prefix_span.start.chunk
 
-    
+    # -------------------------------------------------------------------------
+    # Boundary properties (for entire subtree)
+    # -------------------------------------------------------------------------
+
+    @property
+    def boundary_start(self) -> Chunk | None:
+        """
+        Get the first chunk of this block's entire subtree.
+
+        Returns the earliest chunk considering:
+        - prefix span (if present)
+        - content span
+        """
+        return self.start_prefix_chunk
+
+    @property
+    def boundary_end(self) -> Chunk | None:
+        """
+        Get the last chunk of this block's entire subtree.
+
+        Returns the latest chunk considering:
+        - postfix span of deepest last child
+        - or this block's postfix/content span if no children
+        """
+        if self.children:
+            # Recursively get boundary_end of the last child
+            return self.children[-1].boundary_end
+        else:
+            # No children - return this block's end
+            return self.end_postfix_chunk
+
+    def get_boundaries(self) -> tuple[Chunk | None, Chunk | None]:
+        """
+        Get the start and end chunks of this block's entire subtree.
+
+        Returns:
+            Tuple of (start_chunk, end_chunk) covering the entire block tree
+            including prefix, content, children, and postfix.
+
+        Example:
+            start, end = block.get_boundaries()
+            # Fork just this block's chunks
+            new_text = block._block_text.fork(start=start, end=end)
+        """
+        return (self.boundary_start, self.boundary_end)
+
+    # -------------------------------------------------------------------------
+    # Path properties
+    # -------------------------------------------------------------------------
+
+    @property
+    def path(self) -> Path:
+        """
+        Compute current path dynamically.
+
+        Returns a Path object with both index-based and tag-based paths.
+        """
+        indices = []
+        tags = []
+
+        # Walk up from this block to root, collecting indices and tags
+        current = self
+        while current.parent is not None:
+            # Get index of current in parent's children
+            idx = current.parent.children.index(current)
+            indices.append(idx)
+
+            # Collect first tag if present
+            if current.tags:
+                tags.append(current.tags[0])
+
+            current = current.parent
+
+        # Reverse since we collected from leaf to root
+        indices.reverse()
+        tags.reverse()
+
+        return Path(indices, tags)
+
+    @property
+    def tag_path(self) -> list[str]:
+        """Get tag-based path as a list of strings."""
+        return list(self.path.tags)
+
+    @property
+    def depth(self) -> int:
+        """Get depth in tree (0 for root)."""
+        return self.path.depth
+
+    @property
+    def index(self) -> int | None:
+        """Get index in parent's children list."""
+        if self.parent is None:
+            return None
+        return self.parent.children.index(self)
+
+    def path_get(self, path: str | list[int] | Path) -> "BlockBase | None":
+        """
+        Get block at the given path relative to this block.
+
+        Args:
+            path: Path as string "0.2.1", list [0, 2, 1], or Path object
+
+        Returns:
+            Block at path, or None if not found
+        """
+        if isinstance(path, str):
+            path = Path.from_string(path)
+        elif isinstance(path, list):
+            path = Path(path)
+
+        target = self
+        for idx in path.indices:
+            if idx >= len(target.children):
+                return None
+            target = target.children[idx]
+
+        return target
+
+    def path_exists(self, path: str | list[int] | Path) -> bool:
+        """Check if a path exists relative to this block."""
+        return self.path_get(path) is not None
+
+    # -------------------------------------------------------------------------
+    # Tag-based search methods
+    # -------------------------------------------------------------------------
+
+    def traverse(self) -> Iterator["BlockBase"]:
+        """
+        Iterate over this block and all descendants (pre-order depth-first).
+
+        Yields:
+            This block, then recursively all descendants
+        """
+        yield self
+        for child in self.children:
+            yield from child.traverse()
+
+    def get_all(self, tags: str | list[str]) -> list["BlockBase"]:
+        """
+        Get all blocks matching a tag path.
+
+        Supports dot-notation for nested tag searches:
+        - "response" - find all blocks with tag "response"
+        - "response.thinking" - find "thinking" blocks that are descendants of "response"
+
+        Args:
+            tags: Single tag, dot-separated path, or list of tags
+
+        Returns:
+            List of matching blocks
+        """
+        if isinstance(tags, str):
+            tags = tags.split(".")
+
+        if not tags:
+            return []
+
+        # Find all blocks matching first tag
+        candidates = [b for b in self.traverse() if tags[0] in b.tags]
+
+        # Filter through remaining tags
+        for tag in tags[1:]:
+            next_candidates = []
+            for blk in candidates:
+                for child in blk.traverse():
+                    if child is not blk and tag in child.tags:
+                        next_candidates.append(child)
+            candidates = next_candidates
+
+        return candidates
+
+    def get_one(self, tags: str | list[str]) -> "BlockBase":
+        """
+        Get the first block matching a tag path.
+
+        Args:
+            tags: Single tag, dot-separated path, or list of tags
+
+        Returns:
+            First matching block
+
+        Raises:
+            ValueError: If no matching block found
+        """
+        result = self.get_all(tags)
+        if not result:
+            raise ValueError(f'Tag path "{tags}" does not exist')
+        return result[0]
+
+    def get_one_or_none(self, tags: str | list[str]) -> "BlockBase | None":
+        """
+        Get the first block matching a tag path, or None if not found.
+
+        Args:
+            tags: Single tag, dot-separated path, or list of tags
+
+        Returns:
+            First matching block, or None
+        """
+        result = self.get_all(tags)
+        return result[0] if result else None
+
+    def get(self, tag: str) -> "BlockBase | None":
+        """
+        Get the first direct or nested child with the given tag.
+
+        Simple recursive search - does not support dot-notation paths.
+
+        Args:
+            tag: Tag to search for
+
+        Returns:
+            First matching block, or None
+        """
+        if tag in self.tags:
+            return self
+        for child in self.children:
+            if tag in child.tags:
+                return child
+            if (block := child.get(tag)) is not None:
+                return block
+        return None
+
+    def get_last(self, tag: str) -> "BlockBase | None":
+        """
+        Get the last block with the given tag.
+
+        Args:
+            tag: Tag to search for
+
+        Returns:
+            Last matching block, or None
+        """
+        result = None
+        for blk in self.traverse():
+            if tag in blk.tags:
+                result = blk
+        return result
+
+
     def promote_content(self, content: "ContentType | None") -> list[Chunk]:
         if content is None:
             return [Chunk(content="")]
@@ -114,14 +358,14 @@ class BlockBase(ABC):
             raise ValueError(f"Invalid content type: {type(content)}")
         return content
     
-    def promote_block_content(self, content: ContentType | "BlockBase" | None) -> "BlockBase":
+    def promote_block_content(self, content: ContentType | "BlockBase" | None, style: str | None = None, tags: list[str] | None = None, role: str | None = None) -> "BlockBase":
         if isinstance(content, Block):
             return content
         elif content is None:
-            return Block(parent=self, block_text=self._block_text)
+            return Block(parent=self, block_text=self._block_text, style=style, tags=tags, role=role)
         else:
             content = self.promote_content(content)
-            return Block(content=content, block_text=self._block_text)    
+            return Block(content=content, block_text=self._block_text, style=style, tags=tags, role=role)    
     
     def append(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
@@ -148,7 +392,7 @@ class BlockBase(ABC):
         content = self.promote_content(content)
         if sep:
             content = [Chunk(content=sep)] + content
-        chunks = self._block_text.left_extend(content)
+        chunks = self._block_text.left_extend(content, before=self.start_prefix_chunk)
         self._prefix_span = Span.from_chunks(chunks)
         
         
@@ -188,14 +432,19 @@ class BlockBase(ABC):
         Copies the underlying BlockText and rebuilds spans to point to new chunks.
         """
         # Copy the BlockText (creates new chunks with same content)
-        new_block_text = self._block_text.fork()
+        start, end = self.get_boundaries()
+        new_block_text = self._block_text.fork(start, end)
 
         # Build chunk mapping: old_id -> new_chunk
+        # Only iterate over chunks within our boundaries
         chunk_map = {}
-        old_chunks = list(self._block_text)
-        new_chunks = list(new_block_text)
-        for old, new in zip(old_chunks, new_chunks):
-            chunk_map[old.id] = new
+        current = start
+        new_chunk_iter = iter(new_block_text)
+        while current is not None:
+            chunk_map[current.id] = next(new_chunk_iter)
+            if current is end:
+                break
+            current = current.next
 
         # Copy block tree with remapped spans
         return self._copy_tree(chunk_map, new_block_text)
@@ -251,13 +500,15 @@ class Block(BlockBase):
     def __init__(
         self, 
         content: ContentType | None = None, 
+        children: list["BlockBase"] | None = None,
+        role: str | None = None,
         style: str | None = None,
-        tags: list[str] = [],
+        tags: list[str] | None = None,
         parent: "Block | None" = None,
-        styles: list[str] = [], 
-        block_text: BlockText | None = None,
+        styles: list[str] | None = None, 
+        block_text: BlockText | None = None,        
     ):
-        super().__init__(content, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles)
+        super().__init__(content, children=children, role=role, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles)
 
  
         
@@ -268,6 +519,6 @@ class Block(BlockBase):
         tags: list[str] | None = None,
         style: str | None = None,
     ) -> "Block":         
-        block = self.promote_block_content(content)
+        block = self.promote_block_content(content, style=style, tags=tags, role=role)
         self.append_block_child(block)
         return block

@@ -30,6 +30,7 @@ Example Usage:
 from .chunk import Chunk, BlockText
 from .span import SpanAnchor, Span, VirtualBlockText
 from .block import BlockBase, Block
+from .path import Path
 
 __all__ = [
     # Core data structures
@@ -41,6 +42,8 @@ __all__ = [
     # Block classes
     "BlockBase",
     "Block",
+    # Path
+    "Path",
     # "BlockSchema",
     # "AttrSchema",
 ]

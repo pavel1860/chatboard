@@ -105,7 +105,7 @@ class MarkdownHeaderTransformer(BaseTransformer):
     def render(self, block: BlockBase) -> BlockBase:
         # block.prefix_prepend("#" * len(block.path) + " ")
         block.prefix_prepend("#" + " ")
-        block.postfix_append("\n")       
+        block.postfix_append("\n")      
         return block
 
 
