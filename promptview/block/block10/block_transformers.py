@@ -104,11 +104,25 @@ class MarkdownHeaderTransformer(BaseTransformer):
     
     def render(self, block: BlockBase) -> BlockBase:
         # block.prefix_prepend("#" * len(block.path) + " ")
-        block.prefix_prepend("#" + " ")
-        block.postfix_append("\n")      
+        # block.prefix_prepend("#" + " ")
+        # block.postfix_append("\n")     
+        block = "#" + block + "\n"
+        
         return block
 
 
+class XmlTransformer(BaseTransformer):
+    styles = ["xml"]
+    target = {"content"}
+    
+    def render(self, block: BlockBase) -> BlockBase:
+        if len(block) == 0:
+            block = "<" & block & "/>\n"
+        elif len(block) == 1:
+            block = "<" & block & ">"
+        else:
+            block = "<" & block & ">\n"
+        return block
     
     
 def build_fiber_context(block: BlockBase) -> RenderContext:    

@@ -79,9 +79,17 @@ class BlockBase(ABC):
     
     def __enter__(self):
         return self
-    
+
     def __exit__(self, exc_type, exc_value, traceback):
         pass
+
+    def __len__(self) -> int:
+        """Return number of children."""
+        return len(self.children)
+
+    def __bool__(self) -> bool:
+        """Block is truthy if it has children."""
+        return len(self.children) > 0
     
     
     @property
@@ -366,32 +374,37 @@ class BlockBase(ABC):
         else:
             content = self.promote_content(content)
             return Block(content=content, block_text=self._block_text, style=style, tags=tags, role=role)    
+        
+    def _append_separator(self, content: list[Chunk], sep: str | None, append: bool = True):
+        if sep:
+            if not content[-1].is_line_end:
+                if append:
+                    content = [Chunk(content=sep)] + content
+                else:
+                    content = content + [Chunk(content=sep)]
+        return content
     
     def append(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
-        if sep:
-            content = [Chunk(content=sep)] + content
+        content = self._append_separator(content, sep, append=True)
         chunks = self._block_text.extend(content, after=self.end_chunk)
         self._span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
         
     def prepend(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
-        if sep:
-            content = content + [Chunk(content=sep)]
+        content = self._append_separator(content, sep, append=False)
         chunks = self._block_text.left_extend(content, before=self.start_chunk)
         self._span.start = SpanAnchor(chunk=chunks[0], offset=0)
         
     def postfix_append(self, content: ContentType, sep: str | None = ""):
         content = self.promote_content(content)
-        if sep:
-            content = content + [Chunk(content=sep)]
+        content = self._append_separator(content, sep, append=True)
         chunks = self._block_text.extend(content, after=self.end_postfix_chunk)
         self._postfix_span = Span.from_chunks(chunks)
         
     def prefix_prepend(self, content: ContentType, sep: str | None = ""):
         content = self.promote_content(content)
-        if sep:
-            content = [Chunk(content=sep)] + content
+        content = self._append_separator(content, sep, append=False)
         chunks = self._block_text.left_extend(content, before=self.start_prefix_chunk)
         self._prefix_span = Span.from_chunks(chunks)
         
@@ -490,6 +503,41 @@ class BlockBase(ABC):
     
     def print(self):
         print(self.render())
+        
+        
+    def __itruediv__(self, other: ContentType):
+        self.append_child(other)
+        return self
+    
+    def __add__(self, other: ContentType):
+        self.append(other)
+        return self
+    
+    def __radd__(self, other: ContentType):
+        self.prepend(other)
+        return self
+    
+    def __iadd__(self, other: ContentType):
+        self.append(other)
+        return self
+    
+    def __and__(self, other: ContentType):
+        self.append(other, sep="")
+        return self
+    
+    def __rand__(self, other: ContentType):
+        self.prepend(other, sep="")
+        return self
+    
+    def __iand__(self, other: ContentType):
+        self.append(other, sep="")
+        return self
+    
+    # def __isub__(self, other: ContentType):
+    #     self.
+        
+        
+    
     
 class Block(BlockBase):
     """

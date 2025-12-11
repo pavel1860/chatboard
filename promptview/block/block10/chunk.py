@@ -134,6 +134,11 @@ class Chunk:
             content=data.get("content", ""),
             logprob=data.get("logprob"),
         )
+        
+        
+    @property
+    def is_line_end(self) -> bool:
+        return self.content.endswith("\n")
 
 
 
