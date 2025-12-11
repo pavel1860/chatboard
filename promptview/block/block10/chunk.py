@@ -13,13 +13,16 @@ Design Principles:
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Iterator, Any
+from typing import Iterator, Any, TYPE_CHECKING
 from uuid import uuid4
+if TYPE_CHECKING:
+    from .span import Span, SpanAnchor
 
 
 def _generate_id() -> str:
     """Generate a short unique ID for chunks."""
     return uuid4().hex[:8]
+
 
 
 @dataclass
@@ -131,6 +134,7 @@ class Chunk:
             content=data.get("content", ""),
             logprob=data.get("logprob"),
         )
+
 
 
 class BlockText:

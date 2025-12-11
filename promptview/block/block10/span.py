@@ -45,10 +45,12 @@ class SpanAnchor:
         """Validate offset is within bounds."""
         if self.offset < 0:
             raise ValueError(f"Offset {self.offset} cannot be negative")
-        if self.offset > len(self.chunk.content):
+        if self.chunk and self.offset > len(self.chunk.content):
             raise ValueError(
                 f"Offset {self.offset} exceeds chunk length {len(self.chunk.content)}"
             )
+        if self.chunk is None and self.offset != 0:
+            raise ValueError(f"Offset {self.offset} cannot be non-zero when chunk is None")
 
     def copy(self) -> SpanAnchor:
         """Create a copy of this anchor (same chunk reference)."""
@@ -154,6 +156,17 @@ class Span:
     def is_single_chunk(self) -> bool:
         """Check if span is entirely within one chunk."""
         return self.start.chunk == self.end.chunk
+    
+    
+    @classmethod
+    def from_chunks(cls, chunks: list["Chunk"]) -> Span:
+        if len(chunks) == 0:
+            return cls(start=SpanAnchor(chunk=None, offset=0), end=SpanAnchor(chunk=None, offset=0))
+        if len(chunks) == 1:
+            return cls(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[0], offset=len(chunks[0].content)))
+        start = SpanAnchor(chunk=chunks[0], offset=0)
+        end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
+        return cls(start=start, end=end)
 
     def text(self) -> str:
         """

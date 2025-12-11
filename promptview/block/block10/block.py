@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     pass
 
 
+# Type alias for chunk mapping during copy
+ChunkMap = dict[str, Chunk]  # old_chunk_id -> new_chunk
+
+
 def _generate_id() -> str:
     """Generate a short unique ID for blocks."""
     return uuid4().hex[:8]
@@ -63,7 +67,8 @@ class BlockBase(ABC):
         self._block_text = block_text or BlockText()
         content = self.promote_content(content)
         chunks = self._block_text.extend(content)
-        self._span = Span(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content)))
+        # self._span = Span(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content)))
+        self._span = Span.from_chunks(chunks)
         self.children = children or []
         self._postfix_span: Span | None = None
         self._prefix_span: Span | None = None
@@ -98,7 +103,7 @@ class BlockBase(ABC):
     
     def promote_content(self, content: "ContentType | None") -> list[Chunk]:
         if content is None:
-            return []
+            return [Chunk(content="")]
         if isinstance(content, str):
             return [Chunk(content)]
         elif isinstance(content, list):
@@ -137,14 +142,14 @@ class BlockBase(ABC):
         if sep:
             content = content + [Chunk(content=sep)]
         chunks = self._block_text.extend(content, after=self.end_postfix_chunk)
-        self._postfix_span = Span(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content)))
+        self._postfix_span = Span.from_chunks(chunks)
         
     def prefix_prepend(self, content: ContentType, sep: str | None = ""):
         content = self.promote_content(content)
         if sep:
             content = [Chunk(content=sep)] + content
         chunks = self._block_text.left_extend(content)
-        self._prefix_span = Span(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content)))
+        self._prefix_span = Span.from_chunks(chunks)
         
         
     def insert(self, index: int, content: ContentType):
@@ -157,10 +162,10 @@ class BlockBase(ABC):
     
     def append_child(self, child_content: ContentType):
         block = self.promote_block_content(child_content)
-        if self.children:
-            self.children[-1].postfix_append("\n")
-        else:
-            self.postfix_append("\n")
+        # if self.children:
+        #     self.children[-1].postfix_append("\n")
+        # else:
+        #     self.postfix_append("\n")
         self.append_block_child(block)
         return block
         
@@ -171,10 +176,67 @@ class BlockBase(ABC):
         
         
     def render(self) -> str:
-        return self._block_text.text()
+        from .block_transformers import transform
+        block = self.copy()
+        block = transform(block)
+        return block._block_text.text()
+
+    def copy(self) -> "BlockBase":
+        """
+        Create a deep copy of this block and its subtree.
+
+        Copies the underlying BlockText and rebuilds spans to point to new chunks.
+        """
+        # Copy the BlockText (creates new chunks with same content)
+        new_block_text = self._block_text.fork()
+
+        # Build chunk mapping: old_id -> new_chunk
+        chunk_map = {}
+        old_chunks = list(self._block_text)
+        new_chunks = list(new_block_text)
+        for old, new in zip(old_chunks, new_chunks):
+            chunk_map[old.id] = new
+
+        # Copy block tree with remapped spans
+        return self._copy_tree(chunk_map, new_block_text)
+
+    def _copy_tree(self, chunk_map: dict, new_block_text: BlockText) -> "BlockBase":
+        """Copy this block using chunk mapping."""
+        new_block = Block(
+            styles=list(self.styles),
+            tags=list(self.tags),
+            block_text=new_block_text,
+        )
+
+        # Remap spans
+        new_block._span = Span(
+            start=SpanAnchor(chunk_map[self._span.start.chunk.id], self._span.start.offset),
+            end=SpanAnchor(chunk_map[self._span.end.chunk.id], self._span.end.offset),
+        )
+
+        if self._prefix_span:
+            new_block._prefix_span = Span(
+                start=SpanAnchor(chunk_map[self._prefix_span.start.chunk.id], self._prefix_span.start.offset),
+                end=SpanAnchor(chunk_map[self._prefix_span.end.chunk.id], self._prefix_span.end.offset),
+            )
+
+        if self._postfix_span:
+            new_block._postfix_span = Span(
+                start=SpanAnchor(chunk_map[self._postfix_span.start.chunk.id], self._postfix_span.start.offset),
+                end=SpanAnchor(chunk_map[self._postfix_span.end.chunk.id], self._postfix_span.end.offset),
+            )
+
+        # Copy children
+        for child in self.children:
+            new_block.append_block_child(child._copy_tree(chunk_map, new_block_text))
+
+        return new_block
     
 
-    
+    def traverse(self) -> Iterator["BlockBase"]:
+        yield self
+        for child in self.children:
+            yield from child.traverse()
     
     
     def print(self):
@@ -189,12 +251,13 @@ class Block(BlockBase):
     def __init__(
         self, 
         content: ContentType | None = None, 
-        styles: list[str] = [], 
+        style: str | None = None,
         tags: list[str] = [],
         parent: "Block | None" = None,
+        styles: list[str] = [], 
         block_text: BlockText | None = None,
     ):
-        super().__init__(content, styles=styles, tags=tags, parent=parent, block_text=block_text)
+        super().__init__(content, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles)
 
  
         
