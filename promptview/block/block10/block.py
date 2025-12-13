@@ -29,6 +29,7 @@ def parse_style(style: str | list[str] | None) -> list[str]:
         return []
 
 ContentType = str | list[str] | list[Chunk] | Chunk
+PathType = str | list[int] | Path
 
 
 class BlockBase(ABC):
@@ -54,28 +55,33 @@ class BlockBase(ABC):
     ]
     
     def __init__(
-        self, 
-        content: ContentType | None = None, 
+        self,
+        content: ContentType | None = None,
         children: list["BlockBase"] | None = None,
         role: str | None = None,
-        style: str | None = None, 
+        style: str | None = None,
         tags: list[str] | None = None,
         parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
+        _skip_content: bool = False,
     ):
         self.styles = parse_style(style) if style is not None else styles or []
         self.role = role
         self.tags = tags or []
         self.parent = parent
         self._block_text = block_text or BlockText()
-        content = self.promote_content(content)
-        chunks = self._block_text.extend(content)
-        # self._span = Span(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content)))
-        self._span = Span.from_chunks(chunks)
         self.children = children or []
         self._postfix_span: Span | None = None
         self._prefix_span: Span | None = None
+
+        if _skip_content:
+            # For copy operations - span will be set by caller
+            self._span = None
+        else:
+            content = self.promote_content(content)
+            chunks = self._block_text.extend(content)
+            self._span = Span.from_chunks(chunks)
     
     def __enter__(self):
         return self
@@ -93,23 +99,23 @@ class BlockBase(ABC):
     
     
     @property
-    def end_chunk(self) -> Chunk:
+    def content_end_chunk(self) -> Chunk:
         return self._span.end.chunk
     
     @property
-    def start_chunk(self) -> Chunk:
+    def content_start_chunk(self) -> Chunk:
         return self._span.start.chunk
     
     @property
     def end_postfix_chunk(self) -> Chunk | None:
         if self._postfix_span is None:
-            return self.end_chunk
+            return self.content_end_chunk
         return self._postfix_span.end.chunk
     
     @property
     def start_prefix_chunk(self) -> Chunk | None:
         if self._prefix_span is None:
-            return self.start_chunk
+            return self.content_start_chunk
         return self._prefix_span.start.chunk
 
     # -------------------------------------------------------------------------
@@ -117,7 +123,7 @@ class BlockBase(ABC):
     # -------------------------------------------------------------------------
 
     @property
-    def boundary_start(self) -> Chunk | None:
+    def start_chunk(self) -> Chunk | None:
         """
         Get the first chunk of this block's entire subtree.
 
@@ -125,10 +131,13 @@ class BlockBase(ABC):
         - prefix span (if present)
         - content span
         """
-        return self.start_prefix_chunk
+        if self.start_prefix_chunk is not None:
+            return self.start_prefix_chunk
+        else:
+            return self.content_start_chunk
 
     @property
-    def boundary_end(self) -> Chunk | None:
+    def end_chunk(self) -> Chunk:
         """
         Get the last chunk of this block's entire subtree.
 
@@ -138,10 +147,12 @@ class BlockBase(ABC):
         """
         if self.children:
             # Recursively get boundary_end of the last child
-            return self.children[-1].boundary_end
-        else:
+            return self.children[-1].end_chunk
+        elif self.end_postfix_chunk is not None:
             # No children - return this block's end
             return self.end_postfix_chunk
+        else:
+            return self.content_end_chunk
 
     def get_boundaries(self) -> tuple[Chunk | None, Chunk | None]:
         """
@@ -156,7 +167,36 @@ class BlockBase(ABC):
             # Fork just this block's chunks
             new_text = block._block_text.fork(start=start, end=end)
         """
-        return (self.boundary_start, self.boundary_end)
+        return (self.start_chunk, self.end_chunk)
+
+    def get_chunks(self) -> list[Chunk]:
+        """
+        Get all chunks within this block's boundaries.
+
+        Returns:
+            List of chunks from start_chunk to end_chunk (inclusive),
+            covering prefix, content, children, and postfix.
+        """
+        start, end = self.get_boundaries()
+        if start is None:
+            return []
+
+        chunks = []
+        current = start
+        while current is not None:
+            chunks.append(current)
+            if current is end:
+                break
+            current = current.next
+
+        return chunks
+    
+    
+    def set_block_text(self, chunks: list[Chunk], block_text: BlockText):
+        self._block_text = block_text
+        self._span = Span.from_chunks(chunks)
+        return self
+
 
     # -------------------------------------------------------------------------
     # Path properties
@@ -207,6 +247,16 @@ class BlockBase(ABC):
         if self.parent is None:
             return None
         return self.parent.children.index(self)
+    
+    def _parse_path(self, path: str | list[int] | Path) -> Path:
+        if isinstance(path, str):
+            return Path.from_string(path)
+        elif isinstance(path, list):
+            return Path(path)
+        elif isinstance(path, Path):
+            return path
+        else:
+            raise ValueError(f"Invalid path type: {type(path)}")
 
     def path_get(self, path: str | list[int] | Path) -> "BlockBase | None":
         """
@@ -366,10 +416,10 @@ class BlockBase(ABC):
             raise ValueError(f"Invalid content type: {type(content)}")
         return content
     
-    def promote_block_content(self, content: ContentType | "BlockBase" | None, style: str | None = None, tags: list[str] | None = None, role: str | None = None) -> "BlockBase":
-        if isinstance(content, Block):
-            return content
-        elif content is None:
+    def promote_block_content(self, content: BlockBase |ContentType | None, style: str | None = None, tags: list[str] | None = None, role: str | None = None) -> "BlockBase":
+        if isinstance(content, BlockBase):
+            return content.copy()
+        if content is None:
             return Block(parent=self, block_text=self._block_text, style=style, tags=tags, role=role)
         else:
             content = self.promote_content(content)
@@ -387,13 +437,13 @@ class BlockBase(ABC):
     def append(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=True)
-        chunks = self._block_text.extend(content, after=self.end_chunk)
+        chunks = self._block_text.extend(content, after=self.content_end_chunk)
         self._span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
         
     def prepend(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=False)
-        chunks = self._block_text.left_extend(content, before=self.start_chunk)
+        chunks = self._block_text.left_extend(content, before=self.content_start_chunk)
         self._span.start = SpanAnchor(chunk=chunks[0], offset=0)
         
     def postfix_append(self, content: ContentType, sep: str | None = ""):
@@ -409,22 +459,161 @@ class BlockBase(ABC):
         self._prefix_span = Span.from_chunks(chunks)
         
         
-    def insert(self, index: int, content: ContentType):
-        content = self.promote_content(content)
-        self._block_text.insert(index, content)
+    def insert(self, index: int, content: Block | ContentType):
+        """
+        Insert a block at the given index in children.
+
+        If content is a Block with its own BlockText, its chunks are moved
+        into this block's BlockText and spans are remapped.
+
+        Args:
+            index: Position to insert at (0 = before first child)
+            content: Block or content to insert
+
+        Returns:
+            The inserted block
+        """
+        # Create or copy the block
+        if isinstance(content, BlockBase):
+            block = content.copy()
+        else:
+            # Create a new block with its own temporary BlockText
+            block = Block(content=content)
+
+        # Determine insertion point in the linked list
+        if self.children and index < len(self.children):
+            # Insert before the child at index
+            insert_before_chunk = self.children[index].start_chunk
+            inserted_chunks = self._block_text.left_extend_block_text(
+                block._block_text,
+                before=insert_before_chunk,
+                copy=False
+            )
+        elif self.children:
+            # Append after last child
+            insert_after_chunk = self.children[-1].end_chunk
+            inserted_chunks = self._block_text.extend_block_text(
+                block._block_text,
+                after=insert_after_chunk,
+                copy=False
+            )
+        else:
+            # No children yet, insert after this block's content
+            insert_after_chunk = self.end_chunk
+            inserted_chunks = self._block_text.extend_block_text(
+                block._block_text,
+                after=insert_after_chunk,
+                copy=False
+            )
+
+        # Remap the block's span to the new chunks in our BlockText
+        if inserted_chunks:
+            block._block_text = self._block_text
+            block._span = Span.from_chunks(inserted_chunks)
+
+        # Insert into children list
+        if self.children:
+            self.children.insert(index, block)
+        else:
+            self.children = [block]
+
+        block.parent = self
+        block.add_new_line()
+        return block
         
+
+    def replace(self, path: PathType, other: BlockBase):
+        """
+        Replace the block at the given path with the other block.
+
+        Replaces both the block in the tree and its chunks in the BlockText.
+
+        Args:
+            path: Path or string path
+            other: Block to replace with
+
+        Returns:
+            The replaced (removed) block
+        """
+        path = self._parse_path(path)
+        target = self.path_get(path)
+        if target is None:
+            raise ValueError(f"Invalid path: {path}, target not found")
+        parent = target.parent
+        if parent is None:
+            # Replacing root - can't modify BlockText
+            raise ValueError("Cannot replace root block")
+
+        # Copy the replacement block if it has its own BlockText
+        if isinstance(other, BlockBase):
+            replacement = other.copy() if other._block_text is not self._block_text else other
+        else:
+            replacement = Block(content=other)
+
+        # Get target's chunk boundaries
+        target_start = target.start_chunk
+        target_end = target.end_chunk
+
+        # Replace chunks in BlockText
+        inserted_chunks = self._block_text.replace_block_text(
+            target_start,
+            target_end,
+            replacement._block_text,
+            copy=False
+        )
+
+        # Remap replacement's span
+        if inserted_chunks:
+            replacement._block_text = self._block_text
+            replacement._span = Span.from_chunks(inserted_chunks)
+
+        # Update tree structure
+        idx = parent.children.index(target)
+        parent.children.remove(target)
+        parent.children.insert(idx, replacement)
+        replacement.parent = parent
+
+        # Clear target's ownership
+        target.parent = None
+
+        return target
+
     def remove(self, index: int):
-        self._block_text.remove(index)
+        """
+        Remove child at the given index.
+
+        Removes the child from the tree and its chunks from the BlockText.
+
+        Args:
+            index: Index of child to remove
+
+        Returns:
+            The removed block
+        """
+        if not self.children or index >= len(self.children):
+            raise IndexError(f"Child index {index} out of range")
+
+        child = self.children[index]
+
+        # Remove chunks from BlockText
+        self._block_text.replace(child.start_chunk, child.end_chunk, None)
+
+        # Remove from tree
+        self.children.pop(index)
+        child.parent = None
+
+        return child
         
     
-    def append_child(self, child_content: ContentType):
+    def append_child(self, child_content: Block | ContentType):
         block = self.promote_block_content(child_content)
-        # if self.children:
-        #     self.children[-1].postfix_append("\n")
-        # else:
-        #     self.postfix_append("\n")
+        if self.children:
+            self.children[-1].add_new_line()
+        else:
+            self.add_new_line()
         self.append_block_child(block)
         return block
+    
         
     def append_block_child(self, block: "Block"):
         self.children.append(block)
@@ -437,6 +626,16 @@ class BlockBase(ABC):
         block = self.copy()
         block = transform(block)
         return block._block_text.text()
+
+    
+    def copy_metadata(self) -> "BlockBase":
+        return Block(
+            styles=list(self.styles),
+            tags=list(self.tags),
+            block_text=self._block_text,
+            role=self.role,
+        )
+
 
     def copy(self) -> "BlockBase":
         """
@@ -467,7 +666,9 @@ class BlockBase(ABC):
         new_block = Block(
             styles=list(self.styles),
             tags=list(self.tags),
+            role=self.role,
             block_text=new_block_text,
+            _skip_content=True,
         )
 
         # Remap spans
@@ -499,13 +700,27 @@ class BlockBase(ABC):
         yield self
         for child in self.children:
             yield from child.traverse()
+            
+            
+    # -------------------------------------------------------------------------
+    # Text operations
+    # -------------------------------------------------------------------------
     
+    def add_new_line(self):
+        self.postfix_append(Chunk(content="\n"))
+    
+    
+    
+    
+    # -------------------------------------------------------------------------
+    # Operators
+    # -------------------------------------------------------------------------
     
     def print(self):
         print(self.render())
         
         
-    def __itruediv__(self, other: ContentType):
+    def __itruediv__(self, other: Block | ContentType):
         self.append_child(other)
         return self
     
@@ -546,17 +761,18 @@ class Block(BlockBase):
     
     
     def __init__(
-        self, 
-        content: ContentType | None = None, 
+        self,
+        content: ContentType | None = None,
         children: list["BlockBase"] | None = None,
         role: str | None = None,
         style: str | None = None,
         tags: list[str] | None = None,
         parent: "Block | None" = None,
-        styles: list[str] | None = None, 
-        block_text: BlockText | None = None,        
+        styles: list[str] | None = None,
+        block_text: BlockText | None = None,
+        _skip_content: bool = False,
     ):
-        super().__init__(content, children=children, role=role, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles)
+        super().__init__(content, children=children, role=role, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles, _skip_content=_skip_content)
 
  
         

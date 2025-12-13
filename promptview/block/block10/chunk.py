@@ -317,6 +317,320 @@ class BlockText:
         self._length += 1
 
         return chunk
+    
+    
+    def insert_chunks_after(self, after: Chunk, chunks: list[Chunk]):
+        result = []
+        for chunk in chunks:
+            result.append(self.insert_after(after, chunk))
+            after = chunk
+        return result
+    
+    def insert_chunks_before(self, before: Chunk, chunks: list[Chunk]):
+        result = []
+        for chunk in reversed(chunks):
+            before = self.insert_before(before, chunk)
+            result.append(before)
+        return list(reversed(result))
+
+    def extend_block_text(self, other: "BlockText", after: Chunk | None = None, copy: bool = True) -> list[Chunk]:
+        """
+        Extend this BlockText with chunks from another BlockText.
+
+        Args:
+            other: Source BlockText to extend from
+            after: Insert after this chunk (None = append to end)
+            copy: If True, copy chunks (other unchanged). If False, move chunks (other emptied).
+
+        Returns:
+            List of inserted chunks (new chunks if copy=True, moved chunks if copy=False)
+
+        Example:
+            text1 = BlockText([Chunk("Hello ")])
+            text2 = BlockText([Chunk("world")])
+
+            # Copy (text2 unchanged)
+            text1.extend_block_text(text2, copy=True)
+
+            # Move (text2 emptied)
+            text1.extend_block_text(text2, copy=False)
+        """
+        if other.is_empty:
+            return []
+
+        if copy:
+            chunks = [chunk.copy() for chunk in other]
+            return self.extend(chunks, after=after)
+
+        # Move mode: reconnect pointers directly (O(1) for linking)
+        other_head = other.head
+        other_tail = other.tail
+        result = list(other)  # Snapshot for return value
+
+        # Update ownership and index
+        for chunk in result:
+            chunk._owner = self
+            self._by_id[chunk.id] = chunk
+
+        # Connect to self
+        if after is None:
+            # Append to end
+            if self.tail is not None:
+                self.tail.next = other_head
+                other_head.prev = self.tail
+            else:
+                self.head = other_head
+            self.tail = other_tail
+        else:
+            # Insert after specific chunk
+            next_chunk = after.next
+            after.next = other_head
+            other_head.prev = after
+            other_tail.next = next_chunk
+            if next_chunk is not None:
+                next_chunk.prev = other_tail
+            else:
+                self.tail = other_tail
+
+        self._length += other._length
+
+        # Clear the source BlockText
+        other.head = None
+        other.tail = None
+        other._by_id.clear()
+        other._length = 0
+
+        return result
+
+    def left_extend_block_text(self, other: "BlockText", before: Chunk | None = None, copy: bool = True) -> list[Chunk]:
+        """
+        Prepend chunks from another BlockText to this BlockText.
+
+        Args:
+            other: Source BlockText to extend from
+            before: Insert before this chunk (None = prepend to beginning)
+            copy: If True, copy chunks (other unchanged). If False, move chunks (other emptied).
+
+        Returns:
+            List of inserted chunks in order
+
+        Example:
+            text1 = BlockText([Chunk("world")])
+            text2 = BlockText([Chunk("Hello ")])
+
+            # Prepend text2 to text1
+            text1.left_extend_block_text(text2)
+            # Result: "Hello world"
+        """
+        if other.is_empty:
+            return []
+
+        if copy:
+            chunks = [chunk.copy() for chunk in other]
+            return self.left_extend(chunks, before=before)
+
+        # Move mode: reconnect pointers directly
+        other_head = other.head
+        other_tail = other.tail
+        result = list(other)
+
+        # Update ownership and index
+        for chunk in result:
+            chunk._owner = self
+            self._by_id[chunk.id] = chunk
+
+        # Connect to self
+        if before is None:
+            # Prepend to beginning
+            if self.head is not None:
+                self.head.prev = other_tail
+                other_tail.next = self.head
+            else:
+                self.tail = other_tail
+            self.head = other_head
+        else:
+            # Insert before specific chunk
+            prev_chunk = before.prev
+            before.prev = other_tail
+            other_tail.next = before
+            other_head.prev = prev_chunk
+            if prev_chunk is not None:
+                prev_chunk.next = other_head
+            else:
+                self.head = other_head
+
+        self._length += other._length
+
+        # Clear the source BlockText
+        other.head = None
+        other.tail = None
+        other._by_id.clear()
+        other._length = 0
+
+        return result
+
+    def replace(
+        self,
+        start: Chunk,
+        end: Chunk,
+        new_chunks: list[Chunk] | None = None,
+    ) -> list[Chunk]:
+        """
+        Replace a range of chunks (inclusive) with new chunks.
+
+        Removes all chunks from start to end (inclusive) and inserts
+        new_chunks in their place. Returns the removed chunks.
+
+        Args:
+            start: First chunk to replace (inclusive)
+            end: Last chunk to replace (inclusive)
+            new_chunks: Chunks to insert in place of removed range (None or [] to just delete)
+
+        Returns:
+            List of removed chunks (detached from this BlockText)
+
+        Raises:
+            ValueError: If start or end is not in this BlockText
+            ValueError: If end comes before start in the linked list
+
+        Example:
+            bt = BlockText([Chunk("a"), Chunk("b"), Chunk("c"), Chunk("d")])
+            # Replace "b" and "c" with "X"
+            removed = bt.replace(bt.head.next, bt.tail.prev, [Chunk("X")])
+            # bt.text() == "aXd"
+            # removed == [Chunk("b"), Chunk("c")]
+        """
+        if start._owner is not self:
+            raise ValueError(f"Chunk {start.id} is not in this BlockText")
+        if end._owner is not self:
+            raise ValueError(f"Chunk {end.id} is not in this BlockText")
+
+        # Get neighbors before modifying
+        prev_chunk = start.prev
+        next_chunk = end.next
+
+        # Collect chunks to remove (and verify end comes after start)
+        removed = []
+        current = start
+        while current is not None:
+            removed.append(current)
+            if current is end:
+                break
+            current = current.next
+        else:
+            # We reached the end of the list without finding 'end'
+            raise ValueError(f"Chunk {end.id} does not come after {start.id} in the linked list")
+
+        # Detach removed chunks
+        for chunk in removed:
+            chunk._owner = None
+            chunk.prev = None
+            chunk.next = None
+            del self._by_id[chunk.id]
+            self._length -= 1
+
+        # Update head/tail if needed
+        if start is self.head:
+            self.head = next_chunk
+        if end is self.tail:
+            self.tail = prev_chunk
+
+        # Connect the gap (before inserting new chunks)
+        if prev_chunk is not None:
+            prev_chunk.next = next_chunk
+        if next_chunk is not None:
+            next_chunk.prev = prev_chunk
+
+        # Insert new chunks
+        if new_chunks:
+            if prev_chunk is not None:
+                self.extend(new_chunks, after=prev_chunk)
+            elif next_chunk is not None:
+                self.left_extend(new_chunks, before=next_chunk)
+            else:
+                # BlockText is now empty, just extend
+                self.extend(new_chunks)
+
+        return removed
+
+    def replace_block_text(
+        self,
+        start: Chunk,
+        end: Chunk,
+        other: "BlockText",
+        copy: bool = True,
+    ) -> list[Chunk]:
+        """
+        Replace a range of chunks with chunks from another BlockText.
+
+        Combines replace() with extend_block_text() for convenience.
+
+        Args:
+            start: First chunk to replace (inclusive)
+            end: Last chunk to replace (inclusive)
+            other: Source BlockText for replacement chunks
+            copy: If True, copy chunks from other. If False, move them.
+
+        Returns:
+            List of removed chunks
+
+        Example:
+            bt1 = BlockText([Chunk("a"), Chunk("old"), Chunk("d")])
+            bt2 = BlockText([Chunk("new")])
+            bt1.replace_block_text(bt1.head.next, bt1.head.next, bt2)
+            # bt1.text() == "anewd"
+        """
+        if start._owner is not self:
+            raise ValueError(f"Chunk {start.id} is not in this BlockText")
+        if end._owner is not self:
+            raise ValueError(f"Chunk {end.id} is not in this BlockText")
+
+        # Get neighbors before modifying
+        prev_chunk = start.prev
+        next_chunk = end.next
+
+        # Collect and remove chunks
+        removed = []
+        current = start
+        while current is not None:
+            removed.append(current)
+            if current is end:
+                break
+            current = current.next
+        else:
+            raise ValueError(f"Chunk {end.id} does not come after {start.id} in the linked list")
+
+        # Detach removed chunks
+        for chunk in removed:
+            chunk._owner = None
+            chunk.prev = None
+            chunk.next = None
+            del self._by_id[chunk.id]
+            self._length -= 1
+
+        # Update head/tail
+        if start is self.head:
+            self.head = next_chunk
+        if end is self.tail:
+            self.tail = prev_chunk
+
+        # Connect the gap
+        if prev_chunk is not None:
+            prev_chunk.next = next_chunk
+        if next_chunk is not None:
+            next_chunk.prev = prev_chunk
+
+        # Insert from other BlockText
+        if not other.is_empty:
+            if prev_chunk is not None:
+                self.extend_block_text(other, after=prev_chunk, copy=copy)
+            elif next_chunk is not None:
+                self.left_extend_block_text(other, before=next_chunk, copy=copy)
+            else:
+                self.extend_block_text(other, copy=copy)
+
+        return removed
+
 
     def insert_after(self, after: Chunk, chunk: Chunk) -> Chunk:
         """

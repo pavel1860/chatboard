@@ -3,7 +3,7 @@ import copy
 from dataclasses import dataclass, field
 import textwrap
 from typing import Generator, Literal, Type
-from promptview.block.block10.block import BlockBase
+from promptview.block.block10.block import BlockBase, Block
 import contextvars
 
 
@@ -118,11 +118,16 @@ class XmlTransformer(BaseTransformer):
     def render(self, block: BlockBase) -> BlockBase:
         if len(block) == 0:
             block = "<" & block & "/>\n"
-        elif len(block) == 1:
-            block = "<" & block & ">"
-        else:
-            block = "<" & block & ">\n"
-        return block
+            return block
+        # elif len(block) == 1:
+        #     block = "<" & block & ">"
+        # else:
+        #     block = "<" & block & ">\n"
+            
+        with Block() as blk:
+            blk /= "<" & block & ">\n"
+            blk /= "</ ending >\n"
+        return blk
     
     
 def build_fiber_context(block: BlockBase) -> RenderContext:    
@@ -167,10 +172,19 @@ def transform_with_styles(block: BlockBase) -> BlockBase:
     return block
 
 
-def transform(block: BlockBase) -> BlockBase:    
+def transform(block: BlockBase) -> BlockBase: 
+    root = block   
     for block in block.traverse():
-        transform_with_styles(block)    
-    return block
+        # transform_with_styles(block)    
+        renderers = StyleMeta.resolve(
+                block.styles, 
+                {"content"}, 
+                # default=ContentTransformer
+            )
+        for renderer in renderers:
+            rendered_block = renderer(block).render(block)
+            # block.replace_with(rendered_block)
+    return root
     
     
     
