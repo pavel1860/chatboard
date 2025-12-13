@@ -99,9 +99,50 @@ class BlockBase(ABC):
     
     
     @property
+    def content(self) -> "BlockBase":
+        """
+        Return this block's content as a new independent Block (no children/style/tags).
+
+        Creates a new BlockText with copies of the content chunks, preserving
+        logprob metadata. The returned block is fully independent and can be
+        used with operators like & without affecting the original.
+
+        Returns:
+            A new Block with copied content chunks
+        """
+        # Fork just the content span's chunks
+        new_block_text = self._block_text.fork(
+            start=self._span.start.chunk,
+            end=self._span.end.chunk
+        )
+
+        # Create block with the new BlockText
+        block = Block(
+            block_text=new_block_text,
+            _skip_content=True,
+        )
+        block._span = Span.from_chunks(list(new_block_text))
+        return block
+
+    @property
+    def last_descendant(self) -> "BlockBase":
+        """
+        Get the deepest last descendant of this block.
+
+        Recursively follows children[-1] until reaching a leaf block.
+        Returns self if no children.
+
+        Returns:
+            The deepest last descendant, or self if no children
+        """
+        if self.children:
+            return self.children[-1].last_descendant
+        return self
+
+    @property
     def content_end_chunk(self) -> Chunk:
         return self._span.end.chunk
-    
+
     @property
     def content_start_chunk(self) -> Chunk:
         return self._span.start.chunk
@@ -653,7 +694,7 @@ class BlockBase(ABC):
 
         # Add newline separator
         if self.children:
-            self.children[-1].add_new_line()
+            self.last_descendant.add_new_line()
         else:
             self.add_new_line()
 
@@ -670,15 +711,25 @@ class BlockBase(ABC):
             copy=False
         )
 
-        # Remap the block's span
+        # Remap the block's span and update BlockText reference for entire subtree
         if inserted_chunks:
-            block._block_text = self._block_text
-            block._span = Span.from_chunks(inserted_chunks)
+            self._remap_block_text(block, self._block_text)
 
         # Add to children list
         self.children.append(block)
         block.parent = self
         return block
+
+    def _remap_block_text(self, block: "BlockBase", new_block_text: BlockText):
+        """
+        Recursively update _block_text reference for a block and all its descendants.
+
+        Used after moving chunks between BlockTexts to ensure all blocks
+        in a subtree point to the correct BlockText.
+        """
+        block._block_text = new_block_text
+        for child in block.children:
+            self._remap_block_text(child, new_block_text)
 
     def append_block_child(self, block: "Block"):
         """
@@ -692,11 +743,15 @@ class BlockBase(ABC):
         block.parent = self
         return block
 
-
-    def render(self) -> str:
+    
+    def transform(self) -> "BlockBase":
         from .block_transformers import transform
         block = self.copy()
         block = transform(block)
+        return block
+
+    def render(self) -> str:
+        block = self.transform()
         return block._block_text.text()
 
     
@@ -780,6 +835,9 @@ class BlockBase(ABC):
     
     def add_new_line(self):
         self.postfix_append(Chunk(content="\n"))
+        
+        
+        
     
     
     

@@ -123,10 +123,10 @@ class XmlTransformer(BaseTransformer):
         #     block = "<" & block & ">"
         # else:
         #     block = "<" & block & ">\n"
-            
+        content = block.content
         with Block() as blk:
-            blk /= "<" & block & ">\n"
-            blk /= "</ ending >\n"
+            blk /= "<" & block & ">"
+            blk /= "</" & content & ">\n"
         return blk
     
     
@@ -182,7 +182,13 @@ def transform(block: BlockBase) -> BlockBase:
                 # default=ContentTransformer
             )
         for renderer in renderers:
+            orig_path = block.path
             rendered_block = renderer(block).render(block)
+            if rendered_block != block:
+                if not orig_path:
+                    root = rendered_block
+                else:
+                    root.replace(orig_path, rendered_block)
             # block.replace_with(rendered_block)
     return root
     
