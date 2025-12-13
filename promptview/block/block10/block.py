@@ -673,7 +673,7 @@ class BlockBase(ABC):
         return child
         
     
-    def append_child(self, child_content: Block | ContentType):
+    def append_child(self, child_content: BlockBase | ContentType):
         """
         Append a child block to this block's children.
 
@@ -746,9 +746,8 @@ class BlockBase(ABC):
     
     def transform(self) -> "BlockBase":
         from .block_transformers import transform
-        block = self.copy()
-        block = transform(block)
-        return block
+        # transform() handles copying internally - no need for upfront copy
+        return transform(self)
 
     def render(self) -> str:
         block = self.transform()
@@ -756,12 +755,27 @@ class BlockBase(ABC):
 
     
     def copy_metadata(self) -> "BlockBase":
-        return Block(
+        """
+        Copy this block's metadata and content, but NOT children.
+
+        Creates a new BlockText with forked content chunks. The returned
+        block has no children and no parent - ready for building a new tree.
+        """
+        # Fork just this block's content (not children)
+        new_block_text = self._block_text.fork(
+            start=self._span.start.chunk,
+            end=self._span.end.chunk
+        )
+
+        new_block = Block(
             styles=list(self.styles),
             tags=list(self.tags),
-            block_text=self._block_text,
             role=self.role,
+            block_text=new_block_text,
+            _skip_content=True,
         )
+        new_block._span = Span.from_chunks(list(new_block_text))
+        return new_block
 
 
     def copy(self) -> "BlockBase":
@@ -843,14 +857,100 @@ class BlockBase(ABC):
     
     
     # -------------------------------------------------------------------------
+    # Debug methods
+    # -------------------------------------------------------------------------
+
+    def debug_tree(self, indent: int = 0) -> str:
+        """
+        Generate a debug representation of this block and its subtree.
+
+        Shows for each block:
+        - Path, tags, styles
+        - Content chunks (with repr for visibility of newlines/spaces)
+        - Children recursively indented
+
+        Returns:
+            Debug string representation
+        """
+        lines = []
+        prefix = "  " * indent
+
+        # Block header
+        path = self.path
+        path_str = str(path) if path else "(root)"
+        tags_str = f"tags={self.tags}" if self.tags else ""
+        styles_str = f"styles={self.styles}" if self.styles else ""
+        header_parts = [f"[{path_str}]", tags_str, styles_str]
+        header = " ".join(p for p in header_parts if p)
+        lines.append(f"{prefix}{header}")
+
+        # Content span chunks
+        if self._span:
+            content_chunks = []
+            chunk = self._span.start.chunk
+            while chunk is not None:
+                content_chunks.append(repr(chunk.content))
+                if chunk is self._span.end.chunk:
+                    break
+                chunk = chunk.next
+            lines.append(f"{prefix}  content: [{', '.join(content_chunks)}]")
+
+        # Prefix span if present
+        if self._prefix_span:
+            prefix_chunks = []
+            chunk = self._prefix_span.start.chunk
+            while chunk is not None:
+                prefix_chunks.append(repr(chunk.content))
+                if chunk is self._prefix_span.end.chunk:
+                    break
+                chunk = chunk.next
+            lines.append(f"{prefix}  prefix: [{', '.join(prefix_chunks)}]")
+
+        # Postfix span if present
+        if self._postfix_span:
+            postfix_chunks = []
+            chunk = self._postfix_span.start.chunk
+            while chunk is not None:
+                postfix_chunks.append(repr(chunk.content))
+                if chunk is self._postfix_span.end.chunk:
+                    break
+                chunk = chunk.next
+            lines.append(f"{prefix}  postfix: [{', '.join(postfix_chunks)}]")
+
+        # Children
+        for child in self.children:
+            lines.append(child.debug_tree(indent + 1))
+
+        return "\n".join(lines)
+
+    def print_debug(self):
+        """Print debug tree representation."""
+        print(self.debug_tree())
+
+    def debug_block_text(self) -> str:
+        """
+        Generate a debug representation of the entire BlockText.
+
+        Shows all chunks in order with their IDs and content.
+        """
+        lines = ["BlockText chunks:"]
+        for i, chunk in enumerate(self._block_text):
+            lines.append(f"  [{i}] {chunk.id[:8]}: {repr(chunk.content)}")
+        return "\n".join(lines)
+
+    def print_block_text(self):
+        """Print BlockText debug representation."""
+        print(self.debug_block_text())
+
+    # -------------------------------------------------------------------------
     # Operators
     # -------------------------------------------------------------------------
-    
+
     def print(self):
         print(self.render())
         
         
-    def __itruediv__(self, other: Block | ContentType):
+    def __itruediv__(self, other: BlockBase | ContentType):
         self.append_child(other)
         return self
     

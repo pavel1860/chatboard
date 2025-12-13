@@ -126,7 +126,7 @@ class XmlTransformer(BaseTransformer):
         content = block.content
         with Block() as blk:
             blk /= "<" & block & ">"
-            blk /= "</" & content & ">\n"
+            blk /= "</" & content & ">"
         return blk
     
     
@@ -178,48 +178,32 @@ def transform(block: BlockBase) -> BlockBase:
 
     Uses post-order traversal (children first, then parent) so that
     parent transformers can wrap already-transformed children.
+
+    Builds the transformed tree incrementally - each block is copied
+    individually and children are appended, avoiding upfront deep copy.
     """
     # Transform children first (recursive)
-    for i, child in enumerate(block.children):
-        transformed_child = transform(child)
-        if transformed_child is not child:
-            # Get insertion point - where the old child's chunks were
-            old_start = child.start_chunk
-            old_end = child.end_chunk
+    transformed_children = []
+    for child in block.children:
+        transformed_children.append(transform(child))
 
-            # Remove old child's chunks from parent's BlockText
-            block._block_text.replace(old_start, old_end, [])
+    # Copy this block's metadata and content (not children)
+    new_block = block.copy_metadata()
 
-            # Find where to insert - after previous child or after parent content
-            if i > 0:
-                insert_after = block.children[i - 1].end_chunk
-            else:
-                insert_after = block.end_postfix_chunk or block.content_end_chunk
+    # Add transformed children to the new block
+    for child in transformed_children:
+        new_block.append_child(child)
 
-            # Move transformed child's chunks into parent's BlockText
-            block._block_text.extend_block_text(
-                transformed_child._block_text,
-                after=insert_after,
-                copy=False
-            )
-
-            # Update BlockText references for transformed child subtree
-            block._remap_block_text(transformed_child, block._block_text)
-
-            # Replace in parent's children list
-            block.children[i] = transformed_child
-            transformed_child.parent = block
-
-    # Then transform this block
+    # Apply style renderers to the new block
     renderers = StyleMeta.resolve(
-        block.styles,
+        new_block.styles,
         {"content"},
         # default=ContentTransformer
     )
     for renderer in renderers:
-        block = renderer(block).render(block)
+        new_block = renderer(new_block).render(new_block)
 
-    return block
+    return new_block
     
     
     
