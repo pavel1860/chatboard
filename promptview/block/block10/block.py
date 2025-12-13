@@ -1144,4 +1144,59 @@ class BlockSchema(BlockBase):
         self.name = name
         self.type = type
     
-        
+    
+    def instantiate(self) -> "Block":
+        return Block(
+            content=self.name,
+            tags=self.tags,
+            styles=self.styles,
+            role=self.role,
+        )
+
+    def extract_schema(self) -> "BlockSchema":
+        """
+        Extract a new BlockSchema tree containing only BlockSchema nodes.
+
+        Traverses this block's subtree and creates a new BlockSchema with
+        only BlockSchema children, preserving the schema hierarchy while
+        filtering out regular Block nodes.
+
+        Returns:
+            A new BlockSchema tree with only schema nodes
+        """
+        # Create a copy of this schema (without children)
+        new_schema = BlockSchema(
+            name=self.name,
+            type=self.type,
+            role=self.role,
+            styles=list(self.styles),
+            tags=list(self.tags),
+        )
+
+        # Recursively extract schemas from children
+        for child in self.children:
+            if isinstance(child, BlockSchema):
+                # Recursively extract and add as child
+                child_schema = child.extract_schema()
+                new_schema.children.append(child_schema)
+                child_schema.parent = new_schema
+            else:
+                # For regular blocks, check their children for nested schemas
+                self._extract_nested_schemas(child, new_schema)
+
+        return new_schema
+
+    def _extract_nested_schemas(self, block: "BlockBase", parent_schema: "BlockSchema"):
+        """
+        Recursively search a Block's children for BlockSchema nodes.
+
+        Any found BlockSchema nodes are extracted and added to parent_schema.
+        """
+        for child in block.children:
+            if isinstance(child, BlockSchema):
+                child_schema = child.extract_schema()
+                parent_schema.children.append(child_schema)
+                child_schema.parent = parent_schema
+            else:
+                # Keep searching deeper
+                self._extract_nested_schemas(child, parent_schema)
