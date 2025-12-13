@@ -559,7 +559,7 @@ class BlockText:
         end: Chunk,
         other: "BlockText",
         copy: bool = True,
-    ) -> list[Chunk]:
+    ) -> tuple[list[Chunk], list[Chunk]]:
         """
         Replace a range of chunks with chunks from another BlockText.
 
@@ -572,13 +572,15 @@ class BlockText:
             copy: If True, copy chunks from other. If False, move them.
 
         Returns:
-            List of removed chunks
+            Tuple of (removed_chunks, inserted_chunks)
 
         Example:
             bt1 = BlockText([Chunk("a"), Chunk("old"), Chunk("d")])
             bt2 = BlockText([Chunk("new")])
-            bt1.replace_block_text(bt1.head.next, bt1.head.next, bt2)
+            removed, inserted = bt1.replace_block_text(bt1.head.next, bt1.head.next, bt2)
             # bt1.text() == "anewd"
+            # removed == [Chunk("old")]
+            # inserted == [Chunk("new")]
         """
         if start._owner is not self:
             raise ValueError(f"Chunk {start.id} is not in this BlockText")
@@ -621,15 +623,16 @@ class BlockText:
             next_chunk.prev = prev_chunk
 
         # Insert from other BlockText
+        inserted = []
         if not other.is_empty:
             if prev_chunk is not None:
-                self.extend_block_text(other, after=prev_chunk, copy=copy)
+                inserted = self.extend_block_text(other, after=prev_chunk, copy=copy)
             elif next_chunk is not None:
-                self.left_extend_block_text(other, before=next_chunk, copy=copy)
+                inserted = self.left_extend_block_text(other, before=next_chunk, copy=copy)
             else:
-                self.extend_block_text(other, copy=copy)
+                inserted = self.extend_block_text(other, copy=copy)
 
-        return removed
+        return removed, inserted
 
 
     def insert_after(self, after: Chunk, chunk: Chunk) -> Chunk:

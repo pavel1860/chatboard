@@ -564,56 +564,63 @@ class TestBlockTextReplace:
         bt2 = BlockText([Chunk(content="b"), Chunk(content="c")])
         middle = bt1.head.next
 
-        removed = bt1.replace_block_text(middle, middle, bt2, copy=True)
+        removed, inserted = bt1.replace_block_text(middle, middle, bt2, copy=True)
 
         assert bt1.text() == "abcd"
         assert bt2.text() == "bc"  # Source unchanged
         assert len(removed) == 1
         assert removed[0].content == "old"
+        assert len(inserted) == 2
+        assert [c.content for c in inserted] == ["b", "c"]
 
     def test_replace_block_text_move_mode(self):
         bt1 = BlockText([Chunk(content="a"), Chunk(content="old"), Chunk(content="d")])
         bt2 = BlockText([Chunk(content="b"), Chunk(content="c")])
         middle = bt1.head.next
 
-        bt1.replace_block_text(middle, middle, bt2, copy=False)
+        removed, inserted = bt1.replace_block_text(middle, middle, bt2, copy=False)
 
         assert bt1.text() == "abcd"
         assert bt2.is_empty  # Source emptied
+        assert len(inserted) == 2
 
     def test_replace_block_text_empty_source(self):
         bt1 = BlockText([Chunk(content="a"), Chunk(content="b"), Chunk(content="c")])
         bt2 = BlockText()
         middle = bt1.head.next
 
-        removed = bt1.replace_block_text(middle, middle, bt2, copy=True)
+        removed, inserted = bt1.replace_block_text(middle, middle, bt2, copy=True)
 
         assert bt1.text() == "ac"  # Just deletes
         assert len(removed) == 1
+        assert len(inserted) == 0
 
     def test_replace_block_text_at_head(self):
         bt1 = BlockText([Chunk(content="old"), Chunk(content="c")])
         bt2 = BlockText([Chunk(content="a"), Chunk(content="b")])
 
-        bt1.replace_block_text(bt1.head, bt1.head, bt2, copy=True)
+        removed, inserted = bt1.replace_block_text(bt1.head, bt1.head, bt2, copy=True)
 
         assert bt1.text() == "abc"
+        assert len(inserted) == 2
 
     def test_replace_block_text_at_tail(self):
         bt1 = BlockText([Chunk(content="a"), Chunk(content="old")])
         bt2 = BlockText([Chunk(content="b"), Chunk(content="c")])
 
-        bt1.replace_block_text(bt1.tail, bt1.tail, bt2, copy=True)
+        removed, inserted = bt1.replace_block_text(bt1.tail, bt1.tail, bt2, copy=True)
 
         assert bt1.text() == "abc"
+        assert len(inserted) == 2
 
     def test_replace_block_text_entire(self):
         bt1 = BlockText([Chunk(content="old")])
         bt2 = BlockText([Chunk(content="a"), Chunk(content="b"), Chunk(content="c")])
 
-        bt1.replace_block_text(bt1.head, bt1.tail, bt2, copy=True)
+        removed, inserted = bt1.replace_block_text(bt1.head, bt1.tail, bt2, copy=True)
 
         assert bt1.text() == "abc"
+        assert len(inserted) == 3
 
 
 class TestBlockTextSplitChunk:

@@ -29,7 +29,7 @@ def parse_style(style: str | list[str] | None) -> list[str]:
         return []
 
 ContentType = str | list[str] | list[Chunk] | Chunk
-PathType = str | list[int] | Path
+PathType = str | list[int] | int | Path
 
 
 class BlockBase(ABC):
@@ -248,9 +248,11 @@ class BlockBase(ABC):
             return None
         return self.parent.children.index(self)
     
-    def _parse_path(self, path: str | list[int] | Path) -> Path:
+    def _parse_path(self, path: str | list[int] | int | Path) -> Path:
         if isinstance(path, str):
             return Path.from_string(path)
+        elif isinstance(path, int):
+            return Path([path])
         elif isinstance(path, list):
             return Path(path)
         elif isinstance(path, Path):
@@ -459,20 +461,44 @@ class BlockBase(ABC):
         self._prefix_span = Span.from_chunks(chunks)
         
         
-    def insert(self, index: int, content: Block | ContentType):
+    def insert(self, path: PathType, content: Block | ContentType):
         """
-        Insert a block at the given index in children.
+        Insert a block at the given path.
+
+        The path specifies where to insert. The last index in the path is the
+        position within the parent's children list. The preceding indices
+        navigate to the parent block.
 
         If content is a Block with its own BlockText, its chunks are moved
         into this block's BlockText and spans are remapped.
 
         Args:
-            index: Position to insert at (0 = before first child)
+            path: Path to insert at. Examples:
+                - [0] or "0": insert at index 0 of this block's children
+                - [1, 2] or "1.2": navigate to child[1], insert at index 2
             content: Block or content to insert
 
         Returns:
             The inserted block
+
+        Raises:
+            ValueError: If path is empty or parent doesn't exist
         """
+        path = self._parse_path(path)
+        if len(path) == 0:
+            raise ValueError("Path cannot be empty for insert")
+
+        # Navigate to parent block
+        if len(path) == 1:
+            parent = self
+        else:
+            parent_path = Path(list(path.indices[:-1]))
+            parent = self.path_get(parent_path)
+            if parent is None:
+                raise ValueError(f"Parent path {parent_path} does not exist")
+
+        index = path.indices[-1]
+
         # Create or copy the block
         if isinstance(content, BlockBase):
             block = content.copy()
@@ -481,25 +507,25 @@ class BlockBase(ABC):
             block = Block(content=content)
 
         # Determine insertion point in the linked list
-        if self.children and index < len(self.children):
+        if parent.children and index < len(parent.children):
             # Insert before the child at index
-            insert_before_chunk = self.children[index].start_chunk
+            insert_before_chunk = parent.children[index].start_chunk
             inserted_chunks = self._block_text.left_extend_block_text(
                 block._block_text,
                 before=insert_before_chunk,
                 copy=False
             )
-        elif self.children:
+        elif parent.children:
             # Append after last child
-            insert_after_chunk = self.children[-1].end_chunk
+            insert_after_chunk = parent.children[-1].end_chunk
             inserted_chunks = self._block_text.extend_block_text(
                 block._block_text,
                 after=insert_after_chunk,
                 copy=False
             )
         else:
-            # No children yet, insert after this block's content
-            insert_after_chunk = self.end_chunk
+            # No children yet, insert after parent's content
+            insert_after_chunk = parent.end_chunk
             inserted_chunks = self._block_text.extend_block_text(
                 block._block_text,
                 after=insert_after_chunk,
@@ -512,12 +538,12 @@ class BlockBase(ABC):
             block._span = Span.from_chunks(inserted_chunks)
 
         # Insert into children list
-        if self.children:
-            self.children.insert(index, block)
+        if parent.children:
+            parent.children.insert(index, block)
         else:
-            self.children = [block]
+            parent.children = [block]
 
-        block.parent = self
+        block.parent = parent
         block.add_new_line()
         return block
         
@@ -555,14 +581,14 @@ class BlockBase(ABC):
         target_end = target.end_chunk
 
         # Replace chunks in BlockText
-        inserted_chunks = self._block_text.replace_block_text(
+        removed_chunks, inserted_chunks = self._block_text.replace_block_text(
             target_start,
             target_end,
             replacement._block_text,
             copy=False
         )
 
-        # Remap replacement's span
+        # Remap replacement's span to the newly inserted chunks
         if inserted_chunks:
             replacement._block_text = self._block_text
             replacement._span = Span.from_chunks(inserted_chunks)
@@ -572,6 +598,7 @@ class BlockBase(ABC):
         parent.children.remove(target)
         parent.children.insert(idx, replacement)
         replacement.parent = parent
+        replacement.add_new_line()
 
         # Clear target's ownership
         target.parent = None
@@ -606,21 +633,66 @@ class BlockBase(ABC):
         
     
     def append_child(self, child_content: Block | ContentType):
-        block = self.promote_block_content(child_content)
+        """
+        Append a child block to this block's children.
+
+        Inserts chunks at the correct position in the BlockText (after this
+        block's last child, or after this block's content if no children).
+
+        Args:
+            child_content: Block or content to append as child
+
+        Returns:
+            The appended block
+        """
+        # Create the block with its own temporary BlockText
+        if isinstance(child_content, BlockBase):
+            block = child_content.copy()
+        else:
+            block = Block(content=child_content)
+
+        # Add newline separator
         if self.children:
             self.children[-1].add_new_line()
         else:
             self.add_new_line()
-        self.append_block_child(block)
-        return block
-    
-        
-    def append_block_child(self, block: "Block"):
+
+        # Determine insertion point - after last child or after this block's content
+        if self.children:
+            insert_after_chunk = self.children[-1].end_chunk
+        else:
+            insert_after_chunk = self.end_postfix_chunk or self.content_end_chunk
+
+        # Move chunks from block's BlockText to this block's BlockText
+        inserted_chunks = self._block_text.extend_block_text(
+            block._block_text,
+            after=insert_after_chunk,
+            copy=False
+        )
+
+        # Remap the block's span
+        if inserted_chunks:
+            block._block_text = self._block_text
+            block._span = Span.from_chunks(inserted_chunks)
+
+        # Add to children list
         self.children.append(block)
         block.parent = self
         return block
-        
-        
+
+    def append_block_child(self, block: "Block"):
+        """
+        Append an already-prepared block to children list.
+
+        This is a low-level method used by _copy_tree. It only updates
+        the tree structure, not the BlockText. Use append_child() for
+        normal operations.
+        """
+        self.children.append(block)
+        block.parent = self
+        return block
+
+
     def render(self) -> str:
         from .block_transformers import transform
         block = self.copy()
