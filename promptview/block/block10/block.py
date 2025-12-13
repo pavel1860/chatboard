@@ -78,9 +78,13 @@ class BlockBase(ABC):
         if _skip_content:
             # For copy operations - span will be set by caller
             self._span = None
+        elif content is None:
+            # Wrapper block - no content, no span
+            self._span = None
         else:
-            content = self.promote_content(content)
-            chunks = self._block_text.extend(content)
+            # Block with content (including empty string "")
+            chunks_list = self.promote_content(content)
+            chunks = self._block_text.extend(chunks_list)
             self._span = Span.from_chunks(chunks)
     
     def __enter__(self):
@@ -96,8 +100,12 @@ class BlockBase(ABC):
     def __bool__(self) -> bool:
         """Block is truthy if it has children."""
         return len(self.children) > 0
-    
-    
+
+    @property
+    def is_wrapper(self) -> bool:
+        """Check if this is a wrapper block (no content)."""
+        return self._span is None
+
     @property
     def content(self) -> "BlockBase":
         """
@@ -109,7 +117,13 @@ class BlockBase(ABC):
 
         Returns:
             A new Block with copied content chunks
+
+        Raises:
+            ValueError: If called on a wrapper block (no content)
         """
+        if self._span is None:
+            raise ValueError("Cannot get content of wrapper block (no content). Check is_wrapper first.")
+
         # Fork just the content span's chunks
         new_block_text = self._block_text.fork(
             start=self._span.start.chunk,
@@ -140,12 +154,14 @@ class BlockBase(ABC):
         return self
 
     @property
-    def content_end_chunk(self) -> Chunk:
-        return self._span.end.chunk
+    def content_end_chunk(self) -> Chunk | None:
+        """Get the last chunk of content span, or None if wrapper."""
+        return self._span.end.chunk if self._span else None
 
     @property
-    def content_start_chunk(self) -> Chunk:
-        return self._span.start.chunk
+    def content_start_chunk(self) -> Chunk | None:
+        """Get the first chunk of content span, or None if wrapper."""
+        return self._span.start.chunk if self._span else None
     
     @property
     def end_postfix_chunk(self) -> Chunk | None:
@@ -170,21 +186,32 @@ class BlockBase(ABC):
 
         Returns the earliest chunk considering:
         - prefix span (if present)
-        - content span
+        - content span (if present)
+        - first child's start (if wrapper with children)
+
+        Returns None only if wrapper block with no children.
         """
         if self.start_prefix_chunk is not None:
             return self.start_prefix_chunk
-        else:
+        elif self.content_start_chunk is not None:
             return self.content_start_chunk
+        elif self.children:
+            # Wrapper block - get start from first child
+            return self.children[0].start_chunk
+        else:
+            # Empty wrapper block
+            return None
 
     @property
-    def end_chunk(self) -> Chunk:
+    def end_chunk(self) -> Chunk | None:
         """
         Get the last chunk of this block's entire subtree.
 
         Returns the latest chunk considering:
         - postfix span of deepest last child
         - or this block's postfix/content span if no children
+
+        Returns None only if wrapper block with no children.
         """
         if self.children:
             # Recursively get boundary_end of the last child
@@ -192,8 +219,11 @@ class BlockBase(ABC):
         elif self.end_postfix_chunk is not None:
             # No children - return this block's end
             return self.end_postfix_chunk
-        else:
+        elif self.content_end_chunk is not None:
             return self.content_end_chunk
+        else:
+            # Empty wrapper block
+            return None
 
     def get_boundaries(self) -> tuple[Chunk | None, Chunk | None]:
         """
@@ -446,9 +476,12 @@ class BlockBase(ABC):
         return result
 
 
-    def promote_content(self, content: "ContentType | None") -> list[Chunk]:
-        if content is None:
-            return [Chunk(content="")]
+    def promote_content(self, content: "ContentType") -> list[Chunk]:
+        """
+        Convert content to a list of Chunks.
+
+        Note: None is not accepted - wrapper blocks should not call this method.
+        """
         if isinstance(content, str):
             return [Chunk(content)]
         elif isinstance(content, list):
@@ -457,7 +490,6 @@ class BlockBase(ABC):
             return [content]
         else:
             raise ValueError(f"Invalid content type: {type(content)}")
-        return content
     
     def promote_block_content(self, content: BlockBase |ContentType | None, style: str | None = None, tags: list[str] | None = None, role: str | None = None) -> "BlockBase":
         if isinstance(content, BlockBase):
@@ -692,10 +724,10 @@ class BlockBase(ABC):
         else:
             block = Block(content=child_content)
 
-        # Add newline separator
+        # Add newline separator (skip for wrapper blocks with no content)
         if self.children:
             self.last_descendant.add_new_line()
-        else:
+        elif not self.is_wrapper:
             self.add_new_line()
 
         # Determine insertion point - after last child or after this block's content
@@ -760,7 +792,17 @@ class BlockBase(ABC):
 
         Creates a new BlockText with forked content chunks. The returned
         block has no children and no parent - ready for building a new tree.
+
+        For wrapper blocks (no content), creates an empty wrapper.
         """
+        if self._span is None:
+            # Wrapper block - no content to fork
+            return Block(
+                styles=list(self.styles),
+                tags=list(self.tags),
+                role=self.role,
+            )
+
         # Fork just this block's content (not children)
         new_block_text = self._block_text.fork(
             start=self._span.start.chunk,
@@ -783,21 +825,27 @@ class BlockBase(ABC):
         Create a deep copy of this block and its subtree.
 
         Copies the underlying BlockText and rebuilds spans to point to new chunks.
+        For wrapper blocks with no content, copies only the tree structure.
         """
-        # Copy the BlockText (creates new chunks with same content)
         start, end = self.get_boundaries()
-        new_block_text = self._block_text.fork(start, end)
 
-        # Build chunk mapping: old_id -> new_chunk
-        # Only iterate over chunks within our boundaries
-        chunk_map = {}
-        current = start
-        new_chunk_iter = iter(new_block_text)
-        while current is not None:
-            chunk_map[current.id] = next(new_chunk_iter)
-            if current is end:
-                break
-            current = current.next
+        if start is None:
+            # Empty wrapper block - no chunks to copy
+            new_block_text = BlockText()
+            chunk_map = {}
+        else:
+            # Copy the BlockText (creates new chunks with same content)
+            new_block_text = self._block_text.fork(start, end)
+
+            # Build chunk mapping: old_id -> new_chunk
+            chunk_map = {}
+            current = start
+            new_chunk_iter = iter(new_block_text)
+            while current is not None:
+                chunk_map[current.id] = next(new_chunk_iter)
+                if current is end:
+                    break
+                current = current.next
 
         # Copy block tree with remapped spans
         return self._copy_tree(chunk_map, new_block_text)
@@ -812,11 +860,12 @@ class BlockBase(ABC):
             _skip_content=True,
         )
 
-        # Remap spans
-        new_block._span = Span(
-            start=SpanAnchor(chunk_map[self._span.start.chunk.id], self._span.start.offset),
-            end=SpanAnchor(chunk_map[self._span.end.chunk.id], self._span.end.offset),
-        )
+        # Remap spans (only if not a wrapper block)
+        if self._span is not None:
+            new_block._span = Span(
+                start=SpanAnchor(chunk_map[self._span.start.chunk.id], self._span.start.offset),
+                end=SpanAnchor(chunk_map[self._span.end.chunk.id], self._span.end.offset),
+            )
 
         if self._prefix_span:
             new_block._prefix_span = Span(
@@ -878,9 +927,10 @@ class BlockBase(ABC):
         # Block header
         path = self.path
         path_str = str(path) if path else "(root)"
+        wrapper_str = "(wrapper)" if self.is_wrapper else ""
         tags_str = f"tags={self.tags}" if self.tags else ""
         styles_str = f"styles={self.styles}" if self.styles else ""
-        header_parts = [f"[{path_str}]", tags_str, styles_str]
+        header_parts = [f"[{path_str}]", wrapper_str, tags_str, styles_str]
         header = " ".join(p for p in header_parts if p)
         lines.append(f"{prefix}{header}")
 
