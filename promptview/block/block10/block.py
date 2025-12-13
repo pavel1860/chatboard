@@ -901,8 +901,38 @@ class BlockBase(ABC):
         
         
         
+    # -------------------------------------------------------------------------
+    # Prompt Context operations
+    # -------------------------------------------------------------------------
     
     
+    def __call__(
+        self, 
+        content: ContentType | BlockBase | None = None, 
+        role: str | None = None,
+        tags: list[str] | None = None,
+        style: str | None = None,
+    ) -> "Block":         
+        block = self.promote_block_content(content, style=style, tags=tags, role=role)
+        self.append_block_child(block)
+        return block
+    
+    
+    def view(
+        self, 
+        name: str, 
+        type: Type | None = None, 
+        tags: list[str] | None = None, 
+        style: str | None = None,
+    ) -> "BlockSchema":
+        schema_block = BlockSchema(
+            name,
+            type=type,
+            tags=tags,
+            styles=["xml"] if style is None else parse_style(style),
+        )
+        self.append_block_child(schema_block)
+        return schema_block
     
     
     # -------------------------------------------------------------------------
@@ -1056,13 +1086,62 @@ class Block(BlockBase):
 
  
         
-    def __call__(
-        self, 
-        content: ContentType | BlockBase | None = None, 
+    # def __call__(
+    #     self, 
+    #     content: ContentType | BlockBase | None = None, 
+    #     role: str | None = None,
+    #     tags: list[str] | None = None,
+    #     style: str | None = None,
+    # ) -> "Block":         
+    #     block = self.promote_block_content(content, style=style, tags=tags, role=role)
+    #     self.append_block_child(block)
+    #     return block
+
+
+
+
+class BlockSchema(BlockBase):
+    """
+    BlockSchema is a block that is used to describe the schema of a block.
+    """
+    
+    __slots__ = [
+        "name",
+        "type",
+    ]
+    
+    def __init__(
+        self,
+        name: str,
+        type: Type | None = None,
+        children: list["BlockBase"] | None = None,   
         role: str | None = None,
         tags: list[str] | None = None,
         style: str | None = None,
-    ) -> "Block":         
-        block = self.promote_block_content(content, style=style, tags=tags, role=role)
-        self.append_block_child(block)
-        return block
+        parent: "BlockBase | None" = None,
+        styles: list[str] | None = None,
+        block_text: BlockText | None = None,
+        _skip_content: bool = False,
+    ):
+        tags = tags or []        
+        if name not in tags:
+            tags.insert(0, name)
+        styles = styles or parse_style(style)
+        if not styles:
+            styles = ["xml"]
+
+        super().__init__(
+            content=name, 
+            children=children, 
+            role=role, 
+            style=style, 
+            tags=tags, 
+            parent=parent, 
+            block_text=block_text, 
+            styles=styles, 
+            _skip_content=_skip_content
+        )
+        self.name = name
+        self.type = type
+    
+        
