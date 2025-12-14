@@ -880,7 +880,7 @@ import asyncio
 
 from ..evaluation.decorators import EvalCtx
 from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
-from ..block.block9.block_builder import StreamingBlockBuilder
+from ..block.block10.block_builder import StreamingBlockBuilder
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
     from ..block import Block, BlockChunk, BlockSchema, BaseBlock

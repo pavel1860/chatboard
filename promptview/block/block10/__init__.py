@@ -29,7 +29,7 @@ Example Usage:
 
 from .chunk import Chunk, BlockText
 from .span import SpanAnchor, Span, VirtualBlockText
-from .block import BlockBase, Block
+from .block import BlockBase, Block, BlockSchema
 from .path import Path
 
 __all__ = [
@@ -42,6 +42,7 @@ __all__ = [
     # Block classes
     "BlockBase",
     "Block",
+    "BlockSchema",
     # Path
     "Path",
     # "BlockSchema",

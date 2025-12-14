@@ -1,5 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+from pydantic_core import core_schema
+from pydantic import BaseModel, GetCoreSchemaHandler
 from typing import Any, Iterator, Type, TYPE_CHECKING, overload
 from uuid import uuid4
 from abc import ABC
@@ -137,6 +139,12 @@ class BlockBase(ABC):
         )
         block._span = Span.from_chunks(list(new_block_text))
         return block
+    
+    @property
+    def content_str(self) -> str:
+        content = self.content
+        text = content._block_text.text()
+        return text
 
     @property
     def last_descendant(self) -> "BlockBase":
@@ -705,7 +713,7 @@ class BlockBase(ABC):
         return child
         
     
-    def append_child(self, child_content: BlockBase | ContentType):
+    def append_child(self, child_content: BlockBase | ContentType, copy: bool = True):
         """
         Append a child block to this block's children.
 
@@ -714,13 +722,15 @@ class BlockBase(ABC):
 
         Args:
             child_content: Block or content to append as child
+            copy: If True (default), copy the block before appending.
+                  If False, move the block directly (caller loses ownership).
 
         Returns:
             The appended block
         """
-        # Create the block with its own temporary BlockText
+        # Create or copy the block
         if isinstance(child_content, BlockBase):
-            block = child_content.copy()
+            block = child_content.copy() if copy else child_content
         else:
             block = Block(content=child_content)
 
@@ -1021,6 +1031,38 @@ class BlockBase(ABC):
     def print_block_text(self):
         """Print BlockText debug representation."""
         print(self.debug_block_text())
+        
+        
+    # -------------------------------------------------------------------------
+    # Pydantic model support
+    # -------------------------------------------------------------------------
+    
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize
+            )
+        )
+        
+    @staticmethod
+    def _validate(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v
+        elif isinstance(v, dict):
+            if "_type" in v and v["_type"] == "Block":
+                return Block.model_validate(v)
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
+    @staticmethod
+    def _serialize(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v.model_dump()
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
 
     # -------------------------------------------------------------------------
     # Operators
@@ -1060,7 +1102,9 @@ class BlockBase(ABC):
     
     # def __isub__(self, other: ContentType):
     #     self.
-        
+    
+    
+    
         
     
     
@@ -1096,6 +1140,10 @@ class Block(BlockBase):
     #     block = self.promote_block_content(content, style=style, tags=tags, role=role)
     #     self.append_block_child(block)
     #     return block
+    
+    
+    def __repr__(self) -> str:
+        return f"""Block(content="{str(self.content_str)}", children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
 
 
 
@@ -1145,11 +1193,16 @@ class BlockSchema(BlockBase):
         self.type = type
     
     
-    def instantiate(self) -> "Block":
+    def instantiate(
+        self, 
+        content: ContentType | None = None,
+        ignore_style: bool = False,
+        ignore_tags: bool = False,
+    ) -> "Block":
         return Block(
-            content=self.name,
-            tags=self.tags,
-            styles=self.styles,
+            content=content or self.name,
+            tags=self.tags if not ignore_tags else None,
+            styles=self.styles if not ignore_style else None,
             role=self.role,
         )
 
@@ -1200,3 +1253,8 @@ class BlockSchema(BlockBase):
             else:
                 # Keep searching deeper
                 self._extract_nested_schemas(child, parent_schema)
+                
+                
+                
+    def __repr__(self) -> str:
+        return f"""BlockSchema(name="{self.name}", type={self.type}, children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
