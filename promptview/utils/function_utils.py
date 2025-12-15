@@ -121,3 +121,5 @@ def contextcallable(func: Callable[P, Awaitable[R]]) -> Callable[P, ContextFutur
 
 
 
+def is_overridden(cls, method_name, base_cls):
+    return getattr(cls, method_name) is not getattr(base_cls, method_name)

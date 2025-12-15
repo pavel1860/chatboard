@@ -40,7 +40,7 @@ class XmlParser(Process):
         
     @property
     def result(self):
-        return self.context._root
+        return self.context.result
     
     def feed(self, chunk: "BlockChunk", isfinal=False):
         from xml.parsers.expat import ExpatError
@@ -82,7 +82,7 @@ class XmlParser(Process):
             self.feed(BlockChunk(content=f"</{self.root_tag}>"))        
         self.parser.Parse(b'', True)
         # Flush any pending event
-        # self._flush_pending(self.total_bytes)
+        self._flush_pending(self.total_bytes)
     
     def _get_chunks_in_range(self, start, end):
         """
@@ -166,22 +166,18 @@ class XmlParser(Process):
             name, attrs = event_data
             if name == self.root_tag:
                 return
-            block = self.context.instantiate(name, chunks, attrs=attrs, ignore_style=True, ignore_name=True)
+            block = self.context.instantiate(name, chunks, attrs=attrs, style=None)
             self._push_block(block)
-            # self._push_block_list(blocks)
-            # print(f"StartElement '{name}' {attrs or ''} from chunks: {metas}")
         elif event_type == 'end':
+            name = event_data
+            if name == self.root_tag:
+                return
             view = self.context.commit(chunks)
-            self._push_block(view)
-            # self._push_block(view.postfix)
-            # self.build_ctx.commit_view()
-            # print(f"EndElement '{event_data}' from chunks: {metas}")
+            self._push_block(view)            
         elif event_type == 'chardata':            
             for chunk in chunks:
                 cb = self.context.append(chunk)
-                self._push_block(cb)
-            # print(f"CharData {repr(event_data)} from chunks: {metas}")
-        
+                self._push_block(cb)        
         self.pending = None
     
     

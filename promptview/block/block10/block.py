@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+from enum import Enum
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
 from typing import Any, Generator, Iterator, Literal, Self, Type, TYPE_CHECKING, TypeVar, overload
@@ -9,7 +10,7 @@ from abc import ABC
 from .chunk import BlockChunk, BlockText
 from .span import Span, SpanAnchor, VirtualBlockText
 from .path import Path
-
+from ...utils.type_utils import UNSET, UnsetType
 if TYPE_CHECKING:
     pass
 
@@ -32,6 +33,7 @@ def parse_style(style: str | list[str] | None) -> list[str]:
 
 ContentType = str | list[str] | list[BlockChunk] | BlockChunk
 PathType = str | list[int] | int | Path
+
 
 
 class BlockBase(ABC):
@@ -142,6 +144,8 @@ class BlockBase(ABC):
     
     @property
     def content_str(self) -> str:
+        if self.is_wrapper:
+            return ""
         content = self.content
         text = content.block_text.text()
         return text
@@ -767,8 +771,8 @@ class BlockBase(ABC):
         )
 
         # Remap the block's span and update BlockText reference for entire subtree
-        if inserted_chunks:
-            self._remap_block_text(block, self.block_text)
+        # Always remap, even for wrapper blocks with no chunks, so they use parent's block_text
+        self._remap_block_text(block, self.block_text)
 
         # Add to children list
         self.children.append(block)
@@ -1310,17 +1314,15 @@ class BlockSchema(BlockBase):
     def instantiate(
         self, 
         content: ContentType | None = None,
-        style: str | None = None,
-        role: str | None = None,
-        tags: list[str] | None = None,
-        ignore_style: bool = False,
-        ignore_tags: bool = False,
-        ignore_name: bool = False,
+        style: str | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET
     ) -> "Block":
-        styles = (parse_style(style) or self.styles) if not ignore_style else None
-        tags = (tags or self.tags) if not ignore_tags else None
+        styles = (parse_style(style) or self.styles) if style is not UNSET and style is not None else None
+        tags = (tags or self.tags) if tags is not UNSET and tags is not None else None
+        role = role or self.role if role is not UNSET and role is not None else None
         return Block(
-            content=content or (self.name if not ignore_name else None),
+            content=content or (self.name if not role else None),
             tags=tags,
             styles=styles,
             role=role or self.role,
@@ -1338,13 +1340,14 @@ class BlockSchema(BlockBase):
             A new BlockSchema tree with only schema nodes
         """
         # Create a copy of this schema (without children)
-        new_schema = self.__class__(
-            name=self.name,
-            type=self.type,
-            role=self.role,
-            styles=list(self.styles),
-            tags=list(self.tags),
-        )
+        # new_schema = self.__class__(
+        #     name=self.name,
+        #     type=self.type,
+        #     role=self.role,
+        #     styles=list(self.styles),
+        #     tags=list(self.tags),
+        # )
+        new_schema = self.model_copy()
 
         # Recursively extract schemas from children
         for child in self.children:
@@ -1663,10 +1666,17 @@ class BlockListSchema(BlockSchema):
     """
     BlockListSchema is a schema for a list of blocks.
     """
+    __slots__ = [
+        "item_name",
+        "list_schemas",
+        "list_models",
+        "key",
+    ]
     
     def __init__(
         self, 
-        name: str,
+        item_name: str,
+        name: str | None = None,
         key: str | None = None,
         type: Type | None = None, 
         children: list["BlockSchema"] | None = None, 
@@ -1680,9 +1690,11 @@ class BlockListSchema(BlockSchema):
     ):
         if not styles:
             styles = ["xml-list"]
-        super().__init__("", type, children, role, tags, style, parent, styles, block_text, _skip_content)
+        name = name or f"{item_name}_list"
+        super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content)
         self.name = name
-        self.tags.insert(0, f"{name}_list")
+        self.item_name = item_name
+        self.tags.insert(0, name)
         self.list_schemas = []
         self.list_models = {}
         self.key = key
@@ -1692,14 +1704,15 @@ class BlockListSchema(BlockSchema):
         self,
         content: ContentType | None = None,
         children: list["BlockSchema"] | None = None,
-        ignore_style: bool = False,
-        ignore_tags: bool = False,
+        style: str | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET
     ) -> "BlockList":
         return BlockList(
             # content or self.name,
             children=children,
-            tags=self.tags if not ignore_tags else None,
-            styles=self.styles if not ignore_style else None,
+            tags=self.tags if tags is not UNSET and tags is not None else None,
+            styles=self.styles if style is not UNSET and style is not None else None,
             role=self.role,
         )
         
@@ -1708,10 +1721,11 @@ class BlockListSchema(BlockSchema):
         self,
         value: Any,
         content: ContentType | None = None,
-        ignore_style: bool = False,
-        ignore_tags: bool = False,
+        style: str | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET
     ) -> "Block":
-        blk = super().instantiate(value,ignore_tags=ignore_tags,ignore_style=ignore_style)
+        blk = super().instantiate(value, style=style, role=role, tags=tags)
         return blk
     
     
@@ -1731,6 +1745,7 @@ class BlockListSchema(BlockSchema):
     
     def model_copy(self, copy_content: bool = False, fork_block_text: bool = False, copy_children: bool = True) -> "BlockListSchema":
         block = BlockListSchema(
+            item_name=self.item_name,
             name=self.name,
             key=self.key,
             type=self.type,

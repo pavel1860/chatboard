@@ -3,8 +3,12 @@ import copy
 from dataclasses import dataclass, field
 import textwrap
 from typing import Generator, Literal, Type
-from promptview.block.block10.block import BlockBase, Block
+from .block import BlockBase, Block, BlockSchema, ContentType, BlockListSchema
+from .chunk import BlockChunk
 import contextvars
+from ...utils.function_utils import is_overridden
+from ...utils.type_utils import UNSET, UnsetType
+
 
 
 
@@ -47,7 +51,7 @@ class StyleMeta(type):
         renderers = []
         for style in styles:
             if style_cls := current.get(style): 
-                if style_cls.target.issubset(targets):               
+                if style_cls.target in targets:               
                     renderers.append(style_cls)
         if not renderers and default is not None:
             return [default]
@@ -75,8 +79,6 @@ class RenderContext:
     
 class BaseTransformer(metaclass=StyleMeta):
     styles = []
-    target = {"block"}
-    effects = "all"
     
     def __init__(self, block: BlockBase):
         self.block = block
@@ -85,11 +87,22 @@ class BaseTransformer(metaclass=StyleMeta):
         raise NotImplementedError("Subclass must implement this method")
     
     
+    def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
+        raise NotImplementedError("Subclass must implement this method")
     
+    def append(self, block: BlockBase, chunk: BlockChunk) -> BlockBase:
+        raise NotImplementedError("Subclass must implement this method")
     
+    def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
+        raise NotImplementedError("Subclass must implement this method")
+    
+
+
+
 class ContentTransformer(BaseTransformer):
     styles = ["content"]
-    target = {"content"}
+    target = "content"
+    
     
     def render(self, block: BlockBase) -> BlockBase:
         block.postfix_append("\n")
@@ -98,9 +111,8 @@ class ContentTransformer(BaseTransformer):
 
 
 
-class MarkdownHeaderTransformer(BaseTransformer):
+class MarkdownHeaderTransformer(ContentTransformer):
     styles = ["markdown", "md"]
-    target = {"content"}
     
     def render(self, block: BlockBase) -> BlockBase:
         # block.prefix_prepend("#" * len(block.path) + " ")
@@ -111,9 +123,8 @@ class MarkdownHeaderTransformer(BaseTransformer):
         return block
 
 
-class XmlTransformer(BaseTransformer):
+class XmlTransformer(ContentTransformer):
     styles = ["xml"]
-    target = {"content"}
     
     def render(self, block: BlockBase) -> BlockBase:
         if len(block) == 0:
@@ -125,6 +136,20 @@ class XmlTransformer(BaseTransformer):
             blk /= "</" & content & ">"
         return blk
     
+    def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
+        with Block( style=style, role=role, tags=tags) as blk:
+            blk /= content
+        return blk
+    
+    def append(self, block: BlockBase, chunk: BlockChunk) -> BlockBase:
+        # block.append(chunk, sep="")
+        print(repr(chunk.content), chunk.isspace())
+        block.children[0].append(chunk, sep="")
+        return block
+    
+    def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
+        block /= content
+        return block
     
 class XmlListTransformer(BaseTransformer):
     styles = ["xml-list"]
@@ -135,38 +160,85 @@ class XmlListTransformer(BaseTransformer):
         return block
     
     
-def build_fiber_context(block: BlockBase) -> RenderContext:    
-    # add default block renderer
-    renderers = OrderedDict[str, BaseTransformer]({
-        "ContentTransformer": ContentTransformer(block)
-    })
     
-    renderers.update({r.__class__.__name__: r for r in ctx.ctx_renderers if r.target.issubset({"children", "tree", "subtree"})})
+class BlockTransformer:
     
-    renderers.update({r.__class__.__name__: r(block) for r in StyleMeta.resolve(block.styles, {"content"})})
-    renderers.update({r.__class__.__name__: r(block) for r in StyleMeta.resolve(block.styles, {"block"})})
-    renderers.update({r.__class__.__name__: r(block) for r in StyleMeta.resolve(block.styles, {"tree"})})
+    def __init__(self, block_schema: BlockSchema, transformers: list[BaseTransformer]):
+        self.block_schema = block_schema
+        self._block = None
+        transformer_lookup = {}
+        for t in transformers:
+            transformer_lookup[t.target] = t
+        self.transformer_lookup = transformer_lookup
         
-    children_renderers = OrderedDict[str, BaseTransformer]({r.__class__.__name__: r for r in ctx.ctx_renderers if r.target.issubset({"tree", "subtree"})})
-    children_renderers.update({r.__class__.__name__: r(block) for r in StyleMeta.resolve(block.styles, {"children"})})
-    children_renderers.update({r.__class__.__name__: r(block) for r in StyleMeta.resolve(block.styles, {"subtree"})})
+    @classmethod
+    def from_block_schema(cls, block: BlockSchema) -> "BlockTransformer":
+        transformers = StyleMeta.resolve(
+            block.styles,
+            targets={"content"},
+        )    
+        return cls(block, [transformer(block) for transformer in transformers])
+    
+    @property
+    def block(self) -> BlockBase:
+        if self._block is None:
+            raise RuntimeError("Block not instantiated")
+        return self._block
+    
+    @property
+    def is_list(self) -> bool:
+        return isinstance(self.block_schema, BlockListSchema)
+        
+    def render(self, block: BlockBase) -> BlockBase:
+        render_order = ["content"]
+        for trans_type in render_order:
+            if transformer := self.transformer_lookup.get(trans_type):
+                block = transformer.render(block)
+            else:
+                raise ValueError(f"Transformer for {trans_type} not found")
+        return block
+    
+    def instantiate(
+        self,
+        content: ContentType | None = None,
+        style: str | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+    ) -> BlockBase:
+        content_transformer = self.transformer_lookup.get("content")
+        if content_transformer is None or not is_overridden(self.block_schema.__class__, "instantiate", BaseTransformer):
+            self._block = self.block_schema.instantiate(content=content, style=style, role=role, tags=tags)        
+        else:
+            self._block = content_transformer.instantiate(
+                content=content, 
+                style=style if style is not UNSET else None, 
+                role=role if role is not UNSET else self.block_schema.role, 
+                tags=tags if tags is not UNSET else self.block_schema.tags,
+            )
+        return self._block
+    
+    
+    def append(self, chunk: BlockChunk):
+        content_transformer = self.transformer_lookup.get("content")
+        if content_transformer is None or not is_overridden(content_transformer.__class__, "append", BaseTransformer):
+            self.block.append(chunk, sep="")
+        else:
+            content_transformer.append(self.block, chunk)
+            
+            
+    def append_child(self, child: "BlockTransformer"):
+        block = self.block.append_child(child.block, copy=False)
+        return child
 
+    def commit(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
+        content_transformer = self.transformer_lookup.get("content")
+        if content_transformer is None or not is_overridden(content_transformer.__class__, "commit", BaseTransformer):
+            return 
+        if content is not None:    
+            content_transformer.commit(self.block, content=content, style=style, role=role, tags=tags)
+        return content_transformer
     
-    new_ctx = RenderContext(
-        # max_path_len=ctx.max_path_len,
-        # max_path=ctx.max_path,
-        # num_blocks=ctx.num_blocks,
-        # index=ctx.index + 1,
-        # depth=ctx.depth + (1 if not block.is_wrapper else 0),
-        # total_depth=ctx.total_depth + 1,
-        renderers=list(renderers.values()),
-        ctx_renderers=list(children_renderers.values()),
-        ctx_block=block,
-        # parent_ctx=ctx,
-        # is_wrapper=block.is_wrapper
-    )
     
-    return new_ctx
   
     
     
@@ -211,11 +283,23 @@ def transform(block: BlockBase) -> BlockBase:
     return new_block
     
     
+def gather_transformers(block: BlockSchema) -> dict[str, BlockTransformer]:
+    """
+    Gather all transformers for block tree.
     
-    
-    
-    
-# def render(source_block: BlockBase) -> str:
-    # block = source_block.copy()
-    # transform(block)
-    # return block.render()
+    """
+    transformers_lookup = {}
+    for child in block.children:
+        transformers_lookup.update(gather_transformers(child))
+
+    # Copy this block's metadata and content (not children)
+    new_block = block.copy_metadata()
+
+    # Apply style renderers to the new block
+    renderers = StyleMeta.resolve(
+        new_block.styles,
+        {"content"},
+        # default=ContentTransformer
+    )    
+    transformers_lookup.update({block.path: BlockTransformer(new_block, [renderer(new_block) for renderer in renderers])})
+    return transformers_lookup

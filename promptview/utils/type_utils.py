@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime, date, time
-
+from enum import Enum
 from promptview.model.base.base_namespace import Serializable
 
 
@@ -73,3 +73,18 @@ def deserialize_value(value: DeserializableType, hint: str) -> SerializableType:
     elif _type == time:
         return time.fromisoformat(value)
     return _type(value)
+
+
+
+
+
+class UnsetType(Enum):
+    UNSET = "UNSET"
+    
+    def __repr__(self):
+        return "UNSET"
+    
+    def __bool__(self):
+        return False
+
+UNSET = UnsetType.UNSET
