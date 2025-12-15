@@ -138,7 +138,8 @@ class BlockChunk:
         
     @property
     def is_line_end(self) -> bool:
-        return self.content.endswith("\n")
+        return "\n" in self.content
+        # return self.content.endswith("\n")
 
     
     def isspace(self) -> bool:

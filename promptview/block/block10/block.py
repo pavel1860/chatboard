@@ -526,6 +526,14 @@ class BlockBase(ABC):
                     content = content + [BlockChunk(content=sep)]
         return content
     
+    def _split_new_lines(self, chunks: list[BlockChunk]) -> list[list[BlockChunk]]:
+        parts = [[]]
+        for i, chunk in enumerate(chunks):
+            parts[-1].append(chunk)
+            if chunk.is_line_end and i < len(chunks) - 1:
+                parts.append([])
+        return parts
+    
     def append(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=True)
@@ -535,6 +543,20 @@ class BlockBase(ABC):
             self.span = Span.from_chunks(chunks)
         else:
             self.span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
+    
+    # def append(self, content: ContentType, sep: str | None = " "):
+    #     content = self.promote_content(content)
+    #     content = self._append_separator(content, sep, append=True)
+    #     contentparts = self._split_new_lines(content)
+    #     chunks = self.block_text.extend(contentparts[0], after=self.content_end_chunk)
+    #     if self.span is None:
+    #         # Wrapper block becoming a content block
+    #         self.span = Span.from_chunks(chunks)
+    #     else:
+    #         self.span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
+    #     for contentpart in contentparts[1:]:
+    #         self.append_child(contentpart)
+
 
     def prepend(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)

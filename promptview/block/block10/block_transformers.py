@@ -143,7 +143,7 @@ class XmlTransformer(ContentTransformer):
     
     def append(self, block: BlockBase, chunk: BlockChunk) -> BlockBase:
         # block.append(chunk, sep="")
-        print(repr(chunk.content), chunk.isspace())
+        # print(repr(chunk.content), chunk.isspace())
         block.children[0].append(chunk, sep="")
         return block
     
