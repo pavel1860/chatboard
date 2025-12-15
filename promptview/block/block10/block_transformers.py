@@ -119,15 +119,20 @@ class XmlTransformer(BaseTransformer):
         if len(block) == 0:
             block = "<" & block & "/>\n"
             return block
-        # elif len(block) == 1:
-        #     block = "<" & block & ">"
-        # else:
-        #     block = "<" & block & ">\n"
         content = block.content
         with Block() as blk:
             blk /= "<" & block & ">"
             blk /= "</" & content & ">"
         return blk
+    
+    
+class XmlListTransformer(BaseTransformer):
+    styles = ["xml-list"]
+    target = {"content"}
+    
+    def render(self, block: BlockBase) -> BlockBase:
+        # block /= "{... more items}"
+        return block
     
     
 def build_fiber_context(block: BlockBase) -> RenderContext:    

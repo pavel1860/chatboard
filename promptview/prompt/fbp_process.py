@@ -878,9 +878,8 @@ from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
 import json
 import asyncio
 
-from ..evaluation.decorators import EvalCtx
+
 from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
-from ..block.block10.block_builder import StreamingBlockBuilder
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
     from ..block import Block, BlockChunk, BlockSchema, BaseBlock
@@ -1423,6 +1422,7 @@ class ObservableProcess(Process):
         """
         from .injector import resolve_dependencies_kwargs
         from ..llms import LLM, LlmConfig
+        from ..evaluation.decorators import EvalCtx
         
         
         self._data_flow = await self.ctx.start_span(
@@ -2527,10 +2527,14 @@ class FlowRunner:
 # Phase 5: Parser Integration
 # ============================================================================
 
+class ParserError(Exception):
+    pass
+
+
 class Parser(Process):
     def __init__(self, schema: "BlockSchema"):
         from xml.parsers import expat
-        from ..block.block9.block import BlockChunk
+        from ..block import BlockChunk
         super().__init__()
         self.schema = schema
         self.build_ctx = StreamingBlockBuilder(schema)
@@ -2557,6 +2561,7 @@ class Parser(Process):
         return self.build_ctx.result
     
     def feed(self, chunk: "BlockChunk", isfinal=False):
+        from xml.parsers.expat import ExpatError
         # print(chunk.content)
         # data = chunk.content.encode() if isinstance(chunk.data, str) else chunk.data
         data = chunk.content.encode("utf-8")
@@ -2564,7 +2569,14 @@ class Parser(Process):
         end = start + len(data)
         self.chunks.append((start, end, chunk))
         self.total_bytes = end
-        self.parser.Parse(data, isfinal)
+        try:
+            self.parser.Parse(data, isfinal)
+        except ExpatError as e:
+            if e.code == 4:
+                raise ParserError(f"Invalid XML token: {data}")
+            else:
+                raise e
+
         
         
     def _push_block(self, block: "BaseBlock"):
@@ -2580,7 +2592,7 @@ class Parser(Process):
         return len(self.chunk_queue) > 0
     
     def close(self):
-        from ..block.block9.block import BlockChunk
+        from ..block import BlockChunk
         if self._has_synthetic_root_tag:
             self.feed(BlockChunk(content=f"</{self.schema.name}>"))        
         self.parser.Parse(b'', True)
@@ -2605,7 +2617,7 @@ class Parser(Process):
         Returns:
             List of BlockChunk objects, potentially split at byte boundaries
         """
-        from ..block.block9.block import BlockChunk
+        from ..block import BlockChunk
 
         result = []
         for chunk_start, chunk_end, chunk in self.chunks:
@@ -2651,8 +2663,8 @@ class Parser(Process):
                     split_chunk = BlockChunk(
                         content=sliced_content,
                         logprob=chunk.logprob,
-                        prefix=chunk.prefix if slice_start == 0 else "",
-                        postfix=chunk.postfix if slice_end == len(content_bytes) else "",
+                        # prefix=chunk.prefix if slice_start == 0 else "",
+                        # postfix=chunk.postfix if slice_end == len(content_bytes) else "",
                     )
                     result.append(split_chunk)
         return result
@@ -2667,12 +2679,14 @@ class Parser(Process):
         # print(event_type)
         if event_type == 'start':
             name, attrs = event_data
-            blocks = self.build_ctx.open_view(name, chunks, attrs=attrs, ignore_style=True)
-            self._push_block_list(blocks)
+            block = self.build_ctx.open_view(name, chunks, attrs=attrs, ignore_style=True)
+            self._push_block(block)
+            # self._push_block_list(blocks)
             # print(f"StartElement '{name}' {attrs or ''} from chunks: {metas}")
         elif event_type == 'end':
             view = self.build_ctx.close_view(chunks)
-            self._push_block(view.postfix)
+            self._push_block(view)
+            # self._push_block(view.postfix)
             # self.build_ctx.commit_view()
             # print(f"EndElement '{event_data}' from chunks: {metas}")
         elif event_type == 'chardata':
@@ -2759,7 +2773,7 @@ class Parser2(Process):
         """
         super().__init__(upstream)
         from lxml import etree
-        from ..block.block9.block_schema import BlockBuilderContext
+        from ..block import BlockBuilderContext
         
         self.start_tag = "tag_start"
         self.end_tag = "tag_end"

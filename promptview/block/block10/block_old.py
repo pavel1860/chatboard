@@ -19,7 +19,7 @@ from typing import Any, Iterator, Type, TYPE_CHECKING, overload
 from uuid import uuid4
 from abc import ABC
 
-from .chunk import Chunk, BlockText
+from .chunk import BlockChunk, BlockText
 from .span import Span, SpanAnchor, VirtualBlockText
 
 if TYPE_CHECKING:
@@ -477,7 +477,7 @@ class Block(BlockBase):
             self._text = VirtualBlockText(self._ensure_source())
         return self._text
 
-    def set_text(self, content: str) -> Chunk:
+    def set_text(self, content: str) -> BlockChunk:
         """
         Set the text content (tag name/header) from a string.
 
@@ -492,7 +492,7 @@ class Block(BlockBase):
         source = self._ensure_source()
 
         # Create chunk with the content
-        chunk = Chunk(content=content)
+        chunk = BlockChunk(content=content)
         source.append(chunk)
 
         # Create VirtualBlockText with span covering the chunk
@@ -504,7 +504,7 @@ class Block(BlockBase):
 
         return chunk
 
-    def set_text_from_chunk(self, chunk: Chunk) -> None:
+    def set_text_from_chunk(self, chunk: BlockChunk) -> None:
         """
         Set the text content from an existing chunk.
 
@@ -536,7 +536,7 @@ class Block(BlockBase):
         self._source = source
         self._text = VirtualBlockText(source, [span])
 
-    def append_text(self, content: str) -> Chunk:
+    def append_text(self, content: str) -> BlockChunk:
         """
         Append text to end of this block's text content.
 
@@ -549,7 +549,7 @@ class Block(BlockBase):
         source = self._ensure_source()
         text = self._ensure_text()
 
-        new_chunk = Chunk(content=content)
+        new_chunk = BlockChunk(content=content)
 
         if text.spans:
             # Insert after last chunk of last span
@@ -568,7 +568,7 @@ class Block(BlockBase):
 
         return new_chunk
 
-    def prepend_text(self, content: str) -> Chunk:
+    def prepend_text(self, content: str) -> BlockChunk:
         """
         Prepend text to beginning of this block's text content.
 
@@ -581,7 +581,7 @@ class Block(BlockBase):
         source = self._ensure_source()
         text = self._ensure_text()
 
-        new_chunk = Chunk(content=content)
+        new_chunk = BlockChunk(content=content)
 
         if text.spans:
             # Insert before first chunk of first span

@@ -12,8 +12,9 @@ from ..model.versioning.models import Branch, ExecutionSpan, SpanType, Turn, Tur
 from dataclasses import dataclass
 from .events import StreamEvent
 from ..utils.function_utils import call_function
-from ..block import Block
+
 if TYPE_CHECKING:
+    from ..block import Block
     from fastapi import Request
     from .span_tree import SpanTree
     from ..evaluation.eval_context import EvaluationContext
@@ -72,7 +73,7 @@ class Context(BaseModel):
     _evaluation_context: "EvaluationContext | None" = None  # Evaluation context if in eval mode
     _index: int = 0
     events: list[StreamEvent] = []
-    message: Block | None = None
+    message: "Block | None" = None
     state: dict | None = None
     
     
@@ -83,7 +84,7 @@ class Context(BaseModel):
         turn: Turn | None = None,
         branch_id: int | None = None,
         turn_id: int | None = None,
-        message: Block | None = None,
+        message: "Block | None" = None,
         state: dict | None = None,        
         request: "Request | None" = None,
         auth: AuthModel | None = None,

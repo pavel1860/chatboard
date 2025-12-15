@@ -27,14 +27,15 @@ Example Usage:
     block.append_text("!")  # Edit the response
 """
 
-from .chunk import Chunk, BlockText
+from .chunk import BlockChunk, BlockText
 from .span import SpanAnchor, Span, VirtualBlockText
-from .block import BlockBase, Block, BlockSchema
+from .block import BlockBase, Block, BlockSchema, BlockListSchema
 from .path import Path
-
+from .block_builder import BlockBuilderContext
+from .block_parsers import XmlParser
 __all__ = [
     # Core data structures
-    "Chunk",
+    "BlockChunk",
     "BlockText",
     "SpanAnchor",
     "Span",
@@ -43,8 +44,12 @@ __all__ = [
     "BlockBase",
     "Block",
     "BlockSchema",
+    "BlockListSchema",
     # Path
     "Path",
+    # BlockBuilder
+    "BlockBuilderContext",
+    "XmlParser",
     # "BlockSchema",
     # "AttrSchema",
 ]

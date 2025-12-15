@@ -1,7 +1,7 @@
 from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, TYPE_CHECKING, Type
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from ..prompt import PipeController, SpanTree
+from ..prompt import PipeController
 from ..prompt.context import Context
 from ..prompt.flow_components import EventLogLevel, FlowRunner
 from ..block.util import StreamEvent

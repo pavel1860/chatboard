@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Iterator, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .chunk import Chunk, BlockText
+    from .chunk import BlockChunk, BlockText
 
 
 @dataclass
@@ -38,7 +38,7 @@ class SpanAnchor:
         end = SpanAnchor(chunk, 5)        # Points to ' ' (after "Hello")
     """
 
-    chunk: "Chunk"
+    chunk: "BlockChunk"
     offset: int
 
     def __post_init__(self):
@@ -159,7 +159,7 @@ class Span:
     
     
     @classmethod
-    def from_chunks(cls, chunks: list["Chunk"]) -> Span:
+    def from_chunks(cls, chunks: list["BlockChunk"]) -> Span:
         if len(chunks) == 0:
             return cls(start=SpanAnchor(chunk=None, offset=0), end=SpanAnchor(chunk=None, offset=0))
         if len(chunks) == 1:
@@ -196,7 +196,7 @@ class Span:
 
         return "".join(result)
 
-    def chunks(self) -> Iterator["Chunk"]:
+    def chunks(self) -> Iterator["BlockChunk"]:
         """
         Iterate over chunks covered by this span.
 
@@ -240,7 +240,7 @@ class Span:
         """Create a copy of this span (same chunk references)."""
         return Span(start=self.start.copy(), end=self.end.copy())
 
-    def contains_chunk(self, chunk: "Chunk") -> bool:
+    def contains_chunk(self, chunk: "BlockChunk") -> bool:
         """Check if this span covers any part of the given chunk."""
         for c in self.chunks():
             if c == chunk:
@@ -249,10 +249,10 @@ class Span:
 
     def adjust_for_split(
         self,
-        original_chunk: "Chunk",
+        original_chunk: "BlockChunk",
         split_offset: int,
-        left_chunk: "Chunk",
-        right_chunk: "Chunk",
+        left_chunk: "BlockChunk",
+        right_chunk: "BlockChunk",
     ) -> None:
         """
         Adjust span anchors after a chunk is split.
@@ -383,7 +383,7 @@ class VirtualBlockText:
         """Length is the total content length."""
         return self.length()
 
-    def chunks(self) -> Iterator["Chunk"]:
+    def chunks(self) -> Iterator["BlockChunk"]:
         """
         Iterate over all chunks covered by this view.
 
@@ -396,7 +396,7 @@ class VirtualBlockText:
         for span in self.spans:
             yield from span.chunks()
 
-    def unique_chunks(self) -> list["Chunk"]:
+    def unique_chunks(self) -> list["BlockChunk"]:
         """
         Get unique chunks covered by this view, in order.
 
@@ -411,7 +411,7 @@ class VirtualBlockText:
                 result.append(chunk)
         return result
 
-    def find_position(self, offset: int) -> tuple["Chunk", int]:
+    def find_position(self, offset: int) -> tuple["BlockChunk", int]:
         """
         Find the chunk and offset for a logical position in this view.
 
@@ -437,7 +437,7 @@ class VirtualBlockText:
 
         raise ValueError(f"Offset {offset} exceeds view length {self.length()}")
 
-    def _find_position_in_span(self, span: Span, offset: int) -> tuple["Chunk", int]:
+    def _find_position_in_span(self, span: Span, offset: int) -> tuple["BlockChunk", int]:
         """Find position within a single span."""
         current_chunk = span.start.chunk
         current_offset = span.start.offset + offset
@@ -472,10 +472,10 @@ class VirtualBlockText:
 
     def adjust_for_split(
         self,
-        original_chunk: "Chunk",
+        original_chunk: "BlockChunk",
         split_offset: int,
-        left_chunk: "Chunk",
-        right_chunk: "Chunk",
+        left_chunk: "BlockChunk",
+        right_chunk: "BlockChunk",
     ) -> None:
         """
         Adjust all spans after a chunk split.

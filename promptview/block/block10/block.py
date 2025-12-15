@@ -2,11 +2,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pydantic_core import core_schema
 from pydantic import BaseModel, GetCoreSchemaHandler
-from typing import Any, Iterator, Type, TYPE_CHECKING, overload
+from typing import Any, Generator, Iterator, Literal, Type, TYPE_CHECKING, TypeVar, overload
 from uuid import uuid4
 from abc import ABC
 
-from .chunk import Chunk, BlockText
+from .chunk import BlockChunk, BlockText
 from .span import Span, SpanAnchor, VirtualBlockText
 from .path import Path
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 
 # Type alias for chunk mapping during copy
-ChunkMap = dict[str, Chunk]  # old_chunk_id -> new_chunk
+ChunkMap = dict[str, BlockChunk]  # old_chunk_id -> new_chunk
 
 
 def _generate_id() -> str:
@@ -30,7 +30,7 @@ def parse_style(style: str | list[str] | None) -> list[str]:
     else:
         return []
 
-ContentType = str | list[str] | list[Chunk] | Chunk
+ContentType = str | list[str] | list[BlockChunk] | BlockChunk
 PathType = str | list[int] | int | Path
 
 
@@ -106,7 +106,7 @@ class BlockBase(ABC):
     @property
     def is_wrapper(self) -> bool:
         """Check if this is a wrapper block (no content)."""
-        return self._span is None
+        return self._span is None or self._span.is_empty
 
     @property
     def content(self) -> "BlockBase":
@@ -162,23 +162,23 @@ class BlockBase(ABC):
         return self
 
     @property
-    def content_end_chunk(self) -> Chunk | None:
+    def content_end_chunk(self) -> BlockChunk | None:
         """Get the last chunk of content span, or None if wrapper."""
         return self._span.end.chunk if self._span else None
 
     @property
-    def content_start_chunk(self) -> Chunk | None:
+    def content_start_chunk(self) -> BlockChunk | None:
         """Get the first chunk of content span, or None if wrapper."""
         return self._span.start.chunk if self._span else None
     
     @property
-    def end_postfix_chunk(self) -> Chunk | None:
+    def end_postfix_chunk(self) -> BlockChunk | None:
         if self._postfix_span is None:
             return self.content_end_chunk
         return self._postfix_span.end.chunk
     
     @property
-    def start_prefix_chunk(self) -> Chunk | None:
+    def start_prefix_chunk(self) -> BlockChunk | None:
         if self._prefix_span is None:
             return self.content_start_chunk
         return self._prefix_span.start.chunk
@@ -188,7 +188,7 @@ class BlockBase(ABC):
     # -------------------------------------------------------------------------
 
     @property
-    def start_chunk(self) -> Chunk | None:
+    def start_chunk(self) -> BlockChunk | None:
         """
         Get the first chunk of this block's entire subtree.
 
@@ -211,7 +211,7 @@ class BlockBase(ABC):
             return None
 
     @property
-    def end_chunk(self) -> Chunk | None:
+    def end_chunk(self) -> BlockChunk | None:
         """
         Get the last chunk of this block's entire subtree.
 
@@ -233,7 +233,7 @@ class BlockBase(ABC):
             # Empty wrapper block
             return None
 
-    def get_boundaries(self) -> tuple[Chunk | None, Chunk | None]:
+    def get_boundaries(self) -> tuple[BlockChunk | None, BlockChunk | None]:
         """
         Get the start and end chunks of this block's entire subtree.
 
@@ -248,7 +248,7 @@ class BlockBase(ABC):
         """
         return (self.start_chunk, self.end_chunk)
 
-    def get_chunks(self) -> list[Chunk]:
+    def get_chunks(self) -> list[BlockChunk]:
         """
         Get all chunks within this block's boundaries.
 
@@ -271,7 +271,7 @@ class BlockBase(ABC):
         return chunks
     
     
-    def set_block_text(self, chunks: list[Chunk], block_text: BlockText):
+    def set_block_text(self, chunks: list[BlockChunk], block_text: BlockText):
         self._block_text = block_text
         self._span = Span.from_chunks(chunks)
         return self
@@ -484,17 +484,17 @@ class BlockBase(ABC):
         return result
 
 
-    def promote_content(self, content: "ContentType") -> list[Chunk]:
+    def promote_content(self, content: "ContentType") -> list[BlockChunk]:
         """
         Convert content to a list of Chunks.
 
         Note: None is not accepted - wrapper blocks should not call this method.
         """
         if isinstance(content, str):
-            return [Chunk(content)]
+            return [BlockChunk(content)]
         elif isinstance(content, list):
             return content
-        elif isinstance(content, Chunk):
+        elif isinstance(content, BlockChunk):
             return [content]
         else:
             raise ValueError(f"Invalid content type: {type(content)}")
@@ -508,26 +508,34 @@ class BlockBase(ABC):
             content = self.promote_content(content)
             return Block(content=content, block_text=self._block_text, style=style, tags=tags, role=role)    
         
-    def _append_separator(self, content: list[Chunk], sep: str | None, append: bool = True):
+    def _append_separator(self, content: list[BlockChunk], sep: str | None, append: bool = True):
         if sep:
             if not content[-1].is_line_end:
                 if append:
-                    content = [Chunk(content=sep)] + content
+                    content = [BlockChunk(content=sep)] + content
                 else:
-                    content = content + [Chunk(content=sep)]
+                    content = content + [BlockChunk(content=sep)]
         return content
     
     def append(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=True)
         chunks = self._block_text.extend(content, after=self.content_end_chunk)
-        self._span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
-        
+        if self._span is None:
+            # Wrapper block becoming a content block
+            self._span = Span.from_chunks(chunks)
+        else:
+            self._span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
+
     def prepend(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=False)
         chunks = self._block_text.left_extend(content, before=self.content_start_chunk)
-        self._span.start = SpanAnchor(chunk=chunks[0], offset=0)
+        if self._span is None:
+            # Wrapper block becoming a content block
+            self._span = Span.from_chunks(chunks)
+        else:
+            self._span.start = SpanAnchor(chunk=chunks[0], offset=0)
         
     def postfix_append(self, content: ContentType, sep: str | None = ""):
         content = self.promote_content(content)
@@ -907,7 +915,7 @@ class BlockBase(ABC):
     # -------------------------------------------------------------------------
     
     def add_new_line(self):
-        self.postfix_append(Chunk(content="\n"))
+        self.postfix_append(BlockChunk(content="\n"))
         
         
         
@@ -944,6 +952,22 @@ class BlockBase(ABC):
         self.append_block_child(schema_block)
         return schema_block
     
+    
+    def view_list(
+        self,
+        name: str,
+        key: str | None = None,
+        tags: list[str] | None = None,
+        style: str | None = None,
+    ) -> "BlockListSchema":
+        schema_block = BlockListSchema(
+            name,
+            key,
+            tags=tags,
+            styles=["xml-list"] if style is None else parse_style(style),
+        )
+        self.append_block_child(schema_block)
+        return schema_block
     
     # -------------------------------------------------------------------------
     # Debug methods
@@ -1156,6 +1180,7 @@ class BlockSchema(BlockBase):
     __slots__ = [
         "name",
         "type",
+        "_transformer",
     ]
     
     def __init__(
@@ -1170,6 +1195,7 @@ class BlockSchema(BlockBase):
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
         _skip_content: bool = False,
+        _transformer = None,
     ):
         tags = tags or []        
         if name not in tags:
@@ -1191,19 +1217,25 @@ class BlockSchema(BlockBase):
         )
         self.name = name
         self.type = type
-    
+        self._transformer = _transformer
     
     def instantiate(
         self, 
         content: ContentType | None = None,
+        style: str | None = None,
+        role: str | None = None,
+        tags: list[str] | None = None,
         ignore_style: bool = False,
         ignore_tags: bool = False,
+        ignore_name: bool = False,
     ) -> "Block":
+        styles = (parse_style(style) or self.styles) if not ignore_style else None
+        tags = (tags or self.tags) if not ignore_tags else None
         return Block(
-            content=content or self.name,
-            tags=self.tags if not ignore_tags else None,
-            styles=self.styles if not ignore_style else None,
-            role=self.role,
+            content=content or (self.name if not ignore_name else None),
+            tags=tags,
+            styles=styles,
+            role=role or self.role,
         )
 
     def extract_schema(self) -> "BlockSchema":
@@ -1218,7 +1250,7 @@ class BlockSchema(BlockBase):
             A new BlockSchema tree with only schema nodes
         """
         # Create a copy of this schema (without children)
-        new_schema = BlockSchema(
+        new_schema = self.__class__(
             name=self.name,
             type=self.type,
             role=self.role,
@@ -1228,7 +1260,7 @@ class BlockSchema(BlockBase):
 
         # Recursively extract schemas from children
         for child in self.children:
-            if isinstance(child, BlockSchema):
+            if isinstance(child, BlockSchema) or isinstance(child, BlockListSchema):
                 # Recursively extract and add as child
                 child_schema = child.extract_schema()
                 new_schema.children.append(child_schema)
@@ -1258,3 +1290,305 @@ class BlockSchema(BlockBase):
                 
     def __repr__(self) -> str:
         return f"""BlockSchema(name="{self.name}", type={self.type}, children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
+    
+    
+    
+    
+    
+    
+    
+    
+PropNameType = Literal["content", "prefix", "postfix", "role", "tags", "styles", "attrs"]
+
+
+
+MutatorType = TypeVar("MutatorType")
+
+class ListMutator[MutatorType]:
+    
+    def __init__(self, lst: list[Block]):
+        self.lst = lst
+        
+    def __itruediv__(self, value: MutatorType):
+        self.append(value)
+        return self
+    
+    def __iand__(self, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+        
+        
+    def append(self, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+
+    def prepend(self, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+
+    def replace(self, index: int, value: MutatorType):
+        raise NotImplementedError("Subclass must implement this method")
+
+    # def __getitem__(self, index: int) -> Block:
+    #     return self.lst[index]
+
+    # def __setitem__(self, index: int, value: Block):
+    #     self.lst[index] = value
+    
+# class ListItemMutator(ListMutator):
+
+
+class ContentPrefixMutator(ListMutator[str]):
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.prefix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.prefix = value + blk.content.prefix
+
+    def replace(self, index: int, value: str):
+        self.lst[index].content.prefix = value
+        return self
+
+
+class ContentPostfixMutator(ListMutator[str]):
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.postfix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.postfix = value + blk.content.postfix
+        return self
+
+    def replace(self, index: int, value: str):
+        self.lst[index].content.postfix = value
+        return self
+    
+    
+class BlockListPrefixMutator(ListMutator[str]):
+    
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.prefix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.prefix = value + blk.prefix
+
+    def replace(self, index: int, value: str):
+        self.lst[index].prefix = value
+        return self
+
+
+class BlockListPostfixMutator(ListMutator[str]):
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.postfix += value
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.postfix = value + blk.postfix
+
+    def replace(self, index: int, value: str):
+        self.lst[index].postfix = value
+        return self
+
+
+class SentMutator(ListMutator):
+    
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.append(value)
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.prepend(value)
+        return self
+    
+
+class BlockListContentMutator(ListMutator[str]):
+    
+    
+    @property
+    def prefix(self) -> ListMutator:
+        return ContentPrefixMutator(self.lst)
+    
+    @prefix.setter
+    def prefix(self, value: str):
+        pass
+    
+    @property
+    def postfix(self) -> ListMutator:
+        return ContentPostfixMutator(self.lst)
+    
+    @postfix.setter
+    def postfix(self, value: str):
+        pass
+    
+    def append(self, value: str):
+        for blk in self.lst:
+            blk.content.append(value)
+        return self
+
+    def prepend(self, value: str):
+        for blk in self.lst:
+            blk.content.prepend(value)
+        return self
+
+    def replace(self, index: int, value: str):
+        self.lst[index] = value
+        return self
+
+
+
+class ListEditor:
+    
+    def __init__(self, block_list: "BlockList"):
+        self.block_list = block_list
+    
+    @property
+    def content(self) -> BlockListContentMutator:
+        return BlockListContentMutator(self.block_list)
+    
+    
+    @content.setter
+    def content(self, value: str):
+        pass
+    
+    @property
+    def prefix(self) -> BlockListPrefixMutator:
+        return BlockListPrefixMutator(self.block_list)
+    
+    @prefix.setter
+    def prefix(self, value: str):
+        pass
+    
+    @property
+    def postfix(self) -> BlockListPostfixMutator:
+        return BlockListPostfixMutator(self.block_list)
+    
+    @postfix.setter
+    def postfix(self, value: str):
+        pass
+
+
+class BlockList(Block):
+    
+    
+    def __init__(
+        self, 
+        children: list[str] | list["Block"] | None = None,
+        role: str | None = None,
+        tags: list[str] | None = None,
+        style: str | None = None,
+        styles: list[str] | None = None,
+        parent: "Block | None" = None,
+        is_wrapper: bool = False,
+        schema: "BlockSchema | None" = None,
+    ):
+        super().__init__(children=children, role=role, tags=tags, style=style, styles=styles, parent=parent)
+    
+    def edit(self) -> ListEditor:
+        return ListEditor(self)
+    
+    def replace_all(self, prop: PropNameType, value: Any):
+        for blk in self.children:
+            setattr(blk, prop, value)
+        return self
+            
+            
+    # def prefix_append(self, value: str):
+    #     for blk in self.children:
+    #         blk.prefix += value
+    #     return self
+            
+    # def postfix_append(self, value: str):
+    #     for blk in self:
+    #         blk.postfix += value
+    #     return self        
+    
+    def values(self) -> Generator[Any, None, None]:
+        for blk in self.children:
+            yield blk.value
+    
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
+    
+    def __repr__(self) -> str:        
+        return f"BlockList({self.children})"
+    
+    
+    
+    
+    
+    
+    
+class BlockListSchema(BlockSchema):
+    """
+    BlockListSchema is a schema for a list of blocks.
+    """
+    
+    def __init__(
+        self, 
+        name: str,
+        key: str | None = None,
+        type: Type | None = None, 
+        children: list["BlockSchema"] | None = None, 
+        role: str | None = None, 
+        tags: list[str] | None = None, 
+        style: str | None = None, 
+        parent: "BlockSchema | None" = None, 
+        styles: list[str] | None = None, 
+        block_text: BlockText | None = None, 
+        _skip_content: bool = False
+    ):
+        if not styles:
+            styles = ["xml-list"]
+        super().__init__("", type, children, role, tags, style, parent, styles, block_text, _skip_content)
+        self.name = name
+        self.tags.insert(0, f"{name}_list")
+        self.list_schemas = []
+        self.list_models = {}
+        self.key = key
+    
+    
+    def instantiate(
+        self,
+        content: ContentType | None = None,
+        children: list["BlockSchema"] | None = None,
+        ignore_style: bool = False,
+        ignore_tags: bool = False,
+    ) -> "BlockList":
+        return BlockList(
+            # content or self.name,
+            children=children,
+            tags=self.tags if not ignore_tags else None,
+            styles=self.styles if not ignore_style else None,
+            role=self.role,
+        )
+        
+        
+    def instantiate_item(
+        self,
+        value: Any,
+        content: ContentType | None = None,
+        ignore_style: bool = False,
+        ignore_tags: bool = False,
+    ) -> "Block":
+        blk = super().instantiate(value,ignore_tags=ignore_tags,ignore_style=ignore_style)
+        return blk
+    
+    
+    
+    
+    
+    def __repr__(self) -> str:
+        return f"BlockListSchema(name={self.name}, key={self.key}, children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"

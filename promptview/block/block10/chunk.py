@@ -26,7 +26,7 @@ def _generate_id() -> str:
 
 
 @dataclass
-class Chunk:
+class BlockChunk:
     """
     Atomic unit of text in the block system.
 
@@ -46,8 +46,8 @@ class Chunk:
     id: str = field(default_factory=_generate_id)
 
     # Linked list pointers (not part of equality/hash)
-    prev: Chunk | None = field(default=None, repr=False, compare=False)
-    next: Chunk | None = field(default=None, repr=False, compare=False)
+    prev: BlockChunk | None = field(default=None, repr=False, compare=False)
+    next: BlockChunk | None = field(default=None, repr=False, compare=False)
 
     # Back-reference to owning BlockText (set when added)
     _owner: BlockText | None = field(default=None, repr=False, compare=False)
@@ -58,7 +58,7 @@ class Chunk:
 
     def __eq__(self, other: object) -> bool:
         """Chunks are equal if they have the same ID."""
-        if isinstance(other, Chunk):
+        if isinstance(other, BlockChunk):
             return self.id == other.id
         return False
 
@@ -66,7 +66,7 @@ class Chunk:
         """Hash by ID for use in sets/dicts."""
         return hash(self.id)
 
-    def copy(self, include_links: bool = False) -> Chunk:
+    def copy(self, include_links: bool = False) -> BlockChunk:
         """
         Create a copy of this chunk.
 
@@ -76,14 +76,14 @@ class Chunk:
         Returns:
             New Chunk with same content and logprob, new ID
         """
-        return Chunk(
+        return BlockChunk(
             content=self.content,
             logprob=self.logprob,
             prev=self.prev if include_links else None,
             next=self.next if include_links else None,
         )
 
-    def split(self, offset: int) -> tuple[Chunk, Chunk]:
+    def split(self, offset: int) -> tuple[BlockChunk, BlockChunk]:
         """
         Split this chunk at the given offset.
 
@@ -108,11 +108,11 @@ class Chunk:
         if offset < 0 or offset > len(self.content):
             raise ValueError(f"Split offset {offset} out of bounds [0, {len(self.content)}]")
 
-        left = Chunk(
+        left = BlockChunk(
             content=self.content[:offset],
             logprob=self.logprob,  # Logprob is preserved on both (debatable)
         )
-        right = Chunk(
+        right = BlockChunk(
             content=self.content[offset:],
             logprob=self.logprob,
         )
@@ -127,7 +127,7 @@ class Chunk:
         }
 
     @classmethod
-    def model_validate(cls, data: dict[str, Any]) -> Chunk:
+    def model_validate(cls, data: dict[str, Any]) -> BlockChunk:
         """Deserialize from dictionary."""
         return cls(
             id=data.get("id", _generate_id()),
@@ -171,16 +171,16 @@ class BlockText:
         text.insert_after(hello, Chunk("beautiful "))
     """
 
-    def __init__(self, chunks: list[Chunk] | None = None):
+    def __init__(self, chunks: list[BlockChunk] | None = None):
         """
         Initialize BlockText, optionally with initial chunks.
 
         Args:
             chunks: Optional list of chunks to add in order
         """
-        self.head: Chunk | None = None
-        self.tail: Chunk | None = None
-        self._by_id: dict[str, Chunk] = {}
+        self.head: BlockChunk | None = None
+        self.tail: BlockChunk | None = None
+        self._by_id: dict[str, BlockChunk] = {}
         self._length: int = 0
 
         if chunks:
@@ -191,21 +191,21 @@ class BlockText:
         """Return number of chunks."""
         return self._length
 
-    def __iter__(self) -> Iterator[Chunk]:
+    def __iter__(self) -> Iterator[BlockChunk]:
         """Iterate over chunks from head to tail."""
         current = self.head
         while current is not None:
             yield current
             current = current.next
 
-    def __reversed__(self) -> Iterator[Chunk]:
+    def __reversed__(self) -> Iterator[BlockChunk]:
         """Iterate over chunks from tail to head."""
         current = self.tail
         while current is not None:
             yield current
             current = current.prev
 
-    def __contains__(self, chunk: Chunk) -> bool:
+    def __contains__(self, chunk: BlockChunk) -> bool:
         """Check if chunk is in this BlockText."""
         return chunk.id in self._by_id
 
@@ -218,7 +218,7 @@ class BlockText:
         """Check if BlockText has no chunks."""
         return self._length == 0
 
-    def get_by_id(self, chunk_id: str) -> Chunk | None:
+    def get_by_id(self, chunk_id: str) -> BlockChunk | None:
         """
         Get chunk by ID.
 
@@ -230,7 +230,7 @@ class BlockText:
         """
         return self._by_id.get(chunk_id)
 
-    def append(self, chunk: Chunk) -> Chunk:
+    def append(self, chunk: BlockChunk) -> BlockChunk:
         """
         Append chunk to the end.
 
@@ -263,7 +263,7 @@ class BlockText:
         return chunk
     
     
-    def extend(self, chunks: list[Chunk], after: Chunk | None = None):
+    def extend(self, chunks: list[BlockChunk], after: BlockChunk | None = None):
         result = []
         if after is None:
             for chunk in chunks:
@@ -275,7 +275,7 @@ class BlockText:
         return result
     
     
-    def left_extend(self, chunks: list[Chunk], before: Chunk | None = None):
+    def left_extend(self, chunks: list[BlockChunk], before: BlockChunk | None = None):
         result = []
         if before is None:
             for chunk in reversed(chunks):
@@ -286,7 +286,7 @@ class BlockText:
                 result.append(before)
         return list(reversed(result))
 
-    def prepend(self, chunk: Chunk) -> Chunk:
+    def prepend(self, chunk: BlockChunk) -> BlockChunk:
         """
         Prepend chunk to the beginning.
 
@@ -319,21 +319,21 @@ class BlockText:
         return chunk
     
     
-    def insert_chunks_after(self, after: Chunk, chunks: list[Chunk]):
+    def insert_chunks_after(self, after: BlockChunk, chunks: list[BlockChunk]):
         result = []
         for chunk in chunks:
             result.append(self.insert_after(after, chunk))
             after = chunk
         return result
     
-    def insert_chunks_before(self, before: Chunk, chunks: list[Chunk]):
+    def insert_chunks_before(self, before: BlockChunk, chunks: list[BlockChunk]):
         result = []
         for chunk in reversed(chunks):
             before = self.insert_before(before, chunk)
             result.append(before)
         return list(reversed(result))
 
-    def extend_block_text(self, other: "BlockText", after: Chunk | None = None, copy: bool = True) -> list[Chunk]:
+    def extend_block_text(self, other: "BlockText", after: BlockChunk | None = None, copy: bool = True) -> list[BlockChunk]:
         """
         Extend this BlockText with chunks from another BlockText.
 
@@ -402,7 +402,7 @@ class BlockText:
 
         return result
 
-    def left_extend_block_text(self, other: "BlockText", before: Chunk | None = None, copy: bool = True) -> list[Chunk]:
+    def left_extend_block_text(self, other: "BlockText", before: BlockChunk | None = None, copy: bool = True) -> list[BlockChunk]:
         """
         Prepend chunks from another BlockText to this BlockText.
 
@@ -471,10 +471,10 @@ class BlockText:
 
     def replace(
         self,
-        start: Chunk,
-        end: Chunk,
-        new_chunks: list[Chunk] | None = None,
-    ) -> list[Chunk]:
+        start: BlockChunk,
+        end: BlockChunk,
+        new_chunks: list[BlockChunk] | None = None,
+    ) -> list[BlockChunk]:
         """
         Replace a range of chunks (inclusive) with new chunks.
 
@@ -555,11 +555,11 @@ class BlockText:
 
     def replace_block_text(
         self,
-        start: Chunk,
-        end: Chunk,
+        start: BlockChunk,
+        end: BlockChunk,
         other: "BlockText",
         copy: bool = True,
-    ) -> tuple[list[Chunk], list[Chunk]]:
+    ) -> tuple[list[BlockChunk], list[BlockChunk]]:
         """
         Replace a range of chunks with chunks from another BlockText.
 
@@ -635,7 +635,7 @@ class BlockText:
         return removed, inserted
 
 
-    def insert_after(self, after: Chunk, chunk: Chunk) -> Chunk:
+    def insert_after(self, after: BlockChunk, chunk: BlockChunk) -> BlockChunk:
         """
         Insert chunk after another chunk.
 
@@ -671,7 +671,7 @@ class BlockText:
 
         return chunk
 
-    def insert_before(self, before: Chunk, chunk: Chunk) -> Chunk:
+    def insert_before(self, before: BlockChunk, chunk: BlockChunk) -> BlockChunk:
         """
         Insert chunk before another chunk.
 
@@ -707,7 +707,7 @@ class BlockText:
 
         return chunk
 
-    def remove(self, chunk: Chunk) -> Chunk:
+    def remove(self, chunk: BlockChunk) -> BlockChunk:
         """
         Remove chunk from BlockText.
 
@@ -745,7 +745,7 @@ class BlockText:
 
         return chunk
 
-    def split_chunk(self, chunk: Chunk, offset: int) -> tuple[Chunk, Chunk]:
+    def split_chunk(self, chunk: BlockChunk, offset: int) -> tuple[BlockChunk, BlockChunk]:
         """
         Split a chunk at the given offset, replacing it with two chunks.
 
@@ -798,8 +798,8 @@ class BlockText:
 
     def fork(
         self,
-        start: Chunk | None = None,
-        end: Chunk | None = None,
+        start: BlockChunk | None = None,
+        end: BlockChunk | None = None,
     ) -> BlockText:
         """
         Create an independent copy of this BlockText.
@@ -844,7 +844,7 @@ class BlockText:
 
         return new_text
 
-    def chunks_list(self) -> list[Chunk]:
+    def chunks_list(self) -> list[BlockChunk]:
         """
         Get chunks as a list (for serialization).
 
@@ -862,7 +862,7 @@ class BlockText:
     @classmethod
     def model_validate(cls, data: dict[str, Any]) -> BlockText:
         """Deserialize from dictionary."""
-        chunks = [Chunk.model_validate(c) for c in data.get("chunks", [])]
+        chunks = [BlockChunk.model_validate(c) for c in data.get("chunks", [])]
         return cls(chunks)
 
     def __repr__(self) -> str:
