@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from .events import StreamEvent
 from ..utils.function_utils import call_function
 
+from ..block import Block
+
 if TYPE_CHECKING:
-    from ..block import Block
     from fastapi import Request
     from .span_tree import SpanTree
     from ..evaluation.eval_context import EvaluationContext

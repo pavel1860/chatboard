@@ -534,7 +534,10 @@ class BlockBase(ABC):
                 parts.append([])
         return parts
     
-    def append(self, content: ContentType, sep: str | None = " "):
+    def append(self, content: "BlockBase | ContentType", sep: str | None = " "):
+        if isinstance(content, BlockBase):
+            self.append_child(content)
+            return
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=True)
         chunks = self.block_text.extend(content, after=self.content_end_chunk)
@@ -812,7 +815,7 @@ class BlockBase(ABC):
         for child in block.children:
             self._remap_block_text(child, new_block_text)
 
-    def append_block_child(self, block: "Block"):
+    def _append_block_child(self, block: "Block"):
         """
         Append an already-prepared block to children list.
 
@@ -1004,7 +1007,7 @@ class BlockBase(ABC):
 
         # Copy children
         for child in self.children:
-            new_block.append_block_child(child._copy_tree(chunk_map, new_block_text))
+            new_block._append_block_child(child._copy_tree(chunk_map, new_block_text))
 
         return new_block
     
@@ -1030,22 +1033,22 @@ class BlockBase(ABC):
     
     
     def __call__(
-        self, 
-        content: ContentType | BlockBase | None = None, 
+        self,
+        content: ContentType | BlockBase | None = None,
         role: str | None = None,
         tags: list[str] | None = None,
         style: str | None = None,
-    ) -> "Block":         
+    ) -> "Block":
         block = self.promote_block_content(content, style=style, tags=tags, role=role)
-        self.append_block_child(block)
+        self.append_child(block, copy=False)
         return block
     
     
     def view(
-        self, 
-        name: str, 
-        type: Type | None = None, 
-        tags: list[str] | None = None, 
+        self,
+        name: str,
+        type: Type | None = None,
+        tags: list[str] | None = None,
         style: str | None = None,
     ) -> "BlockSchema":
         schema_block = BlockSchema(
@@ -1054,10 +1057,10 @@ class BlockBase(ABC):
             tags=tags,
             styles=["xml"] if style is None else parse_style(style),
         )
-        self.append_block_child(schema_block)
+        self.append_child(schema_block, copy=False)
         return schema_block
-    
-    
+
+
     def view_list(
         self,
         name: str,
@@ -1071,7 +1074,7 @@ class BlockBase(ABC):
             tags=tags,
             styles=["xml-list"] if style is None else parse_style(style),
         )
-        self.append_block_child(schema_block)
+        self.append_child(schema_block, copy=False)
         return schema_block
     
     # -------------------------------------------------------------------------
@@ -1667,6 +1670,13 @@ class BlockList(Block):
             for child in self.children:
                 block.append_child(child.model_copy(copy_content, fork_block_text, copy_children))
         return block
+    
+    
+    def __getitem__(self, index: int) -> "BlockBase":
+        return self.children[index]
+    
+    def __setitem__(self, index: int, value: "Block"):
+        self.insert(index, value)
     
     
     def __enter__(self):

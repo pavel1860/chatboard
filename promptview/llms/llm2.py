@@ -84,9 +84,13 @@ def pack_blocks(args: tuple[Any, ...]) -> tuple[BlockList, tuple[Any, ...]]:
         if isinstance(arg, str):
             block_list.append(Block(arg))
         elif isinstance(arg, Block):
-            block_list.append(copy.copy(arg))
+            block_list.append(arg)
         elif isinstance(arg, BlockList):
-            block_list.extend(copy.copy(arg))
+            block_list.extend(arg)
+        # elif isinstance(arg, Block):
+        #     block_list.append(copy.copy(arg))
+        # elif isinstance(arg, BlockList):
+        #     block_list.extend(copy.copy(arg))
         else:
             extra_args += (arg,)
     return block_list, extra_args

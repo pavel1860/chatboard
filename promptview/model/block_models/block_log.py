@@ -2,17 +2,18 @@
 import hashlib
 import json
 import uuid
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
 
 
-from ...block import BaseBlock, Block, BlockChunk, BlockList, BlockSent, AttrBlock
+
 from ..versioning.models import Artifact, Branch, DataFlowNode
 from ..sql.expressions import RawValue
 from ..sql.queries import Column
 from ...utils.db_connections import PGConnectionManager
 import datetime as dt
 from ..versioning.models import BlockTree, BlockNode, BlockModel, BlockSignature, ExecutionSpan, TurnStatus
-
+if TYPE_CHECKING:
+    from ...block import BaseBlock, Block, BlockChunk, BlockList, BlockSent, AttrBlock
 
 
 def block_hash(content: Optional[str] = None, json_content: Optional[dict] = None) -> str:
@@ -55,7 +56,7 @@ def flatten_tree(data: Dict[str, Any], base_path: str = "1") -> List[Dict[str, A
     return flat
 
 
-def dump_chunk(chunk: BlockChunk):
+def dump_chunk(chunk: "BlockChunk"):
     # dump = {
     #     "content": chunk.content,
     # }
@@ -72,7 +73,7 @@ def dump_chunk(chunk: BlockChunk):
         "postfix": chunk.postfix,
     }
 
-def dump_sent(sent: BlockSent):   
+def dump_sent(sent: "BlockSent"):   
     chunks = []    
     for chunk in sent.children:        
         chunks.append(dump_chunk(chunk))
@@ -83,6 +84,7 @@ def dump_sent(sent: BlockSent):
     }
     
 def load_sent_dump(dump: dict):
+    from ...block import BlockSent, BlockChunk
     sent = BlockSent(
         content=dump["content"],
     )
@@ -95,19 +97,21 @@ def load_sent_dump(dump: dict):
         )
     return sent
 
-def dump_attrs(attrs: dict[str, str | AttrBlock]):
+def dump_attrs(attrs: dict[str, str | Any]):
+    from ...block import AttrBlock
     return {k: v.model_dump() if isinstance(v, AttrBlock) else v for k, v in attrs.items()}
 
 def load_attrs(attrs: dict[str, str | dict]):
+    from ...block import AttrBlock
     return {k: AttrBlock.from_dict(v) if isinstance(v, dict) else v for k, v in attrs.items()}
 
-def dump_block(blk: Block):
+def dump_block(blk: "Block"):
     dumps = []
     for blk in blk.traverse():
         dump = {}
-        dump["content"] = blk.content.render()
+        dump["content"] = blk.content_str
         dump["json_content"] = {
-            "content": dump_sent(blk.content),
+            "content": dump_sent(blk.content_str),
             "prefix": dump_sent(blk.prefix) if blk.prefix is not None else None,
             "postfix": dump_sent(blk.postfix) if blk.postfix is not None else None,
         }
@@ -126,6 +130,7 @@ def load_block_dump(dumps: list[dict], artifact_id: int | None = None):
     Load blocks from new Option 1 schema structure:
     Each dump contains: path, signature -> (styles, role, tags, attrs, block -> (content, json_content))
     """
+    from ...block import Block
     block_lookup = {}
     for dump in dumps:
         signature = dump['signature']
@@ -154,7 +159,7 @@ def load_block_dump(dumps: list[dict], artifact_id: int | None = None):
 
   
 
-async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int | None = None) -> BlockTree:
+async def insert_block(block: "Block", branch_id: int, turn_id: int, span_id: int | None = None) -> BlockTree:
     """
     Insert block using Option 1 (Block Signatures) architecture.
     1. Deduplicate block content in `blocks` table
@@ -244,7 +249,7 @@ async def insert_block(block: Block, branch_id: int, turn_id: int, span_id: int 
     
     
     
-async def get_blocks(art_ids: list[str], dump_models: bool = True, include_branch_turn: bool = False) -> dict[str, Block]:
+async def get_blocks(art_ids: list[str], dump_models: bool = True, include_branch_turn: bool = False) -> dict[str, "Block"]:
     """
     Retrieve blocks using the new Option 1 schema:
     BlockTree -> BlockNode -> BlockSignature -> BlockModel
@@ -294,7 +299,7 @@ class BlockLogQuery:
     def __await__(self):
         return self.execute().__await__()
     
-    async def execute(self) -> List[Block]:
+    async def execute(self) -> List["Block"]:
         query = self._build_block_query()
         artifact_ids = []
         if self.span_name:
@@ -409,7 +414,7 @@ class BlockLog:
 
     
     @classmethod
-    async def add(cls, block: Block, branch_id: int | None = None, turn_id: int | None = None, span_id: int | None = None):
+    async def add(cls, block: "Block", branch_id: int | None = None, turn_id: int | None = None, span_id: int | None = None):
         from ..versioning.models import Turn, Branch
         if branch_id is None:
             branch_id = Branch.current().id

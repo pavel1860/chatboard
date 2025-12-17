@@ -29,7 +29,7 @@ Example Usage:
 
 from .chunk import BlockChunk, BlockText
 from .span import SpanAnchor, Span, VirtualBlockText
-from .block import BlockBase, Block, BlockSchema, BlockListSchema
+from .block import BlockBase, Block, BlockSchema, BlockListSchema, BlockList
 from .path import Path
 from .block_builder import BlockBuilderContext
 from .block_parsers import XmlParser
@@ -45,6 +45,7 @@ __all__ = [
     "Block",
     "BlockSchema",
     "BlockListSchema",
+    "BlockList",
     # Path
     "Path",
     # BlockBuilder
