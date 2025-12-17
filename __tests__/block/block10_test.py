@@ -667,3 +667,114 @@ class TestStrip:
 
         # BlockText should have fewer chunks after stripping
         assert len(block.block_text) < initial_length
+
+
+# =============================================================================
+# BlockText Consistency Tests
+# =============================================================================
+
+class TestBlockTextConsistency:
+    """Tests for BlockText chunk linkage consistency."""
+
+    def test_nested_call_preserves_chunk_linkage(self):
+        """Using __call__ for nested blocks preserves chunk linkage."""
+        with Block("hello") as blk:
+            blk /= "world"
+            with blk("subheader") as sub:
+                sub /= "this is the subheader"
+
+        # Verify all chunks are linked
+        chunks = list(blk.block_text)
+        assert len(chunks) > 0, "BlockText should not be empty"
+
+        # Verify linkage: each chunk's next.prev should point back
+        for chunk in chunks:
+            if chunk.next is not None:
+                assert chunk.next.prev is chunk, "Forward/backward linkage broken"
+            if chunk.prev is not None:
+                assert chunk.prev.next is chunk, "Backward/forward linkage broken"
+
+        # Verify head and tail
+        assert blk.block_text.head is not None
+        assert blk.block_text.tail is not None
+        assert blk.block_text.head.prev is None
+        assert blk.block_text.tail.next is None
+
+    def test_nested_call_chunks_contain_all_content(self):
+        """Nested blocks via __call__ have all content in BlockText."""
+        with Block("hello") as blk:
+            blk /= "world"
+            with blk("subheader") as sub:
+                sub /= "this is the subheader"
+
+        # Collect all chunk contents
+        chunk_contents = [c.content for c in blk.block_text]
+
+        # Verify expected content is present
+        assert "hello" in chunk_contents
+        assert "world" in chunk_contents
+        assert "subheader" in chunk_contents
+        assert "this is the subheader" in chunk_contents
+
+    def test_deeply_nested_blocks_share_block_text(self):
+        """Deeply nested blocks all share the same BlockText."""
+        with Block("root") as root:
+            with root("level1") as l1:
+                with l1("level2") as l2:
+                    with l2("level3") as l3:
+                        l3 /= "deep content"
+
+        # All blocks should share the same BlockText
+        assert l1.block_text is root.block_text
+        assert l2.block_text is root.block_text
+        assert l3.block_text is root.block_text
+
+        # All content should be in the shared BlockText
+        chunk_contents = [c.content for c in root.block_text]
+        assert "root" in chunk_contents
+        assert "level1" in chunk_contents
+        assert "level2" in chunk_contents
+        assert "level3" in chunk_contents
+        assert "deep content" in chunk_contents
+
+    def test_append_child_with_shared_block_text_no_duplication(self):
+        """append_child with shared BlockText doesn't duplicate chunks."""
+        parent = Block("parent")
+
+        # Create child with parent's block_text (simulates __call__ behavior)
+        child = Block("child", block_text=parent.block_text)
+
+        chunks_before = len(parent.block_text)
+        parent.append_child(child, copy=False)
+        chunks_after = len(parent.block_text)
+
+        # Should only add newline, not duplicate the child chunk
+        # The child chunk was already in block_text when child was created
+        assert chunks_after == chunks_before + 1  # +1 for newline
+
+    def test_block_text_length_matches_iteration(self):
+        """BlockText length matches actual chunk count from iteration."""
+        with Block("hello") as blk:
+            blk /= "world"
+            with blk("nested") as nested:
+                nested /= "content"
+
+        chunks_by_iteration = list(blk.block_text)
+        assert len(blk.block_text) == len(chunks_by_iteration)
+
+    def test_all_span_chunks_in_block_text(self):
+        """All chunks referenced by spans are in the BlockText."""
+        with Block("hello") as blk:
+            blk /= "world"
+            with blk("subheader") as sub:
+                sub /= "this is the subheader"
+
+        block_text_ids = {c.id for c in blk.block_text}
+
+        # Check all blocks' span chunks are in BlockText
+        for block in blk.traverse():
+            if block.span is not None:
+                assert block.span.start.chunk.id in block_text_ids, \
+                    f"Span start chunk not in BlockText: {block.span.start.chunk.content}"
+                assert block.span.end.chunk.id in block_text_ids, \
+                    f"Span end chunk not in BlockText: {block.span.end.chunk.content}"

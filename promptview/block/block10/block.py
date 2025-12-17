@@ -454,6 +454,15 @@ class BlockBase(ABC):
         """
         result = self.get_all(tags)
         return result[0] if result else None
+    
+    def get_list(self, tag: str) -> "BlockList | BlockListSchema":
+        block = self.get_one(tag)
+        if block is None:
+            raise ValueError(f"Block {tag} not found")
+        if not isinstance(block, BlockList) and not isinstance(block, BlockListSchema):
+            raise ValueError(f"Block {block} is not a BlockList or BlockListSchema")
+        return block
+        
 
     def get(self, tag: str) -> "BlockBase | None":
         """
@@ -782,22 +791,24 @@ class BlockBase(ABC):
         elif not self.is_wrapper:
             self.add_new_line()
 
-        # Determine insertion point - after last child or after this block's content
-        if self.children:
-            insert_after_chunk = self.children[-1].end_chunk
-        else:
-            insert_after_chunk = self.end_postfix_chunk or self.content_end_chunk
+        # Only move chunks if block has a different BlockText
+        # (If block already shares our BlockText, chunks are already in place)
+        if block.block_text is not self.block_text:
+            # Determine insertion point - after last child or after this block's content
+            if self.children:
+                insert_after_chunk = self.children[-1].end_chunk
+            else:
+                insert_after_chunk = self.end_postfix_chunk or self.content_end_chunk
 
-        # Move chunks from block's BlockText to this block's BlockText
-        inserted_chunks = self.block_text.extend_block_text(
-            block.block_text,
-            after=insert_after_chunk,
-            copy=False
-        )
+            # Move chunks from block's BlockText to this block's BlockText
+            self.block_text.extend_block_text(
+                block.block_text,
+                after=insert_after_chunk,
+                copy=False
+            )
 
-        # Remap the block's span and update BlockText reference for entire subtree
-        # Always remap, even for wrapper blocks with no chunks, so they use parent's block_text
-        self._remap_block_text(block, self.block_text)
+            # Remap the block's span and update BlockText reference for entire subtree
+            self._remap_block_text(block, self.block_text)
 
         # Add to children list
         self.children.append(block)
@@ -1220,19 +1231,16 @@ class BlockBase(ABC):
             
             
             
-    def apply_style(self, style: str):
+    def apply_style(self, style: str, only_views: bool = False):
+        block_copy = self.copy()
         styles = parse_style(style)
-        for block in self.traverse():
+        for block in block_copy.traverse():
+            if only_views and not isinstance(block, BlockSchema):
+                continue
             block.styles.extend(styles)
         return self
     
-    
-    def apply_view_style(self, style: str):
-        styles = parse_style(style)
-        for block in self.traverse():
-            if isinstance(block, BlockSchema):
-                block.styles.extend(styles)
-        return self
+
             
             
     # -------------------------------------------------------------------------
@@ -1289,14 +1297,16 @@ class BlockBase(ABC):
 
     def view_list(
         self,
-        name: str,
+        item_name: str,
         key: str | None = None,
+        name: str | None = None,
         tags: list[str] | None = None,
         style: str | None = None,
     ) -> "BlockListSchema":
         schema_block = BlockListSchema(
-            name,
-            key,
+            item_name=item_name,
+            key=key,
+            name=name,
             tags=tags,
             styles=["xml-list"] if style is None else parse_style(style),
         )
@@ -1990,10 +2000,11 @@ class BlockListSchema(BlockSchema):
     def register(self, target: BlockSchema | Type[BaseModel]):
         # if isinstance(target, BaseModel):
             # block = pydantic_object_description(target)
+        from .pydantic_helpers import pydantic_to_block
         if isinstance(target, type) and issubclass(target, BaseModel):
             if self.key is None:
                 raise ValueError("key_field is required")
-            block = pydantic_class_description(self.name, target, self.key, self.attrs[self.key].type, class_model=target)
+            block = pydantic_to_block(self.name, target, self.key)
             self.list_models[target.__name__] = target
         elif isinstance(target, BlockSchema):
             block = target
@@ -2005,6 +2016,7 @@ class BlockListSchema(BlockSchema):
     
     def model_metadata_copy(self, overrides: dict[str, Any] | None = None) -> Self:
         dump = {
+            "item_name": self.item_name,
             "name": self.name,
             "key": self.key,
             "type": self.type,
@@ -2033,5 +2045,12 @@ class BlockListSchema(BlockSchema):
                 block.append_child(child.model_copy(copy_content, fork_block_text, copy_children))
         return block
     
+    
+    def __getitem__(self, index: int) -> "BlockBase":
+        return self.children[index]
+    
+    def __setitem__(self, index: int, value: "Block"):
+        self.insert(index, value)
+
     def __repr__(self) -> str:
         return f"BlockListSchema(name={self.name}, key={self.key}, children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"
