@@ -1771,10 +1771,8 @@ class StreamController(ObservableProcess):
             if os.path.exists(self._save_filepath):
                 os.remove(self._save_filepath)
             stream.save_stream(self._save_filepath)
-        accumulator = Accumulator(Block())
-        self._accumulator = accumulator
         self._stream = stream
-        self._gen = stream | accumulator
+        self._gen = stream
         if self._parser is not None:
             self._gen |= self._parser
         
@@ -2236,7 +2234,7 @@ class FlowRunner:
     @property
     def result(self) -> Any:
         """Get result from root process."""
-        return self._get_response()
+        return self.get_output()
 
     @property
     def should_output_events(self) -> bool:

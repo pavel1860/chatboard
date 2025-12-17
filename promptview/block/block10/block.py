@@ -826,6 +826,203 @@ class BlockBase(ABC):
         self.children.append(block)
         block.parent = self
         return block
+    
+    
+    # -------------------------------------------------------------------------
+    # String operations
+    # -------------------------------------------------------------------------
+
+    def strip(self) -> "BlockBase":
+        """
+        Remove whitespace from the outer edges of prefix and postfix spans.
+
+        This modifies the block in-place by:
+        1. Removing leading whitespace from prefix_span (whitespace before the block)
+        2. Removing trailing whitespace from postfix_span (whitespace after the block)
+
+        For chunks that are partially whitespace, the chunk content is modified
+        to strip the whitespace portion. Whitespace-only chunks are removed from
+        the BlockText entirely.
+
+        Does NOT remove whitespace from within the main content span itself,
+        only from the prefix/postfix decorations.
+
+        Returns:
+            self for method chaining
+        """
+        # Strip prefix: remove leading whitespace (outer edge, before content)
+        if self.prefix_span is not None:
+            self.prefix_span = self._strip_span_start(self.prefix_span)
+
+        # Strip postfix: remove trailing whitespace (outer edge, after content)
+        if self.postfix_span is not None:
+            self.postfix_span = self._strip_span_end(self.postfix_span)
+
+        return self
+
+    def _strip_span_end(self, span: Span) -> Span | None:
+        """
+        Remove trailing whitespace from a span.
+
+        Removes whitespace-only chunks from the BlockText and adjusts
+        chunk content for partial whitespace. Returns the modified span
+        or None if the span becomes empty.
+        """
+        if span.is_empty:
+            return None
+
+        # Collect chunks in the span
+        chunks_to_check: list[BlockChunk] = list(span.chunks())
+        chunks_to_remove: list[BlockChunk] = []
+        new_end_chunk: BlockChunk | None = None
+        new_end_offset: int = 0
+
+        # Walk backwards from end, find trailing whitespace
+        for chunk in reversed(chunks_to_check):
+            if chunk == span.end.chunk:
+                # Check the portion within the span
+                end_offset = span.end.offset
+                start_offset = span.start.offset if chunk == span.start.chunk else 0
+                text_in_span = chunk.content[start_offset:end_offset]
+                stripped = text_in_span.rstrip()
+
+                if len(stripped) == 0:
+                    # Entire portion is whitespace - mark for removal or skip
+                    if chunk == span.start.chunk:
+                        # Entire span is whitespace
+                        chunks_to_remove = chunks_to_check
+                        break
+                    else:
+                        chunks_to_remove.append(chunk)
+                        continue
+                else:
+                    # Partial whitespace - adjust the chunk content
+                    new_end_chunk = chunk
+                    new_end_offset = start_offset + len(stripped)
+                    # Modify chunk content to remove trailing whitespace
+                    chunk.content = chunk.content[:new_end_offset]
+                    break
+            else:
+                # Middle or start chunk
+                start_offset = span.start.offset if chunk == span.start.chunk else 0
+                text_in_span = chunk.content[start_offset:]
+                stripped = text_in_span.rstrip()
+
+                if len(stripped) == 0:
+                    # Entire portion is whitespace
+                    if chunk == span.start.chunk:
+                        # From start to here is all whitespace
+                        chunks_to_remove = chunks_to_check
+                        break
+                    else:
+                        chunks_to_remove.append(chunk)
+                        continue
+                else:
+                    # Found non-whitespace
+                    new_end_chunk = chunk
+                    new_end_offset = start_offset + len(stripped)
+                    chunk.content = chunk.content[:new_end_offset]
+                    break
+
+        # Remove whitespace-only chunks from BlockText
+        for chunk in chunks_to_remove:
+            if chunk in self.block_text:
+                self.block_text.remove(chunk)
+
+        # Return updated span or None
+        if new_end_chunk is None:
+            return None
+
+        return Span(
+            start=span.start,
+            end=SpanAnchor(chunk=new_end_chunk, offset=new_end_offset)
+        )
+
+    def _strip_span_start(self, span: Span) -> Span | None:
+        """
+        Remove leading whitespace from a span.
+
+        Removes whitespace-only chunks from the BlockText and adjusts
+        chunk content for partial whitespace. Returns the modified span
+        or None if the span becomes empty.
+        """
+        if span.is_empty:
+            return None
+
+        # Collect chunks in the span
+        chunks_to_check: list[BlockChunk] = list(span.chunks())
+        chunks_to_remove: list[BlockChunk] = []
+        new_start_chunk: BlockChunk | None = None
+        new_start_offset: int = 0
+
+        # Walk forward from start, find leading whitespace
+        for chunk in chunks_to_check:
+            if chunk == span.start.chunk:
+                # Check the portion within the span
+                start_offset = span.start.offset
+                end_offset = span.end.offset if chunk == span.end.chunk else len(chunk.content)
+                text_in_span = chunk.content[start_offset:end_offset]
+                stripped = text_in_span.lstrip()
+
+                if len(stripped) == 0:
+                    # Entire portion is whitespace - mark for removal or skip
+                    if chunk == span.end.chunk:
+                        # Entire span is whitespace
+                        chunks_to_remove = chunks_to_check
+                        break
+                    else:
+                        chunks_to_remove.append(chunk)
+                        continue
+                else:
+                    # Partial whitespace - adjust
+                    whitespace_len = len(text_in_span) - len(stripped)
+                    new_start_chunk = chunk
+                    new_start_offset = start_offset + whitespace_len
+                    # Modify chunk content to remove leading whitespace
+                    chunk.content = chunk.content[new_start_offset:]
+                    new_start_offset = 0  # After modification, start is at 0
+                    break
+            else:
+                # Middle or end chunk
+                end_offset = span.end.offset if chunk == span.end.chunk else len(chunk.content)
+                text_in_span = chunk.content[:end_offset]
+                stripped = text_in_span.lstrip()
+
+                if len(stripped) == 0:
+                    # Entire portion is whitespace
+                    if chunk == span.end.chunk:
+                        chunks_to_remove = chunks_to_check
+                        break
+                    else:
+                        chunks_to_remove.append(chunk)
+                        continue
+                else:
+                    # Found non-whitespace
+                    whitespace_len = len(text_in_span) - len(stripped)
+                    new_start_chunk = chunk
+                    new_start_offset = whitespace_len
+                    chunk.content = chunk.content[new_start_offset:]
+                    new_start_offset = 0
+                    break
+
+        # Remove whitespace-only chunks from BlockText
+        for chunk in chunks_to_remove:
+            if chunk in self.block_text:
+                self.block_text.remove(chunk)
+
+        # Return updated span or None
+        if new_start_chunk is None:
+            return None
+
+        return Span(
+            start=SpanAnchor(chunk=new_start_chunk, offset=new_start_offset),
+            end=span.end
+        )
+        
+    
+    # -------------------------------------------------------------------------
+    # Rendering operations
+    # -------------------------------------------------------------------------
 
     
     def transform(self) -> "BlockBase":
@@ -837,6 +1034,10 @@ class BlockBase(ABC):
         block = self.transform()
         return block.block_text.text()
     
+    
+    # -------------------------------------------------------------------------
+    # Serialization operations
+    # -------------------------------------------------------------------------
     
     
     def model_dump(self, exclude: set[str] | None = None, include: set[str] | None = None, overrides: dict[str, Any] | None = None):        
@@ -1018,6 +1219,22 @@ class BlockBase(ABC):
             yield from child.traverse()
             
             
+            
+    def apply_style(self, style: str):
+        styles = parse_style(style)
+        for block in self.traverse():
+            block.styles.extend(styles)
+        return self
+    
+    
+    def apply_view_style(self, style: str):
+        styles = parse_style(style)
+        for block in self.traverse():
+            if isinstance(block, BlockSchema):
+                block.styles.extend(styles)
+        return self
+            
+            
     # -------------------------------------------------------------------------
     # Text operations
     # -------------------------------------------------------------------------
@@ -1043,6 +1260,15 @@ class BlockBase(ABC):
         self.append_child(block, copy=False)
         return block
     
+    @classmethod
+    def schema_view(cls, name: str, type: Type | None = None, tags: list[str] | None = None, style: str | None = None) -> "BlockSchema":
+        schema_block = BlockSchema(
+            name,
+            type=type,
+            tags=tags,
+            styles=["xml"] if style is None else parse_style(style),
+        )
+        return schema_block
     
     def view(
         self,
@@ -1760,6 +1986,22 @@ class BlockListSchema(BlockSchema):
         blk = super().instantiate(value, style=style, role=role, tags=tags)
         return blk
     
+    
+    def register(self, target: BlockSchema | Type[BaseModel]):
+        # if isinstance(target, BaseModel):
+            # block = pydantic_object_description(target)
+        if isinstance(target, type) and issubclass(target, BaseModel):
+            if self.key is None:
+                raise ValueError("key_field is required")
+            block = pydantic_class_description(self.name, target, self.key, self.attrs[self.key].type, class_model=target)
+            self.list_models[target.__name__] = target
+        elif isinstance(target, BlockSchema):
+            block = target
+        else:
+            raise ValueError(f"Invalid target type: {type(target)}")
+        self.list_schemas.append(block)
+        self.append(block)
+        return block
     
     def model_metadata_copy(self, overrides: dict[str, Any] | None = None) -> Self:
         dump = {

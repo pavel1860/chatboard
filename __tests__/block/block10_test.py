@@ -549,3 +549,121 @@ class TestContextManager:
 
         assert len(root.children) == 1
         assert len(root.children[0].children) == 1
+
+
+# =============================================================================
+# Strip Tests
+# =============================================================================
+
+class TestStrip:
+    """Tests for block strip() method."""
+
+    def test_strip_postfix_newline(self):
+        """strip() removes newline from postfix_span."""
+        block = Block("content")
+        block.add_new_line()  # Adds "\n" to postfix_span
+
+        assert block.postfix_span is not None
+        assert block.postfix_span.text() == "\n"
+
+        block.strip()
+
+        # Postfix should be None (all whitespace removed)
+        assert block.postfix_span is None
+        # Chunk should be removed from BlockText
+        for chunk in block.block_text:
+            assert chunk.content != "\n"
+
+    def test_strip_postfix_spaces_and_newline(self):
+        """strip() removes spaces and newlines from postfix."""
+        block = Block("content")
+        block.postfix_append("  \n\n  ")
+
+        block.strip()
+
+        assert block.postfix_span is None
+
+    def test_strip_prefix_spaces(self):
+        """strip() removes leading spaces from prefix."""
+        block = Block("content")
+        block.prefix_prepend("   ")
+
+        assert block.prefix_span is not None
+        assert block.prefix_span.text() == "   "
+
+        block.strip()
+
+        assert block.prefix_span is None
+
+    def test_strip_preserves_content(self):
+        """strip() does not affect main content span."""
+        block = Block("  content  ")
+        block.add_new_line()
+
+        block.strip()
+
+        # Main content should be unchanged
+        assert block.span.text() == "  content  "
+        # But postfix should be stripped
+        assert block.postfix_span is None
+
+    def test_strip_partial_whitespace_postfix(self):
+        """strip() removes only trailing whitespace from postfix with mixed content."""
+        block = Block("content")
+        block.postfix_append("suffix  \n")
+
+        block.strip()
+
+        assert block.postfix_span is not None
+        assert block.postfix_span.text() == "suffix"
+
+    def test_strip_partial_whitespace_prefix(self):
+        """strip() removes only leading whitespace from prefix with mixed content."""
+        block = Block("content")
+        block.prefix_prepend("  \nprefix")
+
+        block.strip()
+
+        assert block.prefix_span is not None
+        assert block.prefix_span.text() == "prefix"
+
+    def test_strip_returns_self(self):
+        """strip() returns self for method chaining."""
+        block = Block("content")
+        block.add_new_line()
+
+        result = block.strip()
+
+        assert result is block
+
+    def test_strip_no_prefix_or_postfix(self):
+        """strip() on block without prefix/postfix is no-op."""
+        block = Block("content")
+
+        block.strip()
+
+        assert block.span.text() == "content"
+        assert block.prefix_span is None
+        assert block.postfix_span is None
+
+    def test_strip_multiple_calls_idempotent(self):
+        """Multiple strip() calls are idempotent."""
+        block = Block("content")
+        block.add_new_line()
+
+        block.strip()
+        block.strip()  # Second call should be no-op
+
+        assert block.postfix_span is None
+
+    def test_strip_removes_chunk_from_block_text(self):
+        """strip() removes whitespace chunks from underlying BlockText."""
+        block = Block("content")
+        block.add_new_line()
+
+        initial_length = len(block.block_text)
+
+        block.strip()
+
+        # BlockText should have fewer chunks after stripping
+        assert len(block.block_text) < initial_length

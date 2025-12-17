@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import textwrap
 from typing import Generator, Literal, Type
 from .block import BlockBase, Block, BlockSchema, ContentType, BlockListSchema
+from .path import Path
 from .chunk import BlockChunk
 import contextvars
 from ...utils.function_utils import is_overridden
@@ -48,14 +49,14 @@ class StyleMeta(type):
         default: "type[BaseTransformer] | None"=None
     ) -> "list[Type[BaseTransformer]]":
         current = style_registry_ctx.get()        
-        renderers = []
+        renderers = {}
         for style in styles:
             if style_cls := current.get(style): 
-                if style_cls.target in targets:               
-                    renderers.append(style_cls)
+                if style_cls.target in targets: 
+                    renderers[style_cls.target] = style_cls              
         if not renderers and default is not None:
             return [default]
-        return renderers
+        return list(renderers.values())
     
     
     
@@ -83,7 +84,7 @@ class BaseTransformer(metaclass=StyleMeta):
     def __init__(self, block: BlockBase):
         self.block = block
     
-    def render(self, block: BlockBase) -> BlockBase:
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
     
     
@@ -104,7 +105,7 @@ class ContentTransformer(BaseTransformer):
     target = "content"
     
     
-    def render(self, block: BlockBase) -> BlockBase:
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
         block.postfix_append("\n")
         return block
 
@@ -114,7 +115,7 @@ class ContentTransformer(BaseTransformer):
 class MarkdownHeaderTransformer(ContentTransformer):
     styles = ["markdown", "md"]
     
-    def render(self, block: BlockBase) -> BlockBase:
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
         # block.prefix_prepend("#" * len(block.path) + " ")
         # block.prefix_prepend("#" + " ")
         # block.postfix_append("\n")     
@@ -126,7 +127,7 @@ class MarkdownHeaderTransformer(ContentTransformer):
 class XmlTransformer(ContentTransformer):
     styles = ["xml"]
     
-    def render(self, block: BlockBase) -> BlockBase:
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
         if len(block) == 0:
             block = "<" & block & "/>\n"
             return block
@@ -151,11 +152,25 @@ class XmlTransformer(ContentTransformer):
         block /= content
         return block
     
+    
+class XmlDefTransformer(ContentTransformer):
+    styles = ["xml-def"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        print(path.tag_str())
+        block.strip()
+        block = " " * (path.depth - 1) + "<" & block & "> - "
+        return block
+            
+            
+            
+            
+    
 class XmlListTransformer(BaseTransformer):
     styles = ["xml-list"]
-    target = {"content"}
+    target = "content"
     
-    def render(self, block: BlockBase) -> BlockBase:
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
         # block /= "{... more items}"
         return block
     
@@ -189,11 +204,11 @@ class BlockTransformer:
     def is_list(self) -> bool:
         return isinstance(self.block_schema, BlockListSchema)
         
-    def render(self, block: BlockBase) -> BlockBase:
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
         render_order = ["content"]
         for trans_type in render_order:
             if transformer := self.transformer_lookup.get(trans_type):
-                block = transformer.render(block)
+                block = transformer.render(block, path)
             else:
                 raise ValueError(f"Transformer for {trans_type} not found")
         return block
@@ -265,6 +280,7 @@ def transform(block: BlockBase) -> BlockBase:
         transformed_children.append(transform(child))
 
     # Copy this block's metadata and content (not children)
+    path = block.path
     new_block = block.copy_metadata()
 
     # Add transformed children to the new block
@@ -278,7 +294,7 @@ def transform(block: BlockBase) -> BlockBase:
         # default=ContentTransformer
     )
     for renderer in renderers:
-        new_block = renderer(new_block).render(new_block)
+        new_block = renderer(new_block).render(new_block, path)
 
     return new_block
     
