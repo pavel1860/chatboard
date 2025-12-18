@@ -63,7 +63,7 @@ class BlockBase(ABC):
         content: ContentType | None = None,
         children: list["BlockBase"] | None = None,
         role: str | None = None,
-        style: str | None = None,
+        style: str | list[str] | None = None,
         tags: list[str] | None = None,
         parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
@@ -500,6 +500,24 @@ class BlockBase(ABC):
             if tag in blk.tags:
                 result = blk
         return result
+    
+    
+    def max_depth(self) -> int:
+        """
+        Get the maximum depth of this block.
+        """
+        return max(blk.depth for blk in self.traverse())
+    
+    def min_depth(self) -> int:
+        """
+        Get the minimum depth of this block.
+        """
+        return min(blk.depth for blk in self.traverse())
+    
+    
+    # -------------------------------------------------------------------------
+    # Content processing methods
+    # -------------------------------------------------------------------------
 
 
     def promote_content(self, content: "ContentType") -> list[BlockChunk]:
@@ -1240,6 +1258,67 @@ class BlockBase(ABC):
             block.styles.extend(styles)
         return self
     
+    
+    
+    def extract_schema(self) -> "BlockSchema":
+        """
+        Extract a new BlockSchema tree containing only BlockSchema nodes.
+
+        Traverses this block's subtree and creates a new BlockSchema with
+        only BlockSchema children, preserving the schema hierarchy while
+        filtering out regular Block nodes.
+
+        Returns:
+            A new BlockSchema tree with only schema nodes
+        """
+        # Create a copy of this schema (without children)
+        # new_schema = self.__class__(
+        #     name=self.name,
+        #     type=self.type,
+        #     role=self.role,
+        #     styles=list(self.styles),
+        #     tags=list(self.tags),
+        # )
+        if isinstance(self, BlockSchema):
+            new_schema = self.model_copy()
+        else:
+            new_schema = BlockSchema(
+                self.content_str,
+                role=self.role,
+                tags=self.tags,
+                styles=self.styles,
+                is_virtual=True,
+            )
+
+        # Recursively extract schemas from children
+        for child in self.children:
+            if isinstance(child, BlockSchema) or isinstance(child, BlockListSchema):
+                # Recursively extract and add as child
+                child_schema = child.extract_schema()
+                new_schema.children.append(child_schema)
+                child_schema.parent = new_schema
+            else:
+                # For regular blocks, check their children for nested schemas
+                self._extract_nested_schemas(child, new_schema)
+
+        return new_schema
+
+    def _extract_nested_schemas(self, block: "BlockBase", parent_schema: "BlockSchema"):
+        """
+        Recursively search a Block's children for BlockSchema nodes.
+
+        Any found BlockSchema nodes are extracted and added to parent_schema.
+        """
+        for child in block.children:
+            if isinstance(child, BlockSchema):
+                child_schema = child.extract_schema()
+                parent_schema.children.append(child_schema)
+                child_schema.parent = parent_schema
+            else:
+                # Keep searching deeper
+                self._extract_nested_schemas(child, parent_schema)
+
+    
 
             
             
@@ -1280,7 +1359,7 @@ class BlockBase(ABC):
     
     def view(
         self,
-        name: str,
+        name: str | None = None,
         type: Type | None = None,
         tags: list[str] | None = None,
         style: str | None = None,
@@ -1289,7 +1368,7 @@ class BlockBase(ABC):
             name,
             type=type,
             tags=tags,
-            styles=["xml"] if style is None else parse_style(style),
+            styles=["xml"] if style is None and name is not None else parse_style(style),
         )
         self.append_child(schema_block, copy=False)
         return schema_block
@@ -1487,7 +1566,7 @@ class Block(BlockBase):
         content: ContentType | None = None,
         children: list["BlockBase"] | None = None,
         role: str | None = None,
-        style: str | None = None,
+        style: str | list[str] | None = None,
         tags: list[str] | None = None,
         parent: "Block | None" = None,
         styles: list[str] | None = None,
@@ -1538,27 +1617,31 @@ class BlockSchema(BlockBase):
     
     def __init__(
         self,
-        name: str,
+        name: str | None = None,
         type: Type | None = None,
         children: list["BlockBase"] | None = None,   
         role: str | None = None,
         tags: list[str] | None = None,
-        style: str | None = None,
+        style: str | list[str] | None = None,
         parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
+        is_virtual: bool = False,
         _skip_content: bool = False,
         _transformer = None,
     ):
         tags = tags or []        
-        if name not in tags:
-            tags.insert(0, name)
+        if name is None:
+            if len(tags) == 0:
+                raise ValueError("you must provide a name or tags for the schema. empty names produce virtual schemas that are not rendered.")
+            is_virtual = True
+        else:
+            if name not in tags:
+                tags.insert(0, name)
         styles = styles or parse_style(style)
-        if not styles:
-            styles = ["xml"]
-
+            
         super().__init__(
-            content=name, 
+            content=name if not is_virtual else None, 
             children=children, 
             role=role, 
             style=style, 
@@ -1568,75 +1651,115 @@ class BlockSchema(BlockBase):
             styles=styles, 
             _skip_content=_skip_content
         )
-        self.name = name
+        self.name = name if not is_virtual else tags[0]
         self.type = type
         self._transformer = _transformer
+        
     
     def instantiate(
         self, 
-        content: ContentType | None = None,
+        content: ContentType | dict | None = None,
         style: str | None | UnsetType = UNSET,
         role: str | None | UnsetType = UNSET,
         tags: list[str] | None | UnsetType = UNSET
     ) -> "Block":
+        if isinstance(content, dict):
+            return self.inst_from_dict(content)
         styles = (parse_style(style) or self.styles) if style is not UNSET and style is not None else None
         tags = (tags or self.tags) if tags is not UNSET and tags is not None else None
         role = role or self.role if role is not UNSET and role is not None else None
+        # if isinstance(self.parent, BlockListSchema)
         return Block(
             content=content or (self.name if not role else None),
+            # content=content,
             tags=tags,
             styles=styles,
             role=role or self.role,
         )
+        
+        
+    def inst_from_dict(self, data: dict) -> "Block":
+        from .block_builder import BlockBuilderContext
+        from .pydantic_helpers import traverse_dict
+        builder = BlockBuilderContext(self)
+        builder.init_root()
 
-    def extract_schema(self) -> "BlockSchema":
-        """
-        Extract a new BlockSchema tree containing only BlockSchema nodes.
+        for k, v, path, label_path, action, field_type in traverse_dict(data):
+            if action == "open":        
+                if field_type == "list-item" or field_type == "model-list-item":
+                    builder.instantiate_list_item(k, force_schema=True)
+                else:
+                    builder.instantiate(k, k, force_schema=True)
+                # builder.append(v, force_schema=True)
+                builder.curr_block.append_child(v)
+            elif action == "close":
+                builder.commit(k, force_schema=True)
+            elif action == "open-close":
+                builder.instantiate(k, k, force_schema=True)
+                # builder.append(v, force_schema=True)
+                builder.curr_block.append_child(v)
+                builder.commit(k, force_schema=True)
+                
+        return builder.result
 
-        Traverses this block's subtree and creates a new BlockSchema with
-        only BlockSchema children, preserving the schema hierarchy while
-        filtering out regular Block nodes.
+    
+    @property
+    def is_list_item(self) -> bool:
+        return isinstance(self.parent, BlockListSchema)
+    
+    def get_item_name(self) -> str:
+        if self.is_list_item:
+            return self.parent.item_name
+        return self.name
 
-        Returns:
-            A new BlockSchema tree with only schema nodes
-        """
-        # Create a copy of this schema (without children)
-        # new_schema = self.__class__(
-        #     name=self.name,
-        #     type=self.type,
-        #     role=self.role,
-        #     styles=list(self.styles),
-        #     tags=list(self.tags),
-        # )
-        new_schema = self.model_copy()
+    # def extract_schema(self) -> "BlockSchema":
+    #     """
+    #     Extract a new BlockSchema tree containing only BlockSchema nodes.
 
-        # Recursively extract schemas from children
-        for child in self.children:
-            if isinstance(child, BlockSchema) or isinstance(child, BlockListSchema):
-                # Recursively extract and add as child
-                child_schema = child.extract_schema()
-                new_schema.children.append(child_schema)
-                child_schema.parent = new_schema
-            else:
-                # For regular blocks, check their children for nested schemas
-                self._extract_nested_schemas(child, new_schema)
+    #     Traverses this block's subtree and creates a new BlockSchema with
+    #     only BlockSchema children, preserving the schema hierarchy while
+    #     filtering out regular Block nodes.
 
-        return new_schema
+    #     Returns:
+    #         A new BlockSchema tree with only schema nodes
+    #     """
+    #     # Create a copy of this schema (without children)
+    #     # new_schema = self.__class__(
+    #     #     name=self.name,
+    #     #     type=self.type,
+    #     #     role=self.role,
+    #     #     styles=list(self.styles),
+    #     #     tags=list(self.tags),
+    #     # )
+    #     new_schema = self.model_copy()
 
-    def _extract_nested_schemas(self, block: "BlockBase", parent_schema: "BlockSchema"):
-        """
-        Recursively search a Block's children for BlockSchema nodes.
+    #     # Recursively extract schemas from children
+    #     for child in self.children:
+    #         if isinstance(child, BlockSchema) or isinstance(child, BlockListSchema):
+    #             # Recursively extract and add as child
+    #             child_schema = child.extract_schema()
+    #             new_schema.children.append(child_schema)
+    #             child_schema.parent = new_schema
+    #         else:
+    #             # For regular blocks, check their children for nested schemas
+    #             self._extract_nested_schemas(child, new_schema)
 
-        Any found BlockSchema nodes are extracted and added to parent_schema.
-        """
-        for child in block.children:
-            if isinstance(child, BlockSchema):
-                child_schema = child.extract_schema()
-                parent_schema.children.append(child_schema)
-                child_schema.parent = parent_schema
-            else:
-                # Keep searching deeper
-                self._extract_nested_schemas(child, parent_schema)
+    #     return new_schema
+
+    # def _extract_nested_schemas(self, block: "BlockBase", parent_schema: "BlockSchema"):
+    #     """
+    #     Recursively search a Block's children for BlockSchema nodes.
+
+    #     Any found BlockSchema nodes are extracted and added to parent_schema.
+    #     """
+    #     for child in block.children:
+    #         if isinstance(child, BlockSchema):
+    #             child_schema = child.extract_schema()
+    #             parent_schema.children.append(child_schema)
+    #             child_schema.parent = parent_schema
+    #         else:
+    #             # Keep searching deeper
+    #             self._extract_nested_schemas(child, parent_schema)
     
     def model_metadata_copy(self, overrides: dict[str, Any] | None = None) -> Self:
         dump = {
@@ -2004,7 +2127,7 @@ class BlockListSchema(BlockSchema):
         if isinstance(target, type) and issubclass(target, BaseModel):
             if self.key is None:
                 raise ValueError("key_field is required")
-            block = pydantic_to_block(self.name, target, self.key)
+            block = pydantic_to_block(self.item_name, target, self.key)
             self.list_models[target.__name__] = target
         elif isinstance(target, BlockSchema):
             block = target

@@ -203,6 +203,10 @@ class BlockTransformer:
     @property
     def is_list(self) -> bool:
         return isinstance(self.block_schema, BlockListSchema)
+    
+    @property
+    def is_list_item(self) -> bool:
+        return self.block_schema.is_list_item
         
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         render_order = ["content"]
@@ -219,23 +223,29 @@ class BlockTransformer:
         style: str | None | UnsetType = UNSET,
         role: str | None | UnsetType = UNSET,
         tags: list[str] | None | UnsetType = UNSET,
+        force_schema: bool = False,
     ) -> BlockBase:
         content_transformer = self.transformer_lookup.get("content")
-        if content_transformer is None or not is_overridden(self.block_schema.__class__, "instantiate", BaseTransformer):
-            self._block = self.block_schema.instantiate(content=content, style=style, role=role, tags=tags)        
+        if force_schema or content_transformer is None or not is_overridden(content_transformer.__class__, "instantiate", BaseTransformer):
+            self._block = self.block_schema.instantiate(
+                content=content, 
+                style=style if style is not UNSET else self.block_schema.styles, 
+                role=role if role is not UNSET else self.block_schema.role, 
+                tags=tags if tags is not UNSET else self.block_schema.tags,
+            )        
         else:
             self._block = content_transformer.instantiate(
                 content=content, 
-                style=style if style is not UNSET else None, 
+                style=style if style is not UNSET else self.block_schema.styles, 
                 role=role if role is not UNSET else self.block_schema.role, 
                 tags=tags if tags is not UNSET else self.block_schema.tags,
             )
         return self._block
     
     
-    def append(self, chunk: BlockChunk):
+    def append(self, chunk: BlockChunk, force_schema: bool = False):
         content_transformer = self.transformer_lookup.get("content")
-        if content_transformer is None or not is_overridden(content_transformer.__class__, "append", BaseTransformer):
+        if force_schema or content_transformer is None or not is_overridden(content_transformer.__class__, "append", BaseTransformer):
             self.block.append(chunk, sep="")
         else:
             content_transformer.append(self.block, chunk)
@@ -245,9 +255,9 @@ class BlockTransformer:
         block = self.block.append_child(child.block, copy=False)
         return child
 
-    def commit(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
+    def commit(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, force_schema: bool = False):
         content_transformer = self.transformer_lookup.get("content")
-        if content_transformer is None or not is_overridden(content_transformer.__class__, "commit", BaseTransformer):
+        if force_schema or content_transformer is None or not is_overridden(content_transformer.__class__, "commit", BaseTransformer):
             return 
         if content is not None:    
             content_transformer.commit(self.block, content=content, style=style, role=role, tags=tags)
