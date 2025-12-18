@@ -149,7 +149,10 @@ class BlockBase(ABC):
         content = self.content
         text = content.block_text.text()
         return text
-
+    
+    @property
+    def body(self) -> "BlockList":
+        return BlockList(self.children, role=self.role, tags=self.tags)
     @property
     def last_descendant(self) -> "BlockBase":
         """
@@ -1246,7 +1249,7 @@ class BlockBase(ABC):
         yield self
         for child in self.children:
             yield from child.traverse()
-            
+
             
             
     def apply_style(self, style: str, only_views: bool = False):
@@ -1348,12 +1351,12 @@ class BlockBase(ABC):
         return block
     
     @classmethod
-    def schema_view(cls, name: str, type: Type | None = None, tags: list[str] | None = None, style: str | None = None) -> "BlockSchema":
+    def schema_view(cls, name: str | None = None, type: Type | None = None, tags: list[str] | None = None, style: str | None = None) -> "BlockSchema":
         schema_block = BlockSchema(
             name,
             type=type,
             tags=tags,
-            styles=["xml"] if style is None else parse_style(style),
+            styles=["xml"] if style is None and name is not None else parse_style(style),
         )
         return schema_block
     
@@ -2079,9 +2082,12 @@ class BlockListSchema(BlockSchema):
         block_text: BlockText | None = None, 
         _skip_content: bool = False
     ):
+        tags = tags or []
         if not styles:
             styles = ["xml-list"]
         name = name or f"{item_name}_list"
+        if name not in tags:
+            tags.insert(0, name)
         super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content)
         self.name = name
         self.item_name = item_name
