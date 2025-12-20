@@ -132,10 +132,11 @@ class BlockBuilderContext:
             raise RuntimeError("No block to commit")
         
         transformer = self._stack.pop()
+        # transformer = self._top()
         transformer.commit(content=content, style=style, role=role, tags=tags, force_schema=force_schema)
         return transformer.block
     
-    def append(self, chunk: "BlockChunk", force_schema: bool = False):
+    def append(self, chunk: "BlockChunk", force_schema: bool = False, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None):
         if len(self._stack) == 0:
             raise RuntimeError("No block to append to")
-        self._top().append(chunk, force_schema=force_schema)
+        self._top().append(chunk, force_schema=force_schema, as_child=as_child, start_offset=start_offset, end_offset=end_offset)

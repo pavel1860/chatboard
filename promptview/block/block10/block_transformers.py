@@ -91,7 +91,7 @@ class BaseTransformer(metaclass=StyleMeta):
     def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
     
-    def append(self, block: BlockBase, chunk: BlockChunk) -> BlockBase:
+    def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
     
     def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
@@ -129,7 +129,7 @@ class XmlTransformer(ContentTransformer):
     
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         if len(block) == 0:
-            block = "<" & block & "/>\n"
+            block = "<" & block & "/>"
             return block
         content = block.content
         with Block() as blk:
@@ -138,18 +138,24 @@ class XmlTransformer(ContentTransformer):
         return blk
     
     def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
+        # print("inst>", repr(content))
         with Block( style=style, role=role, tags=tags) as blk:
             blk /= content
         return blk
     
-    def append(self, block: BlockBase, chunk: BlockChunk) -> BlockBase:
-        # block.append(chunk, sep="")
-        # print(repr(chunk.content), chunk.isspace())
-        block.children[0].append(chunk, sep="")
+    def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
+        if len(self.block) == 2:
+            block.children[1].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
+        else:
+            if as_child or len(block.children[0]) > 0:    
+                block.children[0].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
+            else:
+                block.append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
         return block
+  
     
     def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
-        block /= content
+        block.append_child(content, add_new_line=False)
         return block
     
     
@@ -185,6 +191,8 @@ class BlockTransformer:
         for t in transformers:
             transformer_lookup[t.target] = t
         self.transformer_lookup = transformer_lookup
+        self._did_init = False
+        self._did_commit = False
         
     @classmethod
     def from_block_schema(cls, block: BlockSchema) -> "BlockTransformer":
@@ -240,15 +248,16 @@ class BlockTransformer:
                 role=role if role is not UNSET else self.block_schema.role, 
                 tags=tags if tags is not UNSET else self.block_schema.tags,
             )
+        self._did_init = True
         return self._block
     
     
-    def append(self, chunk: BlockChunk, force_schema: bool = False):
+    def append(self, chunk: BlockChunk, force_schema: bool = False, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None):
         content_transformer = self.transformer_lookup.get("content")
         if force_schema or content_transformer is None or not is_overridden(content_transformer.__class__, "append", BaseTransformer):
-            self.block.append(chunk, sep="")
+            self.block.append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
         else:
-            content_transformer.append(self.block, chunk)
+            content_transformer.append(self.block, chunk, as_child=as_child, start_offset=start_offset, end_offset=end_offset)
             
             
     def append_child(self, child: "BlockTransformer"):
@@ -261,6 +270,7 @@ class BlockTransformer:
             return 
         if content is not None:    
             content_transformer.commit(self.block, content=content, style=style, role=role, tags=tags)
+        self._did_commit = True
         return content_transformer
     
     
@@ -295,7 +305,7 @@ def transform(block: BlockBase) -> BlockBase:
 
     # Add transformed children to the new block
     for child in transformed_children:
-        new_block.append_child(child)
+        new_block.append_child(child, add_new_line=False)        
 
     # Apply style renderers to the new block
     renderers = StyleMeta.resolve(
@@ -305,6 +315,10 @@ def transform(block: BlockBase) -> BlockBase:
     )
     for renderer in renderers:
         new_block = renderer(new_block).render(new_block, path)
+        
+        
+    # for child in transformed_children:
+    #     new_block.append_child(child)
 
     return new_block
     

@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterator, Any, TYPE_CHECKING
 from uuid import uuid4
+
+from numpy.core.defchararray import isalpha
 if TYPE_CHECKING:
     from .span import Span, SpanAnchor
 
@@ -61,6 +63,22 @@ class BlockChunk:
         if isinstance(other, BlockChunk):
             return self.id == other.id
         return False
+    
+    def __getitem__(self, index: int) -> str:
+        return self.content[index]
+    
+    def iter_kind(self) -> Iterator[tuple[str, str]]:
+        for c in self.content:
+            if c == "\n":
+                yield c ,"newline"
+            elif c.isalpha():
+                yield c, "alpha"
+            elif c.isdigit():
+                yield c, "digit"
+            elif c.isspace():
+                yield c, "space"
+            else:
+                yield c, "other"
 
     def __hash__(self) -> int:
         """Hash by ID for use in sets/dicts."""
@@ -144,6 +162,10 @@ class BlockChunk:
     
     def isspace(self) -> bool:
         return self.content.isspace()
+    
+    
+    # def __repr__(self) -> str:
+        # return f"BlockChunk(content={repr(self.content)}, logprob={self.logprob})"
 
 
 class BlockText:
@@ -271,9 +293,19 @@ class BlockText:
         result = []
         if after is None:
             for chunk in chunks:
+                if chunk._owner is not None:
+                    if self.tail is not None and self.tail.id != chunk.id:
+                        raise ValueError(f"Chunk {chunk.id} already belongs to a BlockText")
+                    result.append(chunk)
+                    continue
                 result.append(self.append(chunk))
         else:
             for chunk in chunks:
+                if chunk._owner is not None:
+                    if self.tail is not None and self.tail.id != chunk.id:
+                        raise ValueError(f"Chunk {chunk.id} already belongs to a BlockText")
+                    result.append(chunk)
+                    continue
                 after = self.insert_after(after, chunk)
                 result.append(after)
         return result
@@ -847,6 +879,7 @@ class BlockText:
             current = current.next
 
         return new_text
+    
 
     def chunks_list(self) -> list[BlockChunk]:
         """

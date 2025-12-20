@@ -27,6 +27,8 @@ class XmlParser(Process):
         self.root_tag = "_root_tag_"
         
         self.chunks = []  # (start_byte, end_byte, chunk)
+        self.used_chunks = []
+        self._last_used_chunk_idx = -1
         self.total_bytes = 0
         self.pending = None  # (event_type, event_data, start_byte)
         self.chunk_queue = []
@@ -76,6 +78,11 @@ class XmlParser(Process):
     def _has_outputs(self):
         return len(self.chunk_queue) > 0
     
+    def _last_flush_kind(self):
+        if len(self.used_chunks) == 0:
+            return None
+        return self.used_chunks[-1][0]
+    
     def close(self):
         if self._has_synthetic_root_tag:
             # self.feed(BlockChunk(content=f"</{self.context.schema.name}>"))        
@@ -84,7 +91,105 @@ class XmlParser(Process):
         # Flush any pending event
         self._flush_pending(self.total_bytes)
     
-    def _get_chunks_in_range(self, start, end):
+    def _get_chunks_in_range(self, event_type, start, end):
+        """Return all chunks overlapping [start, end)"""
+        result = []
+        idx = 0
+        isspace = False
+        has_content = False
+        as_child = False
+        start_offset = None
+        end_offset = None
+        prefix_chunks = []
+        for chunk_start, chunk_end, chunk in self.chunks:
+            if chunk_start < end and chunk_end > start:
+                for offset, (c, kind) in enumerate(chunk.iter_kind()):
+                    if kind == "newline":
+                        isspace = True
+                        break
+                    elif kind == "space":
+                        pass
+                    else:
+                        has_content = True
+                        isspace = False
+                if start_offset is None and end < chunk_end:
+                    start_offset = end - chunk_start
+                if end_offset is None and start > chunk_start:
+                    end_offset = start - chunk_start
+                result.append(chunk)
+                self._last_used_chunk_idx = idx
+                idx += 1
+                
+        if event_type == "start":
+            if self._last_flush_kind() == "start":
+                as_child = True
+        elif event_type == "end":
+            pass
+        elif event_type == "chardata":
+            if self._last_flush_kind() == "start":
+                if isspace:
+                    as_child = False
+                    event_type = "start"
+                else:
+                    as_child = True   
+            elif self._last_flush_kind() == "end":
+                has_content = True
+                
+        self.used_chunks.append((event_type, self.chunks[:idx]))
+        # self.chunks = self.chunks[idx:] 
+        if not has_content:
+            return [], False, None, None    
+        return result, as_child, start_offset, end_offset
+    
+        
+    def _get_chunks_in_range4(self, event_type, start, end):
+        """Return all chunks overlapping [start, end)"""
+        result = []
+        idx = 0
+        isspace = False
+        as_child = False
+        for chunk_start, chunk_end, chunk in self.chunks:
+            if chunk_start < end and chunk_end > start:
+                for offset, (c, kind) in enumerate(chunk.iter_kind()):
+                    if kind == "newline":
+                        isspace = True
+                        break
+                    elif kind == "space":
+                        pass
+                    else:
+                        isspace = False
+                result.append(chunk)
+                idx += 1
+                
+        if event_type == "start":
+            if self._last_flush_kind() == "start":
+                as_child = True
+        elif event_type == "end":
+            pass
+        elif event_type == "chardata":
+            if self._last_flush_kind() == "start":
+                if isspace:
+                    as_child = False
+                    event_type = "start"
+                else:
+                    as_child = True
+        # if not isspace and self._last_flush_kind() == "start":
+            
+                
+        self.used_chunks.append((event_type, self.chunks[:idx]))
+        self.chunks = self.chunks[idx:]        
+        return result, as_child
+            
+        
+    def _get_chunks_in_range3(self, start, end):
+        """Return all chunks overlapping [start, end)"""
+        result = []
+        for chunk_start, chunk_end, chunk in self.chunks:
+            if chunk_start < end and chunk_end > start:
+                result.append(chunk)
+        return result
+    
+    def _get_chunks_in_range2(self, start, end):
         """
         Return all chunks overlapping [start, end), splitting chunks at boundaries.
 
@@ -159,9 +264,14 @@ class XmlParser(Process):
             return
         
         event_type, event_data, start_byte = self.pending
-        chunks = self._get_chunks_in_range(start_byte, end_byte)
-        metas = [c.logprob for c in chunks]
-        print(event_type, [repr(c.content) for c in chunks])
+        print("flush_pending", event_type, repr(event_data), start_byte, end_byte)
+        chunks, as_child, start_offset, end_offset = self._get_chunks_in_range(event_type, start_byte, end_byte)
+        if len(chunks) == 0:
+            return
+        # print("flush", event_type, [repr(c.content) for c in chunks], repr(event_data), start_byte, end_byte)
+        # print([repr(c.content) for c in chunks])
+        # metas = [c.logprob for c in chunks]
+        # print(event_type, [repr(c.content) for c in chunks])
         if event_type == 'start':
             name, attrs = event_data
             if name == self.root_tag:
@@ -175,9 +285,11 @@ class XmlParser(Process):
             view = self.context.commit(chunks)
             self._push_block(view)            
         elif event_type == 'chardata':            
-            for chunk in chunks:
-                cb = self.context.append(chunk)
-                self._push_block(cb)        
+            # for chunk in chunks:
+            cb = self.context.append(chunks, as_child=as_child, start_offset=start_offset, end_offset=end_offset)            
+            self._push_block(cb)        
+        self.context._root._block.print_debug()
+        print("--------------------------------")
         self.pending = None
     
     

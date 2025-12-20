@@ -159,13 +159,15 @@ class Span:
     
     
     @classmethod
-    def from_chunks(cls, chunks: list["BlockChunk"]) -> Span:
+    def from_chunks(cls, chunks: list["BlockChunk"], start_offset: int | None = None, end_offset: int | None = None) -> Span:
+        start_offset = start_offset if start_offset is not None else 0
+        end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
         if len(chunks) == 0:
             return cls(start=SpanAnchor(chunk=None, offset=0), end=SpanAnchor(chunk=None, offset=0))
         if len(chunks) == 1:
-            return cls(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[0], offset=len(chunks[0].content)))
-        start = SpanAnchor(chunk=chunks[0], offset=0)
-        end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
+            return cls(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[0], offset=end_offset))
+        start = SpanAnchor(chunk=chunks[0], offset=start_offset)
+        end = SpanAnchor(chunk=chunks[-1], offset=end_offset)
         return cls(start=start, end=end)
 
     def text(self) -> str:
