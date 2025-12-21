@@ -82,6 +82,8 @@ def pydantic_to_block(name: str, cls: Type[BaseModel], key_field: str, style: st
     with Block(tags=[tool_name, "model-schema"]) as tool:
         with tool.view(name, type=cls, tags=[tool_name, "model-schema"], style=style) as b:
             # b.field(key_field, tool_name, type=key_type)
+            with b.view(key_field, type=str, tags=[key_field, "key-field"], style=style) as bf:
+                bf /= tool_name
             if not cls.__doc__:
                 raise ValueError(f"description is required for Tool {cls.__name__}")
             b(cls.__doc__, tags=["description"])

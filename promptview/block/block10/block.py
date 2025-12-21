@@ -1765,9 +1765,10 @@ class BlockSchema(BlockBase):
         tags: list[str] | None | UnsetType = UNSET
     ) -> "Block":
         if isinstance(content, dict):
-            return self.inst_from_dict(content)
+            dump = {"name": self.tags[1], **content}
+            return self.inst_from_dict(dump)
         elif isinstance(content, BaseModel):
-            dump = content.model_dump()
+            dump = {"name": self.tags[1], **content.model_dump()}
             return self.inst_from_dict(dump)
         styles = (parse_style(style) or self.styles) if style is not UNSET and style is not None else None
         tags = (tags or self.tags) if tags is not UNSET and tags is not None else None
