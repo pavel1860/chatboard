@@ -3,6 +3,7 @@ import pytest_asyncio
 from promptview.block.block10 import Block, BlockBase, BlockChunk, BlockText, Span, SpanAnchor, XmlParser
 from promptview.block.block10.block import BlockSchema, BlockListSchema
 from promptview.prompt.fbp_process import Stream
+from pydantic import BaseModel, Field
 from .helpers import chunk_xml_for_llm_simulation
 import textwrap
 
@@ -198,3 +199,37 @@ class TestBlockXmlParsing(SchemaParsingEval):
         assert len(schema.children) == 1        
         
         
+
+
+
+class TestSchemaInstantiation(BlockRenderEval):
+    
+    target = """
+    <tool>
+    <weapon>
+    sword
+    </weapon>
+    <target>
+    head
+    </target>
+    </tool>
+    """
+    
+    
+    def block(self):
+        class Attack(BaseModel):
+            """ use this tool to attack the user """
+            weapon: str = Field(description="the weapon you will use to attack the user, can be a sword or a gun")
+            target: str = Field(description="the body part you will attack, can be the head or the chest, or the legs")
+
+
+        with Block.schema_view(tags=["schema"]) as schema:    
+            with schema.view_list("tool", key="name", tags=["pirate"]) as tools:
+                tools.register(Attack)
+                
+        tool_schema = schema.get_list("tool_list")[0].extract_schema()
+        tool = tool_schema.instantiate({"weapon": "sword", "target": "head"})
+        return tool
+                
+                
+    

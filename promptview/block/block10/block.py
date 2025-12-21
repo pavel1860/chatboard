@@ -1363,7 +1363,7 @@ class BlockBase(ABC):
         #     tags=list(self.tags),
         # )
         if isinstance(self, BlockSchema):
-            new_schema = self.model_copy()
+            new_schema = self.model_copy()            
         else:
             new_schema = BlockSchema(
                 self.content_str,
@@ -1372,6 +1372,8 @@ class BlockBase(ABC):
                 styles=self.styles,
                 is_virtual=True,
             )
+        if "xml" not in new_schema.styles:
+            new_schema.styles.append("xml")
 
         # Recursively extract schemas from children
         for child in self.children:
@@ -1383,7 +1385,6 @@ class BlockBase(ABC):
             else:
                 # For regular blocks, check their children for nested schemas
                 self._extract_nested_schemas(child, new_schema)
-                
                 
         if new_schema.is_wrapper and len(new_schema.children) == 1:
             new_schema = new_schema.children[0]
@@ -1651,6 +1652,9 @@ class Block(BlockBase):
     """
     Block is a tree node with structure and style.
     """
+    __slots__ = (
+        "_transformer",
+    )
     
     
     def __init__(
@@ -1668,6 +1672,7 @@ class Block(BlockBase):
         end_offset: int | None = None,
     ):
         super().__init__(content, children=children, role=role, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles, _skip_content=_skip_content, start_offset=start_offset, end_offset=end_offset)
+        self._transformer = None
 
  
         
@@ -1754,13 +1759,16 @@ class BlockSchema(BlockBase):
     
     def instantiate(
         self, 
-        content: ContentType | dict | None = None,
+        content: ContentType | dict | BaseModel | None = None,
         style: str | None | UnsetType = UNSET,
         role: str | None | UnsetType = UNSET,
         tags: list[str] | None | UnsetType = UNSET
     ) -> "Block":
         if isinstance(content, dict):
             return self.inst_from_dict(content)
+        elif isinstance(content, BaseModel):
+            dump = content.model_dump()
+            return self.inst_from_dict(dump)
         styles = (parse_style(style) or self.styles) if style is not UNSET and style is not None else None
         tags = (tags or self.tags) if tags is not UNSET and tags is not None else None
         role = role or self.role if role is not UNSET and role is not None else None
@@ -1781,6 +1789,7 @@ class BlockSchema(BlockBase):
         builder.init_root()
 
         for k, v, path, label_path, action, field_type in traverse_dict(data):
+            print(f"action: {action}, field_type: {field_type}, k: {k}, v: {v}, path: {path}, label_path: {label_path}")
             if action == "open":        
                 if field_type == "list-item" or field_type == "model-list-item":
                     builder.instantiate_list_item(k, force_schema=True)
@@ -1864,6 +1873,7 @@ class BlockSchema(BlockBase):
             "role": self.role,
             "tags": self.tags,
             "styles": self.styles,
+            "is_virtual": self.is_wrapper,
         }
         if overrides:
             dump.update(overrides)
@@ -1877,6 +1887,7 @@ class BlockSchema(BlockBase):
             role=self.role,
             tags=self.tags,
             styles=self.styles,
+            is_virtual=self.is_wrapper,
         )
         if copy_children:
             for child in self.children:

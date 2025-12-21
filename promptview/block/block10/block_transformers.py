@@ -249,6 +249,7 @@ class BlockTransformer:
                 role=role if role is not UNSET else self.block_schema.role, 
                 tags=tags if tags is not UNSET else self.block_schema.tags,
             )
+            self._block_transformer = content_transformer
         self._did_init = True
         return self._block
     
@@ -268,8 +269,8 @@ class BlockTransformer:
     def commit(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, force_schema: bool = False):
         content_transformer = self.transformer_lookup.get("content")
         if force_schema or content_transformer is None or not is_overridden(content_transformer.__class__, "commit", BaseTransformer):
-            return 
-        if content is not None:    
+            pass
+        elif content is not None:    
             content_transformer.commit(self.block, content=content, style=style, role=role, tags=tags)
         self._did_commit = True
         return content_transformer
@@ -315,8 +316,9 @@ def transform(block: BlockBase) -> BlockBase:
         {"content"},
         # default=ContentTransformer
     )
-    for renderer in renderers:
-        new_block = renderer(new_block).render(new_block, path)
+    if not new_block.is_wrapper:
+        for renderer in renderers:
+            new_block = renderer(new_block).render(new_block, path)
         
         
     # for child in transformed_children:

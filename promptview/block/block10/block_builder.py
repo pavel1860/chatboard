@@ -19,7 +19,8 @@ class BlockBuilderContext:
         
     def init_root(self):
         self._root = self._get_schema(self.schema.name)
-        self._root.instantiate()        
+        content = self._root.block_schema.name if not self._root.block_schema.is_wrapper else None
+        self._root.instantiate(content, tags=["root"], force_schema=True)        
         self._stack.append(self._root)
 
     @property
@@ -130,8 +131,6 @@ class BlockBuilderContext:
         #     transformer.append(content)
         self._push(transformer)
         return transformer.block
-    
-    
     
     
         
