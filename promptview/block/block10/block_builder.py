@@ -57,6 +57,13 @@ class BlockBuilderContext:
             return None
         return self._stack[-1]
     
+    
+    def _is_top_committed(self):
+        top = self._top_or_none()
+        if top is None:
+            return False
+        return top._did_commit
+    
 
     
     def _get_schema(self, name: str):
@@ -102,6 +109,8 @@ class BlockBuilderContext:
         tags: list[str] | None | UnsetType = UNSET,
         force_schema: bool = False,
     ):
+        if self._is_top_committed():
+            self._pop()
         if self.schema is None:
             raise RuntimeError("Schema not initialized")
         transformer = self._get_schema(name)
@@ -130,9 +139,10 @@ class BlockBuilderContext:
     def commit(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, force_schema: bool = False):
         if len(self._stack) == 0:
             raise RuntimeError("No block to commit")
-        
-        transformer = self._stack.pop()
-        # transformer = self._top()
+        if self._is_top_committed():
+            self._pop()
+        # transformer = self._stack.pop()
+        transformer = self._top()
         transformer.commit(content=content, style=style, role=role, tags=tags, force_schema=force_schema)
         return transformer.block
     

@@ -118,8 +118,9 @@ class MarkdownHeaderTransformer(ContentTransformer):
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         # block.prefix_prepend("#" * len(block.path) + " ")
         # block.prefix_prepend("#" + " ")
-        # block.postfix_append("\n")     
-        block = "#" + block + "\n"
+        # block.postfix_append("\n")
+        print(path)     
+        block = ("#" * path.depth) + block
         
         return block
 
@@ -139,12 +140,12 @@ class XmlTransformer(ContentTransformer):
     
     def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
         # print("inst>", repr(content))
-        with Block( style=style, role=role, tags=tags) as blk:
+        with Block(style=style, role=role, tags=tags) as blk:
             blk /= content
         return blk
     
     def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
-        if len(self.block) == 2:
+        if len(block) == 2:
             block.children[1].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
         else:
             if as_child or len(block.children[0]) > 0:    
@@ -305,7 +306,8 @@ def transform(block: BlockBase) -> BlockBase:
 
     # Add transformed children to the new block
     for child in transformed_children:
-        new_block.append_child(child, add_new_line=False)        
+        # new_block.append_child(child, add_new_line=False)        
+        new_block.append_child(child)        
 
     # Apply style renderers to the new block
     renderers = StyleMeta.resolve(

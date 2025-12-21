@@ -264,14 +264,10 @@ class XmlParser(Process):
             return
         
         event_type, event_data, start_byte = self.pending
-        print("flush_pending", event_type, repr(event_data), start_byte, end_byte)
+        # print("flush_pending", event_type, repr(event_data), start_byte, end_byte)
         chunks, as_child, start_offset, end_offset = self._get_chunks_in_range(event_type, start_byte, end_byte)
         if len(chunks) == 0:
             return
-        # print("flush", event_type, [repr(c.content) for c in chunks], repr(event_data), start_byte, end_byte)
-        # print([repr(c.content) for c in chunks])
-        # metas = [c.logprob for c in chunks]
-        # print(event_type, [repr(c.content) for c in chunks])
         if event_type == 'start':
             name, attrs = event_data
             if name == self.root_tag:
@@ -288,8 +284,8 @@ class XmlParser(Process):
             # for chunk in chunks:
             cb = self.context.append(chunks, as_child=as_child, start_offset=start_offset, end_offset=end_offset)            
             self._push_block(cb)        
-        self.context._root._block.print_debug()
-        print("--------------------------------")
+        # self.context._root._block.print_debug()
+        # print("--------------------------------")
         self.pending = None
     
     

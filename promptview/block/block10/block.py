@@ -144,6 +144,25 @@ class BlockBase(ABC):
         block.span = Span.from_chunks(list(new_block_text))
         return block
     
+    # def get_content(self, raise_on_wrapper: bool = True) -> "BlockBase":
+    #     if self.span is None:
+    #         if raise_on_wrapper:
+    #             raise ValueError("Cannot get content of wrapper block (no content). Check is_wrapper first.")
+    #         return Block(_skip_content=True)
+
+    #     new_block_text = self.block_text.fork(
+    #         start=self.span.start.chunk,
+    #         end=self.span.end.chunk
+    #     )
+
+    #     # Create block with the new BlockText
+    #     block = Block(
+    #         block_text=new_block_text,
+    #         _skip_content=True,
+    #     )
+    #     block.span = Span.from_chunks(list(new_block_text))
+    #     return block
+    
     @property
     def content_str(self) -> str:
         if self.is_wrapper:
@@ -537,6 +556,8 @@ class BlockBase(ABC):
         elif isinstance(content, list):
             return content
         elif isinstance(content, Block):
+            if len(content) > 0:
+                raise ValueError("Cant append a block with body content")
             return  [chunk.copy() for chunk in content.span.chunks()] if content.span else []
         elif isinstance(content, BlockChunk):
             return [content]
@@ -690,6 +711,9 @@ class BlockBase(ABC):
 
         # Add newline separator (skip for wrapper blocks with no content)
         if add_new_line:
+            # if len(self) == 0:
+            #     if not self._has_end_of_line():
+            #         self.add_new_line()
             if self.children:
                 self.last_descendant.add_new_line()
             elif not self.is_wrapper:
@@ -1202,7 +1226,7 @@ class BlockBase(ABC):
         )
     
     
-    def copy_metadata(self) -> "BlockBase":
+    def copy_metadata(self, with_prefix: bool = False, with_postfix: bool = False) -> "BlockBase":
         """
         Copy this block's metadata and content, but NOT children.
 
@@ -1359,8 +1383,14 @@ class BlockBase(ABC):
             else:
                 # For regular blocks, check their children for nested schemas
                 self._extract_nested_schemas(child, new_schema)
+                
+                
+        if new_schema.is_wrapper and len(new_schema.children) == 1:
+            new_schema = new_schema.children[0]
+            new_schema.parent = None
 
         return new_schema
+
 
     def _extract_nested_schemas(self, block: "BlockBase", parent_schema: "BlockSchema"):
         """
@@ -1663,7 +1693,9 @@ class Block(BlockBase):
     
     
     def __repr__(self) -> str:
-        return f"""Block(content="{str(self.content_str)}", children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
+        postfix = ", postfix=" + repr(self.postfix_span.text()) + " " if self.postfix_span else ""
+        prefix = ", prefix=" + repr(self.prefix_span.text()) + " " if self.prefix_span else ""
+        return f"""Block({prefix}content="{str(self.content_str)}", {postfix}children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
 
 
 
@@ -2201,7 +2233,7 @@ class BlockListSchema(BlockSchema):
         else:
             raise ValueError(f"Invalid target type: {type(target)}")
         self.list_schemas.append(block)
-        self.append(block)
+        self.append_child(block)
         return block
     
     def model_metadata_copy(self, overrides: dict[str, Any] | None = None) -> Self:
