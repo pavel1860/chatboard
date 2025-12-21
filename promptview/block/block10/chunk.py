@@ -914,6 +914,6 @@ class BlockText:
     
     
     def print_chunk_linage(self):
-        str_linage = "\n".join([f"{chunk.prev.id if chunk.prev else 'None'} -> [{chunk.id}] -> {chunk.next.id if chunk.next else 'None'} : {chunk.content}" for chunk in self])
+        str_linage = "\n".join([f"{chunk.prev.id if chunk.prev else 'None'} -> [{chunk.id}] -> {chunk.next.id if chunk.next else 'None'} : {repr(chunk.content)}" for chunk in self])
         print(str_linage)
         # return str_linage

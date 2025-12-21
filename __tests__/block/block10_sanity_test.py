@@ -115,7 +115,7 @@ class TestBlockXml(BlockRenderEval):
     
     target = """
         <Hello world>
-        this is a test
+          this is a test
         </Hello world>
         """
     
@@ -174,9 +174,7 @@ class TestBlockXmlParsing(SchemaParsingEval):
     """
     
     target = """
-    <item>
-    hello world
-    </item>
+    <item>hello world</item>
     """
     
     def block(self) -> BlockBase:
@@ -206,12 +204,15 @@ class TestSchemaInstantiation(BlockRenderEval):
     
     target = """
     <tool>
-    <weapon>
-    sword
-    </weapon>
-    <target>
-    head
-    </target>
+      <name>
+        attack
+      </name>
+      <weapon>
+        sword
+      </weapon>
+      <target>
+        head
+      </target>
     </tool>
     """
     

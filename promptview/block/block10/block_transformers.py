@@ -132,11 +132,18 @@ class XmlTransformer(ContentTransformer):
         if len(block) == 0:
             block = "<" & block & "/>"
             return block
-        content = block.content
-        with Block() as blk:
-            blk /= "<" & block & ">"
-            blk /= "</" & content & ">"
-        return blk
+        # elif len(block) == 1:
+        #     content = block.content
+        #     blk = Block()
+        #     blk.append_child("<" & block & ">", add_new_line=False)
+        #     blk.append_child("</" & content & ">", add_new_line=False)
+        #     return blk                
+        else:
+            content = block.content
+            with Block() as blk:
+                blk /= "<" & block.indent_body(1) & ">"
+                blk /= "</" & content & ">"
+            return blk
     
     def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
         # print("inst>", repr(content))
@@ -157,6 +164,7 @@ class XmlTransformer(ContentTransformer):
     
     def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
         block.append_child(content, add_new_line=False)
+        # block /= content
         return block
     
     
@@ -286,7 +294,7 @@ def transform_with_styles(block: BlockBase) -> BlockBase:
     return block
 
 
-def transform(block: BlockBase) -> BlockBase:
+def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     """
     Transform a block tree by applying style renderers.
 
@@ -299,7 +307,7 @@ def transform(block: BlockBase) -> BlockBase:
     # Transform children first (recursive)
     transformed_children = []
     for child in block.children:
-        transformed_children.append(transform(child))
+        transformed_children.append(transform(child, depth + 1))
 
     # Copy this block's metadata and content (not children)
     path = block.path
@@ -307,8 +315,8 @@ def transform(block: BlockBase) -> BlockBase:
 
     # Add transformed children to the new block
     for child in transformed_children:
-        # new_block.append_child(child, add_new_line=False)        
-        new_block.append_child(child)        
+        new_block.append_child(child, add_new_line=False)        
+        # new_block.append_child(child)        
 
     # Apply style renderers to the new block
     renderers = StyleMeta.resolve(
@@ -323,6 +331,8 @@ def transform(block: BlockBase) -> BlockBase:
         
     # for child in transformed_children:
     #     new_block.append_child(child)
+    if depth == 0:
+        new_block.last_descendant.remove_new_line()
 
     return new_block
     

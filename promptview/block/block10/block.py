@@ -96,8 +96,9 @@ class BlockBase(ABC):
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
-        pass
+    def __exit__(self, exc_type, exc_value, traceback):        
+        if len(self.children) > 0 and not self.children[-1]._has_end_of_line():
+            self.children[-1].add_new_line()
 
     def __len__(self) -> int:
         """Return number of children."""
@@ -607,10 +608,14 @@ class BlockBase(ABC):
     #         self.span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
     
     def _has_end_of_line(self) -> bool:
-        if self.postfix_span is not None:            
+        # Check own postfix first
+        if self.postfix_span is not None:
             for c in self.postfix_span.chunks():
                 if c.is_line_end:
                     return True
+        # For wrapper blocks with children, check last child's end-of-line
+        if self.is_wrapper and self.children:
+            return self.children[-1]._has_end_of_line()
         return False
     
     
@@ -711,13 +716,19 @@ class BlockBase(ABC):
 
         # Add newline separator (skip for wrapper blocks with no content)
         if add_new_line:
-            # if len(self) == 0:
-            #     if not self._has_end_of_line():
-            #         self.add_new_line()
-            if self.children:
-                self.last_descendant.add_new_line()
-            elif not self.is_wrapper:
-                self.add_new_line()
+            # No children - add newline to content if not a wrapper
+            if not self.children:
+                if not self.is_wrapper:
+                    self.add_new_line()
+            # Children - add newline to last child if not a wrapper
+            elif not self.children[-1]._has_end_of_line():
+                    self.children[-1].add_new_line()
+
+            # if len(self.children) > 0:
+            #     if not self.children[-1]._has_end_of_line():
+            #         self.children[-1].add_new_line()
+            # elif not self.is_wrapper:
+            #     self.add_new_line()
 
         # Only move chunks if block has a different BlockText
         # (If block already shares our BlockText, chunks are already in place)
@@ -943,6 +954,35 @@ class BlockBase(ABC):
     # -------------------------------------------------------------------------
     # String operations
     # -------------------------------------------------------------------------
+    
+    def add_new_line(self):
+        self.postfix_append(BlockChunk(content="\n"))
+        
+    def remove_new_line(self):
+        if not self.postfix_span:
+            return
+        for c in self.postfix_span.chunks():
+            if c.is_line_end:
+                self.block_text.remove(c)
+                break
+        return self
+
+    
+    def indent(self, num: int = 1):
+        tabs = []
+        if not self.is_wrapper:
+            for i in range(num):
+                t = BlockChunk(content="  ")
+                tabs.append(t)
+            self.prefix_prepend(tabs)
+        for child in self.children:
+            child.indent(num)
+        return self
+    
+    def indent_body(self, num: int = 1):
+        for child in self.children:
+            child.indent(num)
+        return self
 
     def strip(self) -> "BlockBase":
         """
@@ -1226,7 +1266,7 @@ class BlockBase(ABC):
         )
     
     
-    def copy_metadata(self, with_prefix: bool = False, with_postfix: bool = False) -> "BlockBase":
+    def copy_metadata(self, with_prefix: bool = True, with_postfix: bool = True) -> "BlockBase":
         """
         Copy this block's metadata and content, but NOT children.
 
@@ -1234,26 +1274,65 @@ class BlockBase(ABC):
         block has no children and no parent - ready for building a new tree.
 
         For wrapper blocks (no content), creates an empty wrapper.
+
+        Args:
+            with_prefix: If True, also copy prefix_span chunks (default True)
+            with_postfix: If True, also copy postfix_span chunks (default True)
         """
         if self.span is None:
             # Wrapper block - no content to fork
             return self.model_metadata_copy()
 
-        # Fork just this block's content (not children)
+        # Determine start chunk (prefix or content)
+        if with_prefix and self.prefix_span is not None:
+            start_chunk = self.prefix_span.start.chunk
+        else:
+            start_chunk = self.span.start.chunk
+
+        # Determine end chunk (postfix or content)
+        if with_postfix and self.postfix_span is not None:
+            end_chunk = self.postfix_span.end.chunk
+        else:
+            end_chunk = self.span.end.chunk
+
+        # Fork the BlockText including prefix/postfix as needed
         new_block_text = self.block_text.fork(
-            start=self.span.start.chunk,
-            end=self.span.end.chunk
+            start=start_chunk,
+            end=end_chunk
         )
 
-        # new_block = Block(
-        #     styles=list(self.styles),
-        #     tags=list(self.tags),
-        #     role=self.role,
-        #     block_text=new_block_text,
-        #     _skip_content=True,
-        # )
+        # Build chunk mapping: old_id -> new_chunk
+        chunk_map = {}
+        current = start_chunk
+        new_chunk_iter = iter(new_block_text)
+        while current is not None:
+            chunk_map[current.id] = next(new_chunk_iter)
+            if current is end_chunk:
+                break
+            current = current.next
+
         new_block = self.model_metadata_copy(overrides={"block_text": new_block_text, "_skip_content": True})
-        new_block.span = Span.from_chunks(list(new_block_text))
+
+        # Remap content span
+        new_block.span = Span(
+            start=SpanAnchor(chunk_map[self.span.start.chunk.id], self.span.start.offset),
+            end=SpanAnchor(chunk_map[self.span.end.chunk.id], self.span.end.offset),
+        )
+
+        # Remap prefix span if present and copied
+        if with_prefix and self.prefix_span is not None:
+            new_block.prefix_span = Span(
+                start=SpanAnchor(chunk_map[self.prefix_span.start.chunk.id], self.prefix_span.start.offset),
+                end=SpanAnchor(chunk_map[self.prefix_span.end.chunk.id], self.prefix_span.end.offset),
+            )
+
+        # Remap postfix span if present and copied
+        if with_postfix and self.postfix_span is not None:
+            new_block.postfix_span = Span(
+                start=SpanAnchor(chunk_map[self.postfix_span.start.chunk.id], self.postfix_span.start.offset),
+                end=SpanAnchor(chunk_map[self.postfix_span.end.chunk.id], self.postfix_span.end.offset),
+            )
+
         return new_block
     
 
@@ -1410,16 +1489,7 @@ class BlockBase(ABC):
 
     
 
-            
-            
-    # -------------------------------------------------------------------------
-    # Text operations
-    # -------------------------------------------------------------------------
-    
-    def add_new_line(self):
-        self.postfix_append(BlockChunk(content="\n"))
-        
-        
+                  
         
     # -------------------------------------------------------------------------
     # Prompt Context operations
@@ -1510,6 +1580,19 @@ class BlockBase(ABC):
         header_parts = [f"[{path_str}]", wrapper_str, tags_str, styles_str]
         header = " ".join(p for p in header_parts if p)
         lines.append(f"{prefix}{header}")
+        
+        
+        # Prefix span if present
+        if self.prefix_span:
+            prefix_chunks = []
+            chunk = self.prefix_span.start.chunk
+            while chunk is not None:
+                prefix_chunks.append(repr(chunk.content))
+                if chunk is self.prefix_span.end.chunk:
+                    break
+                chunk = chunk.next
+            lines.append(f"{prefix}  prefix: [{', '.join(prefix_chunks)}]")
+
 
         # Content span chunks
         if self.span:
@@ -1521,17 +1604,6 @@ class BlockBase(ABC):
                     break
                 chunk = chunk.next
             lines.append(f"{prefix}  content: [{', '.join(content_chunks)}]")
-
-        # Prefix span if present
-        if self.prefix_span:
-            prefix_chunks = []
-            chunk = self.prefix_span.start.chunk
-            while chunk is not None:
-                prefix_chunks.append(repr(chunk.content))
-                if chunk is self.prefix_span.end.chunk:
-                    break
-                chunk = chunk.next
-            lines.append(f"{prefix}  prefix: [{', '.join(prefix_chunks)}]")
 
         # Postfix span if present
         if self.postfix_span:
@@ -1804,6 +1876,7 @@ class BlockSchema(BlockBase):
                 builder.instantiate(k, k, force_schema=True)
                 # builder.append(v, force_schema=True)
                 builder.curr_block.append_child(v)
+                builder.curr_block.children[-1].add_new_line()
                 builder.commit(k, force_schema=True)
                 
         return builder.result
