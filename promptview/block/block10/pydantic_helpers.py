@@ -102,9 +102,9 @@ def pydantic_to_block(name: str, cls: Type[BaseModel], key_field: str, style: st
     if key_field is None:
         raise ValueError("key_field is required")
     tool_name = camel_to_snake(cls.__name__)
-    with Block(tags=[tool_name, "model-schema"]) as tool:
-        with tool.view(name, type=cls, tags=[tool_name, "model-schema"]) as b:
-            # b.field(key_field, tool_name, type=key_type)
+    # with Block(tags=[tool_name, "model-schema"]) as tool:
+    #     with tool.view(name, type=cls, tags=[tool_name, "model-schema"]) as b:
+    with BlockSchema(name, type=cls, tags=[tool_name, "model-schema"]) as b:
             with b.view(key_field, type=str, tags=[key_field, "key-field"]) as bf:
                 bf /= tool_name
             if not cls.__doc__:
@@ -119,4 +119,4 @@ def pydantic_to_block(name: str, cls: Type[BaseModel], key_field: str, style: st
                         raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
                     with params.view(field_name, type=field_info.annotation, tags=[field_name, "field"], is_required=is_required) as bf:
                         bf /= field_info.description
-    return tool
+    return b

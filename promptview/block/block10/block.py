@@ -210,9 +210,14 @@ class BlockBase(ABC):
     
     @property
     def start_prefix_chunk(self) -> BlockChunk | None:
-        if self.prefix_span is None:
+        if self.prefix_span is not None:
+            return self.prefix_span.start.chunk
+        if self.span is not None:
             return self.content_start_chunk
-        return self.prefix_span.start.chunk
+        # Wrapper block with no prefix and no content - use first child's start
+        if self.children:
+            return self.children[0].start_chunk
+        return None
 
     # -------------------------------------------------------------------------
     # Boundary properties (for entire subtree)
@@ -678,6 +683,7 @@ class BlockBase(ABC):
         else:
             # self.span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
             self.span.end = SpanAnchor(chunk=chunks[-1], offset=end_offset)
+        return self
 
         
     def postfix_append(self, content: ContentType, sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
@@ -687,6 +693,7 @@ class BlockBase(ABC):
         content = self._append_separator(content, sep, append=True)
         chunks = self.block_text.extend(content, after=self.end_postfix_chunk)
         self.postfix_span = Span.from_chunks(chunks, start_offset=start_offset, end_offset=end_offset)
+        return self
         
     def prefix_prepend(self, content: ContentType, sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
         content = self.promote_content(content)
@@ -695,6 +702,7 @@ class BlockBase(ABC):
         content = self._append_separator(content, sep, append=False)
         chunks = self.block_text.left_extend(content, before=self.start_prefix_chunk)
         self.prefix_span = Span.from_chunks(chunks, start_offset=start_offset, end_offset=end_offset)
+        return self
         
     def append_child(self, child_content: BlockBase | ContentType, copy: bool = True, add_new_line: bool = True, start_offset: int | None = None, end_offset: int | None = None):
         """
@@ -971,20 +979,17 @@ class BlockBase(ABC):
         return self
 
     
-    def indent(self, num: int = 1):
-        tabs = []
-        if not self.is_wrapper:
-            for i in range(num):
-                t = BlockChunk(content="  ")
-                tabs.append(t)
-            self.prefix_prepend(tabs)
+    def indent(self, spaces: int = 2):        
+        if not self.is_wrapper:            
+            spaces_chunk = BlockChunk(content=" " * spaces)            
+            self.prefix_prepend(spaces_chunk)
         for child in self.children:
-            child.indent(num)
+            child.indent(spaces)
         return self
     
-    def indent_body(self, num: int = 1):
+    def indent_body(self, spaces: int = 2):
         for child in self.children:
-            child.indent(num)
+            child.indent(spaces)
         return self
 
     def strip(self) -> "BlockBase":
@@ -1414,14 +1419,14 @@ class BlockBase(ABC):
 
             
             
-    def apply_style(self, style: str, only_views: bool = False):
+    def apply_style(self, style: str, only_views: bool = True):
         block_copy = self.copy()
         styles = parse_style(style)
         for block in block_copy.traverse():
             if only_views and not isinstance(block, BlockSchema):
                 continue
             block.styles.extend(styles)
-        return self
+        return block_copy
     
     
     
@@ -1895,7 +1900,7 @@ class BlockSchema(BlockBase):
         builder.init_root()
 
         for k, v, path, label_path, action, field_type in traverse_dict(data):
-            print(f"action: {action}, field_type: {field_type}, k: {k}, v: {v}, path: {path}, label_path: {label_path}")
+            # print(f"action: {action}, field_type: {field_type}, k: {k}, v: {v}, path: {path}, label_path: {label_path}")
             if action == "open":        
                 if field_type == "list-item" or field_type == "model-list-item":
                     builder.instantiate_list_item(k, force_schema=True)

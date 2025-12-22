@@ -18,12 +18,48 @@ style_registry_ctx = contextvars.ContextVar("style_registry_ctx", default={})
 TargetType = Literal["content", "block", "children", "tree", "subtree"]
 
 
-class TransformerConfigDict(TypedDict):
-    block: "Type[BaseTransformer] | None"
-    content: "Type[BaseTransformer] | None"
-    body: "Type[BaseTransformer] | None"
-    hidden: "bool"
 
+    
+    
+@dataclass
+class TransformerConfig:
+    list: "type[ListTransformer] | None" = None
+    block: "Type[BaseTransformer] | None" = None
+    content: "Type[BaseTransformer] | None" = None
+    body: "Type[BaseTransformer] | None" = None
+    hidden: "bool" = False
+    is_wrapper: "bool" = False
+    
+    
+    def get(self, key: str, default: "Type[BaseTransformer] | None" = None) -> "Type[BaseTransformer] | None":
+        if self.block is not None and key in ["content"]:
+            return default
+        return getattr(self, key)
+    
+    def __getitem__(self, key: str) -> "Type[BaseTransformer] | None":
+        return self.get(key)
+    
+    def __setitem__(self, key: str, value: "Type[BaseTransformer] | None"):            
+        setattr(self, key, value)
+        
+    def iter_transformers(self):
+        if self.is_wrapper:
+            order = ["list", "body"]
+        else:
+            order = ["list", "block", "content", "body"]
+        for target in order:
+            if transformer := self.get(target):
+                yield (target, transformer)
+        
+    def get_body_transformers(self) -> "TransformerConfig":
+        return TransformerConfig(
+            body=self.body,
+        )
+        
+        
+    
+        
+        
 class StyleMeta(type):
     # _registry: dict[str, "StyleMeta"] = {}
     # _styles: dict[str, "BlockStyle"] = {}
@@ -41,12 +77,7 @@ class StyleMeta(type):
     
     @staticmethod
     def filter_styles(styles: list[str]):
-        config: TransformerConfigDict = {
-            "block": None,
-            "content": None,
-            "body": None,
-            "hidden": False
-        }
+        config = TransformerConfig()
         current = style_registry_ctx.get()
         for style in styles:
             if style_cls := current.get(style):
@@ -68,26 +99,19 @@ class StyleMeta(type):
         styles: list[str], 
         targets: set[TargetType] | None = None,
         default: "type[BaseTransformer] | None"=None
-    # ) -> "list[Type[BaseTransformer]]":
-    ) -> "TransformerConfigDict":
+    ) -> "TransformerConfig":
         current = style_registry_ctx.get()
-        transformer_cfg: TransformerConfigDict = {
-            "block": None,
-            "content": None,
-            "body": None,
-            "hidden": False
-        }
+        transformer_cfg = TransformerConfig()
         for style in styles:
             if style == "hidden":
-                transformer_cfg["hidden"] = True                
+                transformer_cfg.hidden = True                
             elif style_cls := current.get(style): 
                 if targets is None or style_cls.target in targets: 
                     transformer_cfg[style_cls.target] = style_cls              
         # if not renderers and default is not None:
             # return [default]
         if transformer_cfg.get("block") is not None:
-            transformer_cfg["content"] = None        
-            transformer_cfg["body"] = None
+            transformer_cfg["content"] = None
             
         return transformer_cfg
     
@@ -234,6 +258,21 @@ class BaseTransformer(metaclass=StyleMeta):
     
 
 
+class PrefixTransformer(BaseTransformer):
+    styles = ["prefix"]
+    target = "prefix"
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        return block
+
+
+class ListTransformer(BaseTransformer):
+    styles = ["list"]
+    target = "list"
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        return block
+
 
 class ContentTransformer(BaseTransformer):
     styles = ["content"]
@@ -259,6 +298,68 @@ class BlockTransformer(BaseTransformer):
     
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         return block
+
+
+
+
+
+class NumberedListTransformer(ListTransformer):
+    styles = ["numbered-list", "num-li"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        
+        for child in block.children:
+            prefix = f"{child.path.indices[-1] + 1}. "
+            child.prefix_prepend(prefix)
+            child.indent_body(len(prefix))
+        
+        return block
+    
+    
+class AlphaListTransformer(ListTransformer):
+    styles = ["alpha-list", "alpha-li"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        for child in block.children:
+            prefix = f"{chr(96 + child.path.indices[-1])}. "
+            child.prefix_prepend(prefix)
+            child.indent_body(len(prefix))
+        return block
+    
+class RomanListTransformer(ListTransformer):
+    styles = ["roman-list", "roman-li"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        from ...utils.string_utils import int_to_roman
+        for child in block.children:
+            prefix = f"{int_to_roman(child.path.indices[-1])}. "
+            child.prefix_prepend(prefix)
+            child.indent_body(len(prefix))
+        return block
+    
+class DashListTransformer(ListTransformer):
+    styles = ["dash-list", "dash-li"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        for child in block.children:
+            prefix = "- "
+            child.prefix_prepend(prefix)
+            child.indent_body(len(prefix))
+        return block
+    
+    
+class AsteriskListTransformer(ListTransformer):
+    styles = ["asterisk-list", "asterisk-li"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        for child in block.children:
+            prefix = "* "
+            child.prefix_prepend(prefix)
+            child.indent_body(len(prefix))
+        return block
+    
+    
+
 
 
 class MarkdownHeaderTransformer(ContentTransformer):
@@ -317,7 +418,7 @@ class XmlTransformer(ContentTransformer):
         else:
             content = block.content
             with Block() as blk:
-                blk /= "<" & block.indent_body(1) & ">"
+                blk /= "<" & block.indent_body(2) & ">"
                 blk /= "</" & content & ">"
             return blk
     
@@ -506,15 +607,16 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     render_cfg = StyleMeta.resolve(
         block.styles     
     )
+    render_cfg.is_wrapper = block.is_wrapper
     # should not render children if block renderer is present
-    if render_cfg.get("block") is None:
+    if render_cfg.block is None:
         for child in block.children:
             transformed_children.append(transform(child, depth + 1))
 
     # Copy this block's metadata and content (not children)
     path = block.path
     
-    if render_cfg.get("hidden"):
+    if render_cfg.hidden:
         new_block = Block(tags=block.tags)
     else:
         new_block = block.copy_metadata()
@@ -525,11 +627,8 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
         new_block.append_child(child, copy=False, add_new_line=False)        
 
     # Apply style renderers to the new block
-    if not new_block.is_wrapper:
-        for target, transformer in render_cfg.items():
-            if transformer is None or target == "hidden":
-                continue
-            new_block = transformer(block).render(new_block, path)
+    for target, transformer in render_cfg.iter_transformers():
+        new_block = transformer(block).render(new_block, path)
         
         
     # for child in transformed_children:
