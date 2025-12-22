@@ -2,7 +2,7 @@ from collections import OrderedDict
 import copy
 from dataclasses import dataclass, field
 import textwrap
-from typing import Generator, Literal, Type
+from typing import Generator, Literal, Type, TypedDict
 from .block import BlockBase, Block, BlockSchema, ContentType, BlockListSchema
 from .path import Path
 from .chunk import BlockChunk
@@ -18,6 +18,11 @@ style_registry_ctx = contextvars.ContextVar("style_registry_ctx", default={})
 TargetType = Literal["content", "block", "children", "tree", "subtree"]
 
 
+class TransformerConfigDict(TypedDict):
+    block: "Type[BaseTransformer] | None"
+    content: "Type[BaseTransformer] | None"
+    body: "Type[BaseTransformer] | None"
+    hidden: "bool"
 
 class StyleMeta(type):
     # _registry: dict[str, "StyleMeta"] = {}
@@ -34,7 +39,23 @@ class StyleMeta(type):
                 style_registry_ctx.get()[style] = new_cls
         return new_cls
     
-    
+    @staticmethod
+    def filter_styles(styles: list[str]):
+        config: TransformerConfigDict = {
+            "block": None,
+            "content": None,
+            "body": None,
+            "hidden": False
+        }
+        current = style_registry_ctx.get()
+        for style in styles:
+            if style_cls := current.get(style):
+                config[style_cls.target] = style_cls
+        if config.get("block") is not None:
+            config["content"] = None
+        if config.get("content") is not None:
+            config["body"] = None
+        return config
     
     @classmethod
     def list_styles(cls) -> list[str]:
@@ -45,18 +66,30 @@ class StyleMeta(type):
     def resolve(
         cls, 
         styles: list[str], 
-        targets: set[TargetType],
+        targets: set[TargetType] | None = None,
         default: "type[BaseTransformer] | None"=None
-    ) -> "list[Type[BaseTransformer]]":
-        current = style_registry_ctx.get()        
-        renderers = {}
+    # ) -> "list[Type[BaseTransformer]]":
+    ) -> "TransformerConfigDict":
+        current = style_registry_ctx.get()
+        transformer_cfg: TransformerConfigDict = {
+            "block": None,
+            "content": None,
+            "body": None,
+            "hidden": False
+        }
         for style in styles:
-            if style_cls := current.get(style): 
-                if style_cls.target in targets: 
-                    renderers[style_cls.target] = style_cls              
-        if not renderers and default is not None:
-            return [default]
-        return list(renderers.values())
+            if style == "hidden":
+                transformer_cfg["hidden"] = True                
+            elif style_cls := current.get(style): 
+                if targets is None or style_cls.target in targets: 
+                    transformer_cfg[style_cls.target] = style_cls              
+        # if not renderers and default is not None:
+            # return [default]
+        if transformer_cfg.get("block") is not None:
+            transformer_cfg["content"] = None        
+            transformer_cfg["body"] = None
+            
+        return transformer_cfg
     
     
     
@@ -79,21 +112,123 @@ class RenderContext:
     
     
 class BaseTransformer(metaclass=StyleMeta):
+    """
+    Base class for block transformers.
+
+    Acts as a wrapper around the original block, providing:
+    - Read-only access to original block's properties (no copy needed)
+    - Lazy copy-on-write for mutations via self.copy property
+
+    Subclasses implement render() to transform blocks.
+    """
     styles = []
-    
+
     def __init__(self, block: BlockBase):
-        self.block = block
-    
+        self._original = block
+        self._copy: BlockBase | None = None
+
+    # -------------------------------------------------------------------------
+    # Read-only access to original block (no copy needed)
+    # -------------------------------------------------------------------------
+
+    @property
+    def original(self) -> BlockBase:
+        """Access the original block (read-only)."""
+        return self._original
+
+    @property
+    def content_str(self) -> str:
+        """Get content string from original block."""
+        return self._original.content_str
+
+    @property
+    def children(self) -> list[BlockBase]:
+        """Get children from original block."""
+        return self._original.children
+
+    @property
+    def tags(self) -> list[str]:
+        """Get tags from original block."""
+        return self._original.tags
+
+    @property
+    def styles_list(self) -> list[str]:
+        """Get styles from original block."""
+        return self._original.styles
+
+    @property
+    def role(self) -> str | None:
+        """Get role from original block."""
+        return self._original.role
+
+    @property
+    def is_wrapper(self) -> bool:
+        """Check if original block is a wrapper."""
+        return self._original.is_wrapper
+
+    @property
+    def body(self):
+        """Get body from original block."""
+        return self._original.body
+
+    def get(self, tag: str) -> BlockBase | None:
+        """Get first block with tag from original."""
+        return self._original.get(tag)
+
+    def get_one(self, tag: str) -> BlockBase:
+        """Get first block with tag from original (raises if not found)."""
+        return self._original.get_one(tag)
+
+    def get_one_or_none(self, tag: str) -> BlockBase | None:
+        """Get first block with tag from original, or None."""
+        return self._original.get_one_or_none(tag)
+
+    def get_all(self, tags: str | list[str]) -> list[BlockBase]:
+        """Get all blocks matching tag path from original."""
+        return self._original.get_all(tags)
+
+    def traverse(self):
+        """Traverse original block tree."""
+        return self._original.traverse()
+
+    # -------------------------------------------------------------------------
+    # Copy-on-write for mutations
+    # -------------------------------------------------------------------------
+
+    @property
+    def copy(self) -> BlockBase:
+        """
+        Get a mutable copy of the block's content.
+
+        Creates copy on first access (lazy copy-on-write).
+        Use this for any modifications.
+        """
+        if self._copy is None:
+            self._copy = self._original.copy_metadata()
+        return self._copy
+
+    def set_copy(self, block: BlockBase):
+        """Set the copy directly (used when copy is created externally)."""
+        self._copy = block
+
+    @property
+    def has_copy(self) -> bool:
+        """Check if a copy has been created."""
+        return self._copy is not None
+
+    # -------------------------------------------------------------------------
+    # Transform methods (to be implemented by subclasses)
+    # -------------------------------------------------------------------------
+
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
-    
-    
+
     def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
-    
+
     def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
-    
+
     def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
         raise NotImplementedError("Subclass must implement this method")
     
@@ -110,6 +245,20 @@ class ContentTransformer(BaseTransformer):
         return block
 
 
+class BodyTransformer(BaseTransformer):
+    styles = ["body"]
+    target = "body"
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        return block
+
+
+class BlockTransformer(BaseTransformer):
+    styles = ["block"]
+    target = "block"
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        return block
 
 
 class MarkdownHeaderTransformer(ContentTransformer):
@@ -120,10 +269,37 @@ class MarkdownHeaderTransformer(ContentTransformer):
         # block.prefix_prepend("#" + " ")
         # block.postfix_append("\n")
         print(path)     
-        block = ("#" * path.depth) + block
-        
+        block = ("#" * path.depth) + block        
+        return block
+    
+    
+class BannerTransformer(ContentTransformer):
+    styles = ["banner"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        with Block() as blk:
+            with blk() as header:
+                header /= "=" * 51
+                header /= block.content_str
+                header /= "=" * 51
+            for child in block.children:
+                blk /= child
+        return blk
+
+class InlineTransformer(BodyTransformer):
+    styles = ["inline"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        block.remove_new_line()
         return block
 
+
+class AsteriskTransformer(ContentTransformer):
+    styles = ["astrix"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        block = "*" & block & "*"
+        return block
 
 class XmlTransformer(ContentTransformer):
     styles = ["xml"]
@@ -178,7 +354,28 @@ class XmlDefTransformer(ContentTransformer):
         return block
             
             
-            
+class ToolDescriptionTransformer(BlockTransformer):
+    styles = ["tool-desc"]
+
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        # Read from original via self (no copy needed for reading)
+        key_field = self.get_one("key-field")
+        description = self.get_one("description")
+        parameters = self.get_one("parameters")
+
+        # Build new output
+        with Block("# Name: " + key_field.body[0].content_str) as blk:
+            with blk("## Purpose") as purpose:
+                purpose /= description.body[0].content_str
+            with blk("## Parameters") as params:
+                for param in parameters.children:
+                    with params(param.content_str) as param_blk:
+                        param_blk /= param.body
+                        if hasattr(param, 'type_str') and param.type_str is not None:
+                            param_blk /= "Type:", param.type_str
+                        if hasattr(param, 'is_required'):
+                            param_blk /= "Required:", param.is_required                        
+        return blk
             
     
 class XmlListTransformer(BaseTransformer):
@@ -191,7 +388,7 @@ class XmlListTransformer(BaseTransformer):
     
     
     
-class BlockTransformer:
+class BlockSchemaTransformer:
     
     def __init__(self, block_schema: BlockSchema, transformers: list[BaseTransformer]):
         self.block_schema = block_schema
@@ -204,7 +401,7 @@ class BlockTransformer:
         self._did_commit = False
         
     @classmethod
-    def from_block_schema(cls, block: BlockSchema) -> "BlockTransformer":
+    def from_block_schema(cls, block: BlockSchema) -> "BlockSchemaTransformer":
         transformers = StyleMeta.resolve(
             block.styles,
             targets={"content"},
@@ -270,7 +467,7 @@ class BlockTransformer:
             content_transformer.append(self.block, chunk, as_child=as_child, start_offset=start_offset, end_offset=end_offset)
             
             
-    def append_child(self, child: "BlockTransformer"):
+    def append_child(self, child: "BlockSchemaTransformer"):
         block = self.block.append_child(child.block, copy=False)
         return child
 
@@ -306,27 +503,33 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     """
     # Transform children first (recursive)
     transformed_children = []
-    for child in block.children:
-        transformed_children.append(transform(child, depth + 1))
+    render_cfg = StyleMeta.resolve(
+        block.styles     
+    )
+    # should not render children if block renderer is present
+    if render_cfg.get("block") is None:
+        for child in block.children:
+            transformed_children.append(transform(child, depth + 1))
 
     # Copy this block's metadata and content (not children)
     path = block.path
-    new_block = block.copy_metadata()
+    
+    if render_cfg.get("hidden"):
+        new_block = Block(tags=block.tags)
+    else:
+        new_block = block.copy_metadata()
 
     # Add transformed children to the new block
+    # Use copy=False since children are already fresh copies from recursive transform
     for child in transformed_children:
-        new_block.append_child(child, add_new_line=False)        
-        # new_block.append_child(child)        
+        new_block.append_child(child, copy=False, add_new_line=False)        
 
     # Apply style renderers to the new block
-    renderers = StyleMeta.resolve(
-        new_block.styles,
-        {"content"},
-        # default=ContentTransformer
-    )
     if not new_block.is_wrapper:
-        for renderer in renderers:
-            new_block = renderer(new_block).render(new_block, path)
+        for target, transformer in render_cfg.items():
+            if transformer is None or target == "hidden":
+                continue
+            new_block = transformer(block).render(new_block, path)
         
         
     # for child in transformed_children:
@@ -337,7 +540,7 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     return new_block
     
     
-def gather_transformers(block: BlockSchema) -> dict[str, BlockTransformer]:
+def gather_transformers(block: BlockSchema) -> dict[str, BlockSchemaTransformer]:
     """
     Gather all transformers for block tree.
     
@@ -355,5 +558,5 @@ def gather_transformers(block: BlockSchema) -> dict[str, BlockTransformer]:
         {"content"},
         # default=ContentTransformer
     )    
-    transformers_lookup.update({block.path: BlockTransformer(new_block, [renderer(new_block) for renderer in renderers])})
+    transformers_lookup.update({block.path: BlockSchemaTransformer(new_block, [renderer(new_block) for renderer in renderers])})
     return transformers_lookup

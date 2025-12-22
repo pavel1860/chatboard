@@ -31,7 +31,8 @@ def parse_style(style: str | list[str] | None) -> list[str]:
     else:
         return []
 
-ContentType = str | list[str] | list[BlockChunk] | BlockChunk
+BaseContentTypes = str | bool | int | float
+ContentType = BaseContentTypes | list[str] | list[BlockChunk] | BlockChunk
 PathType = str | list[int] | int | Path
 
 
@@ -175,6 +176,7 @@ class BlockBase(ABC):
     @property
     def body(self) -> "BlockList":
         return BlockList(self.children, role=self.role, tags=self.tags)
+    
     @property
     def last_descendant(self) -> "BlockBase":
         """
@@ -562,7 +564,8 @@ class BlockBase(ABC):
             return  [chunk.copy() for chunk in content.span.chunks()] if content.span else []
         elif isinstance(content, BlockChunk):
             return [content]
-        
+        elif isinstance(content, bool):
+            return [BlockChunk(str(content))]        
         else:
             raise ValueError(f"Invalid content type: {type(content)}")
     
@@ -1523,12 +1526,14 @@ class BlockBase(ABC):
         type: Type | None = None,
         tags: list[str] | None = None,
         style: str | None = None,
+        is_required: bool = True,
     ) -> "BlockSchema":
         schema_block = BlockSchema(
             name,
             type=type,
             tags=tags,
             styles=["xml"] if style is None and name is not None else parse_style(style),
+            is_required=is_required,
         )
         self.append_child(schema_block, copy=False)
         return schema_block
@@ -1541,6 +1546,7 @@ class BlockBase(ABC):
         name: str | None = None,
         tags: list[str] | None = None,
         style: str | None = None,
+        is_required: bool = True,
     ) -> "BlockListSchema":
         schema_block = BlockListSchema(
             item_name=item_name,
@@ -1548,6 +1554,7 @@ class BlockBase(ABC):
             name=name,
             tags=tags,
             styles=["xml-list"] if style is None else parse_style(style),
+            is_required=is_required,
         )
         self.append_child(schema_block, copy=False)
         return schema_block
@@ -1681,8 +1688,24 @@ class BlockBase(ABC):
         print(self.render())
         
         
-    def __itruediv__(self, other: BlockBase | ContentType):
-        self.append_child(other)
+    def __itruediv__(self, other: BlockBase | ContentType | tuple):
+        if isinstance(other, tuple):
+            if len(other) == 0:
+                return self
+            # Join tuple elements with spaces into a single child
+            first = other[0]
+            if isinstance(first, BlockBase):
+                child = Block(content=first.content_str)
+            else:
+                child = Block(content=first)
+            for item in other[1:]:
+                if isinstance(item, BlockBase):
+                    child.append(item.content_str, sep=" ")
+                else:
+                    child.append(item, sep=" ")
+            self.append_child(child, copy=False)
+        else:
+            self.append_child(other)
         return self
     
     def __add__(self, other: BlockBase | ContentType):
@@ -1786,6 +1809,7 @@ class BlockSchema(BlockBase):
         "name",
         "type",
         "_transformer",
+        "is_required",
     ]
     
     def __init__(
@@ -1799,6 +1823,7 @@ class BlockSchema(BlockBase):
         parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
+        is_required: bool = True,
         is_virtual: bool = False,
         _skip_content: bool = False,
         _transformer = None,
@@ -1826,7 +1851,15 @@ class BlockSchema(BlockBase):
         )
         self.name = name if not is_virtual else tags[0]
         self.type = type
+        self.is_required = is_required
         self._transformer = _transformer
+        
+        
+    @property
+    def type_str(self) -> str | None:
+        from ...utils.type_utils import type_to_str
+        return type_to_str(self.type) if self.type is not None else None
+        
         
     
     def instantiate(
@@ -2258,7 +2291,8 @@ class BlockListSchema(BlockSchema):
         parent: "BlockSchema | None" = None, 
         styles: list[str] | None = None, 
         block_text: BlockText | None = None, 
-        _skip_content: bool = False
+        _skip_content: bool = False,
+        is_required: bool = True,
     ):
         tags = tags or []
         if not styles:
@@ -2266,7 +2300,7 @@ class BlockListSchema(BlockSchema):
         name = name or f"{item_name}_list"
         if name not in tags:
             tags.insert(0, name)
-        super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content)
+        super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content, is_required=is_required)
         self.name = name
         self.item_name = item_name
         self.tags.insert(0, name)

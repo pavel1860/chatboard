@@ -2,7 +2,7 @@ from .block import BlockSchema, BlockListSchema, BlockList, BlockBase, ContentTy
 from ...utils.type_utils import UNSET, UnsetType
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from .block_transformers import BlockTransformer
+    from .block_transformers import BlockSchemaTransformer
 
 
 
@@ -35,7 +35,7 @@ class BlockBuilderContext:
             raise RuntimeError("No block to return")
         return self._root.block
     
-    def _push(self, transformer: "BlockTransformer"):
+    def _push(self, transformer: "BlockSchemaTransformer"):
         if self._root is None:
             self._root = transformer
         else:
@@ -68,13 +68,13 @@ class BlockBuilderContext:
 
     
     def _get_schema(self, name: str):
-        from .block_transformers import BlockTransformer
+        from .block_transformers import BlockSchemaTransformer
         if self.schema is None:
             raise RuntimeError("Schema not initialized")
         block_schema = self.schema.get_one(name)
         if block_schema is None:
             raise RuntimeError(f"Schema {name} not found")
-        block_transformer = BlockTransformer.from_block_schema(block_schema)
+        block_transformer = BlockSchemaTransformer.from_block_schema(block_schema)
         return block_transformer
     
     

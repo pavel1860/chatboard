@@ -75,23 +75,48 @@ def traverse_dict(target: dict, path: list[int] | None = None, label_path: list[
 
 
 
+# def pydantic_to_block(name: str, cls: Type[BaseModel], key_field: str, style: str = "xml-def") -> BlockBase:
+#     if key_field is None:
+#         raise ValueError("key_field is required")
+#     tool_name = camel_to_snake(cls.__name__)
+#     with Block(tags=[tool_name, "model-schema"]) as tool:
+#         with tool.view(name, type=cls, tags=[tool_name, "model-schema"], style=style if "xml-def" not in style else "hidden") as b:
+#             # b.field(key_field, tool_name, type=key_type)
+#             with b.view(key_field, type=str, tags=[key_field, "key-field"], style="inline astrix") as bf:
+#                 bf /= tool_name
+#             if not cls.__doc__:
+#                 raise ValueError(f"description is required for Tool {cls.__name__}")
+#             b(cls.__doc__, tags=["description"])
+            
+#             with b("Parameters:") as params:
+#                 for field_name, field_info in cls.model_fields.items():
+#                     if not field_info.description:
+#                         raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
+#                     with params.view(field_name, type=field_info.annotation, tags=[field_name, "field"], style=style) as bf:
+#                         bf /= field_info.description
+#     return tool
+
+
+
 def pydantic_to_block(name: str, cls: Type[BaseModel], key_field: str, style: str = "xml-def") -> BlockBase:
     if key_field is None:
         raise ValueError("key_field is required")
     tool_name = camel_to_snake(cls.__name__)
     with Block(tags=[tool_name, "model-schema"]) as tool:
-        with tool.view(name, type=cls, tags=[tool_name, "model-schema"], style=style) as b:
+        with tool.view(name, type=cls, tags=[tool_name, "model-schema"]) as b:
             # b.field(key_field, tool_name, type=key_type)
-            with b.view(key_field, type=str, tags=[key_field, "key-field"], style=style) as bf:
+            with b.view(key_field, type=str, tags=[key_field, "key-field"]) as bf:
                 bf /= tool_name
             if not cls.__doc__:
                 raise ValueError(f"description is required for Tool {cls.__name__}")
-            b(cls.__doc__, tags=["description"])
+            with b("Description", tags=["description"]) as desc:
+                desc /= cls.__doc__
             
-            with b("Parameters:") as params:
+            with b("Parameters:", tags=["parameters"]) as params:
                 for field_name, field_info in cls.model_fields.items():
+                    is_required = field_info.is_required()
                     if not field_info.description:
                         raise ValueError(f"description is required for field '{field_name}' in Tool {cls.__name__}")
-                    with params.view(field_name, type=field_info.annotation, tags=[field_name, "field"], style=style) as bf:
+                    with params.view(field_name, type=field_info.annotation, tags=[field_name, "field"], is_required=is_required) as bf:
                         bf /= field_info.description
     return tool
