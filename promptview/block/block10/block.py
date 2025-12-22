@@ -1412,8 +1412,9 @@ class BlockBase(ABC):
         return new_block
     
 
-    def traverse(self) -> Iterator["BlockBase"]:
-        yield self
+    def traverse(self, body_only: bool = False) -> Iterator["BlockBase"]:
+        if not body_only:
+            yield self
         for child in self.children:
             yield from child.traverse()
 
@@ -1885,7 +1886,7 @@ class BlockSchema(BlockBase):
         role = role or self.role if role is not UNSET and role is not None else None
         # if isinstance(self.parent, BlockListSchema)
         return Block(
-            content=content or (self.name if not role else None),
+            content=content or (self.name if not self.is_wrapper else None),
             # content=content,
             tags=tags,
             styles=styles,

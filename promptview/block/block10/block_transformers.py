@@ -24,9 +24,10 @@ TargetType = Literal["content", "block", "children", "tree", "subtree"]
 @dataclass
 class TransformerConfig:
     list: "type[ListTransformer] | None" = None
-    block: "Type[BaseTransformer] | None" = None
-    content: "Type[BaseTransformer] | None" = None
-    body: "Type[BaseTransformer] | None" = None
+    block: "Type[BlockTransformer] | None" = None
+    content: "Type[ContentTransformer] | None" = None
+    body: "Type[BodyTransformer] | None" = None
+    prefix: "Type[PrefixTransformer] | None" = None
     hidden: "bool" = False
     is_wrapper: "bool" = False
     
@@ -46,7 +47,7 @@ class TransformerConfig:
         if self.is_wrapper:
             order = ["list", "body"]
         else:
-            order = ["list", "block", "content", "body"]
+            order = ["list", "block", "content", "body", "prefix"]
         for target in order:
             if transformer := self.get(target):
                 yield (target, transformer)
@@ -301,7 +302,18 @@ class BlockTransformer(BaseTransformer):
 
 
 
-
+class PathTransformer(PrefixTransformer):
+    styles = ["path"]
+    
+    def render(self, block: BlockBase, path: Path) -> BlockBase:
+        max_depth = block.max_depth()
+        for child in block.traverse(body_only=True):
+            cp = child.path - path
+            padding = " " * (2 * (max_depth - cp.depth) - 1 )
+            prefix = padding + str(cp) + "> "
+            child.prefix_prepend(prefix)
+            # child.indent_body(len(prefix))
+        return block
 
 class NumberedListTransformer(ListTransformer):
     styles = ["numbered-list", "num-li"]
@@ -359,6 +371,9 @@ class AsteriskListTransformer(ListTransformer):
         return block
     
     
+
+
+
 
 
 
@@ -503,11 +518,11 @@ class BlockSchemaTransformer:
         
     @classmethod
     def from_block_schema(cls, block: BlockSchema) -> "BlockSchemaTransformer":
-        transformers = StyleMeta.resolve(
+        transformer_cfg = StyleMeta.resolve(
             block.styles,
-            targets={"content"},
+            # targets={"content"},
         )    
-        return cls(block, [transformer(block) for transformer in transformers])
+        return cls(block, [transformer(block) for _, transformer in transformer_cfg.iter_transformers()])
     
     @property
     def block(self) -> BlockBase:

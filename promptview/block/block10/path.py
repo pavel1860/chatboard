@@ -133,6 +133,27 @@ class Path:
 
         return Path(common_indices, common_tags)
 
+    def __sub__(self, other: Path) -> Path:
+        """
+        Subtract an ancestor path from this path.
+
+        Returns the relative path from other to self.
+        Raises ValueError if other is not an ancestor of self.
+
+        Example:
+            Path([0, 2, 1]) - Path([0, 2]) -> Path([1])
+            Path([0, 2, 1, 3]) - Path([0]) -> Path([2, 1, 3])
+            Path([0, 2]) - Path([0, 2]) -> Path([])  # root
+        """
+        if not isinstance(other, Path):
+            return NotImplemented
+        if not other.is_ancestor_of(self):
+            raise ValueError(f"Cannot subtract: {other} is not an ancestor of {self}")
+
+        remaining_indices = self.indices[len(other.indices):]
+        remaining_tags = self.tags[len(other.tags):] if len(self.tags) > len(other.tags) else ()
+        return Path(remaining_indices, remaining_tags)
+
     # -------------------------------------------------------------------------
     # Properties
     # -------------------------------------------------------------------------
