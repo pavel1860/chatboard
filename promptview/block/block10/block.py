@@ -12,7 +12,7 @@ from .span import Span, SpanAnchor, VirtualBlockText
 from .path import Path
 from ...utils.type_utils import UNSET, UnsetType
 if TYPE_CHECKING:
-    pass
+    from .block_transformers import BaseTransformer
 
 
 # Type alias for chunk mapping during copy
@@ -116,6 +116,9 @@ class BlockBase(ABC):
 
     @property
     def content(self) -> "BlockBase":
+        return self.get_content()
+        
+    def get_content(self) -> "BlockBase":
         """
         Return this block's content as a new independent Block (no children/style/tags).
 
@@ -165,8 +168,12 @@ class BlockBase(ABC):
     #     block.span = Span.from_chunks(list(new_block_text))
     #     return block
     
+    
     @property
     def content_str(self) -> str:
+        return self.get_content_str()
+    
+    def get_content_str(self) -> str:
         if self.is_wrapper:
             return ""
         content = self.content
@@ -175,6 +182,10 @@ class BlockBase(ABC):
     
     @property
     def body(self) -> "BlockList":
+        return self.get_body()
+    
+    
+    def get_body(self) -> "BlockList":
         return BlockList(self.children, role=self.role, tags=self.tags)
     
     @property
@@ -1415,7 +1426,8 @@ class BlockBase(ABC):
     def traverse(self, body_only: bool = False) -> Iterator["BlockBase"]:
         if not body_only:
             yield self
-        for child in self.children:
+        # for child in self.children:
+        for child in self.get_body():
             yield from child.traverse()
 
             
@@ -1773,7 +1785,7 @@ class Block(BlockBase):
         end_offset: int | None = None,
     ):
         super().__init__(content, children=children, role=role, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles, _skip_content=_skip_content, start_offset=start_offset, end_offset=end_offset)
-        self._transformer = None
+        self._transformer: "BaseTransformer | None" = None
 
  
         
@@ -1787,7 +1799,16 @@ class Block(BlockBase):
     #     block = self.promote_block_content(content, style=style, tags=tags, role=role)
     #     self.append_block_child(block)
     #     return block
-
+    
+    def get_content(self) -> "BlockBase":
+        if self._transformer is not None and self._transformer.has_method("get_content"):
+            return self._transformer.get_content()
+        return super().get_content()
+    
+    def get_body(self) -> "BlockList":
+        if self._transformer is not None and self._transformer.has_method("get_body"):
+            return self._transformer.get_body()
+        return super().get_body()
     
     def model_copy(self, overrides: dict[str, Any] | None = None, copy_content: bool = False, fork_block_text: bool = False, copy_children: bool = True) -> "Block":
         block = Block(
@@ -2251,6 +2272,10 @@ class BlockList(Block):
         return block
     
     
+    def __iter__(self):
+        return iter(self.children)
+    
+    
     def __getitem__(self, index: int) -> "BlockBase":
         return self.children[index]
     
@@ -2393,9 +2418,12 @@ class BlockListSchema(BlockSchema):
         return block
     
     
+    def __iter__(self):
+        return iter(self.children)
+
     def __getitem__(self, index: int) -> "BlockBase":
         return self.children[index]
-    
+
     def __setitem__(self, index: int, value: "Block"):
         self.insert(index, value)
 

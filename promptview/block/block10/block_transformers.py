@@ -3,11 +3,11 @@ import copy
 from dataclasses import dataclass, field
 import textwrap
 from typing import Generator, Literal, Type, TypedDict
-from .block import BlockBase, Block, BlockSchema, ContentType, BlockListSchema
+from .block import BlockBase, Block, BlockList, BlockSchema, ContentType, BlockListSchema
 from .path import Path
 from .chunk import BlockChunk
 import contextvars
-from ...utils.function_utils import is_overridden
+from ...utils.function_utils import get_if_overridden, is_overridden
 from ...utils.type_utils import UNSET, UnsetType
 
 
@@ -149,97 +149,114 @@ class BaseTransformer(metaclass=StyleMeta):
     styles = []
 
     def __init__(self, block: BlockBase):
-        self._original = block
+        self.original = block
+        self.block = None
         self._copy: BlockBase | None = None
+        self._methods = set({})
+        
+        for method_name in ["get_content", "get_body"]:
+            if is_overridden(self.__class__, method_name, BaseTransformer):
+                self._methods.add(method_name)
+        
+        
+    def has_method(self, method_name: str) -> bool:
+        return method_name in self._methods
+    
 
     # -------------------------------------------------------------------------
     # Read-only access to original block (no copy needed)
     # -------------------------------------------------------------------------
 
-    @property
-    def original(self) -> BlockBase:
-        """Access the original block (read-only)."""
-        return self._original
+    # @property
+    # def original(self) -> BlockBase:
+    #     """Access the original block (read-only)."""
+    #     return self.block
 
-    @property
-    def content_str(self) -> str:
-        """Get content string from original block."""
-        return self._original.content_str
+    # @property
+    # def content_str(self) -> str:
+    #     """Get content string from original block."""
+    #     return self.block.content_str
 
-    @property
-    def children(self) -> list[BlockBase]:
-        """Get children from original block."""
-        return self._original.children
+    # @property
+    # def children(self) -> list[BlockBase]:
+    #     """Get children from original block."""
+    #     return self.block.children
 
-    @property
-    def tags(self) -> list[str]:
-        """Get tags from original block."""
-        return self._original.tags
+    # @property
+    # def tags(self) -> list[str]:
+    #     """Get tags from original block."""
+    #     return self.block.tags
 
-    @property
-    def styles_list(self) -> list[str]:
-        """Get styles from original block."""
-        return self._original.styles
+    # @property
+    # def styles_list(self) -> list[str]:
+    #     """Get styles from original block."""
+    #     return self.block.styles
 
-    @property
-    def role(self) -> str | None:
-        """Get role from original block."""
-        return self._original.role
+    # @property
+    # def role(self) -> str | None:
+    #     """Get role from original block."""
+    #     return self.block.role
 
-    @property
-    def is_wrapper(self) -> bool:
-        """Check if original block is a wrapper."""
-        return self._original.is_wrapper
+    # @property
+    # def is_wrapper(self) -> bool:
+    #     """Check if original block is a wrapper."""
+    #     return self.block.is_wrapper
 
-    @property
-    def body(self):
-        """Get body from original block."""
-        return self._original.body
+    # @property
+    # def body(self):
+    #     """Get body from original block."""
+    #     return self.block.body
 
-    def get(self, tag: str) -> BlockBase | None:
-        """Get first block with tag from original."""
-        return self._original.get(tag)
+    # def get(self, tag: str) -> BlockBase | None:
+    #     """Get first block with tag from original."""
+    #     return self.block.get(tag)
 
-    def get_one(self, tag: str) -> BlockBase:
-        """Get first block with tag from original (raises if not found)."""
-        return self._original.get_one(tag)
+    # def get_one(self, tag: str) -> BlockBase:
+    #     """Get first block with tag from original (raises if not found)."""
+    #     return self.block.get_one(tag)
 
-    def get_one_or_none(self, tag: str) -> BlockBase | None:
-        """Get first block with tag from original, or None."""
-        return self._original.get_one_or_none(tag)
+    # def get_one_or_none(self, tag: str) -> BlockBase | None:
+    #     """Get first block with tag from original, or None."""
+    #     return self.block.get_one_or_none(tag)
 
-    def get_all(self, tags: str | list[str]) -> list[BlockBase]:
-        """Get all blocks matching tag path from original."""
-        return self._original.get_all(tags)
+    # def get_all(self, tags: str | list[str]) -> list[BlockBase]:
+    #     """Get all blocks matching tag path from original."""
+    #     return self.block.get_all(tags)
 
-    def traverse(self):
-        """Traverse original block tree."""
-        return self._original.traverse()
+    # def traverse(self):
+    #     """Traverse original block tree."""
+    #     return self.block.traverse()
 
-    # -------------------------------------------------------------------------
-    # Copy-on-write for mutations
-    # -------------------------------------------------------------------------
+    # # -------------------------------------------------------------------------
+    # # Copy-on-write for mutations
+    # # -------------------------------------------------------------------------
 
-    @property
-    def copy(self) -> BlockBase:
-        """
-        Get a mutable copy of the block's content.
+    # @property
+    # def copy(self) -> BlockBase:
+    #     """
+    #     Get a mutable copy of the block's content.
 
-        Creates copy on first access (lazy copy-on-write).
-        Use this for any modifications.
-        """
-        if self._copy is None:
-            self._copy = self._original.copy_metadata()
-        return self._copy
+    #     Creates copy on first access (lazy copy-on-write).
+    #     Use this for any modifications.
+    #     """
+    #     if self._copy is None:
+    #         self._copy = self.block.copy_metadata()
+    #     return self._copy
 
-    def set_copy(self, block: BlockBase):
-        """Set the copy directly (used when copy is created externally)."""
-        self._copy = block
+    # def set_copy(self, block: BlockBase):
+    #     """Set the copy directly (used when copy is created externally)."""
+    #     self._copy = block
 
-    @property
-    def has_copy(self) -> bool:
-        """Check if a copy has been created."""
-        return self._copy is not None
+    # @property
+    # def has_copy(self) -> bool:
+    #     """Check if a copy has been created."""
+    #     return self._copy is not None
+    
+    def get_content(self) -> BlockBase:
+        raise NotImplementedError("Subclass must implement this method")
+    
+    def get_body(self) -> BlockList:
+        raise NotImplementedError("Subclass must implement this method")
 
     # -------------------------------------------------------------------------
     # Transform methods (to be implemented by subclasses)
@@ -420,6 +437,13 @@ class AsteriskTransformer(ContentTransformer):
 class XmlTransformer(ContentTransformer):
     styles = ["xml"]
     
+    
+    def get_content(self) -> BlockBase:
+        return self.block.children[0].get_content()
+    
+    def get_body(self) -> BlockList:
+        return self.block.children[0].get_body()
+    
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         if len(block) == 0:
             block = "<" & block & "/>"
@@ -475,9 +499,12 @@ class ToolDescriptionTransformer(BlockTransformer):
 
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         # Read from original via self (no copy needed for reading)
-        key_field = self.get_one("key-field")
-        description = self.get_one("description")
-        parameters = self.get_one("parameters")
+        # key_field = self.get_one("key-field")
+        # description = self.get_one("description")
+        # parameters = self.get_one("parameters")
+        key_field = block.get_one("key-field")
+        description = block.get_one("description")
+        parameters = block.get_one("parameters")
 
         # Build new output
         with Block("# Name: " + key_field.body[0].content_str) as blk:
@@ -501,8 +528,38 @@ class XmlListTransformer(BaseTransformer):
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         # block /= "{... more items}"
         return block
+
+
+class Transformer:
     
+    def __init__(self, block: Block, config: TransformerConfig):
+        self.block = block
+        self.block._transformer = self
+        self.config = config
+        self._applied_transformers = []
+        self._methods = {
+            "get_content": [],
+            "get_body": [],
+        }
+
     
+    def has_method(self, method_name: str) -> bool:
+        return len(self._methods.get(method_name, [])) > 0
+    
+    def apply(self, transformer_cls: Type[BaseTransformer]):
+        transformer = transformer_cls(self.block)
+        self.block = transformer.render(self.block, self.block.path)
+        self._applied_transformers.append(transformer)
+        for prop in self._methods.keys():
+            if method := get_if_overridden(transformer_cls, prop, BaseTransformer):
+                self._methods[prop].append(method)
+        
+        
+    def call_method(self, method_name: str, *args, **kwargs):
+        for method in self._methods.get(method_name, []):
+            return method(*args, **kwargs)
+    
+        
     
 class BlockSchemaTransformer:
     
@@ -627,6 +684,8 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     if render_cfg.block is None:
         for child in block.children:
             transformed_children.append(transform(child, depth + 1))
+    else:
+        transformed_children = [c.copy() for c in block.children]
 
     # Copy this block's metadata and content (not children)
     path = block.path
@@ -642,8 +701,13 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
         new_block.append_child(child, copy=False, add_new_line=False)        
 
     # Apply style renderers to the new block
-    for target, transformer in render_cfg.iter_transformers():
-        new_block = transformer(block).render(new_block, path)
+    
+    for target, transformer_cls in render_cfg.iter_transformers():    
+        transformer = transformer_cls(new_block)
+        new_block = transformer.render(new_block, path)
+        if new_block._transformer is None:
+            new_block._transformer = transformer
+            transformer.block = new_block
         
         
     # for child in transformed_children:
