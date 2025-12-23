@@ -6,6 +6,9 @@ if TYPE_CHECKING:
 
 
 
+class BlockBuilderError(Exception):
+    pass
+
 
 
 class BlockBuilderContext:
@@ -18,7 +21,11 @@ class BlockBuilderContext:
         
         
     def init_root(self):
-        self._root = self._get_schema(self.schema.name)
+        from .block_transformers import BlockSchemaTransformer
+        # self._root = self._get_schema(self.schema.name)
+        if self.schema is None:
+            raise RuntimeError("Schema not initialized")
+        self._root = BlockSchemaTransformer.from_block_schema(self.schema)
         content = self._root.block_schema.name if not self._root.block_schema.is_wrapper else None
         self._root.instantiate(content, tags=["root"], force_schema=True)        
         self._stack.append(self._root)
@@ -64,28 +71,49 @@ class BlockBuilderContext:
         if top is None:
             return False
         return top._did_commit
-    
 
     
-    def _get_schema(self, name: str):
-        from .block_transformers import BlockSchemaTransformer
-        if self.schema is None:
-            raise RuntimeError("Schema not initialized")
-        block_schema = self.schema.get_one(name)
-        if block_schema is None:
-            raise RuntimeError(f"Schema {name} not found")
-        block_transformer = BlockSchemaTransformer.from_block_schema(block_schema)
-        return block_transformer
-    
-    
-    # def get_item_name(self, name: str) -> str:
+    # def _get_schema(self, name: str):
+    #     from .block_transformers import BlockSchemaTransformer
     #     if self.schema is None:
     #         raise RuntimeError("Schema not initialized")
     #     block_schema = self.schema.get_one(name)
     #     if block_schema is None:
     #         raise RuntimeError(f"Schema {name} not found")
-    #     return block_schema.get_item_name()
+    #     block_transformer = BlockSchemaTransformer.from_block_schema(block_schema)
+    #     return block_transformer
+    def _get_schema(self, name: str):
+        from .block_transformers import BlockSchemaTransformer
+        if self.schema is None:
+            raise RuntimeError("Schema not initialized")
+        # block_schema = self.schema.get_one(name)
+        block_schema = self._top().get_one_or_none(name)
+        if block_schema is None:
+            raise RuntimeError(f"Schema '{name}' not found")
+        block_transformer = BlockSchemaTransformer.from_block_schema(block_schema)
+        return block_transformer
     
+    def inst_list(self, item_name: str):
+        from .block_transformers import BlockSchemaTransformer
+        list_schemas = self._top().block_schema.get_all_lists()
+        if not list_schemas:
+            raise BlockBuilderError(f"Did not find any list schemas for '{name}'")
+        target_list_schema = None
+        for list_schema in list_schemas:
+            if list_schema.get_one_or_none(item_name) is not None:
+                target_list_schema = list_schema
+                break
+        if target_list_schema is None:
+            raise BlockBuilderError(f"Did not find list schema for '{item_name}'")
+        list_transformer = BlockSchemaTransformer.from_block_schema(target_list_schema)
+        list_transformer.instantiate(content=None)
+        self._push(list_transformer)
+        return list_transformer
+    
+    
+    # def inst_and_commit(self, name: str, content: ContentType | None = None, style: str | None | UnsetType = UNSET, role: str | None | UnsetType = UNSET, tags: list[str] | None | UnsetType = UNSET, force_schema: bool = False, inst_key: bool = False):
+        
+
     def instantiate_list_item(
         self, 
         name: str,
@@ -93,23 +121,45 @@ class BlockBuilderContext:
         role: str | None | UnsetType = UNSET,
         tags: list[str] | None | UnsetType = UNSET,
         force_schema: bool = False,
+        inst_key: bool = False,
+        attrs: dict | None | UnsetType = UNSET,
     ):
-        block_schema = self.schema.get_one(name)
-        if not block_schema.is_list_item:
-            raise RuntimeError(f"Schema {name} is not a list item")
-        item_name = block_schema.get_item_name()
-        return self.instantiate(item_name, item_name, style=style, role=role, tags=tags, force_schema=force_schema)
+        # block_schema = self.schema.get_one(name)
+        if self._is_top_committed():
+            self._pop()
+        item_name = name   
+        if not self._top().is_list:
+            list_transformer = self.inst_list(name)
+        else:
+            list_transformer = self._top()
+            
+        if list_item_name := list_transformer.block_schema.item_name: 
+            item_name = list_item_name
+        list_item_transformer = self.instantiate(name, item_name, attrs=attrs, style=style, role=role, tags=tags, force_schema=force_schema)
+        # if inst_key:
+        #     if item_key := list_transformer.block_schema.key:
+        #         self.instantiate(item_key, item_key, force_schema=True)
+        #         self.curr_block.append_child(name)
+        #         self.commit(item_key, force_schema=force_schema)
+        
+        return list_item_transformer
+        # block_schema = self._top().get_one_or_none(name)
+        # if not block_schema.is_list_item:
+            # raise RuntimeError(f"Schema {name} is not a list item")
+        # item_name = block_schema.get_item_name()
+        # return self.instantiate(item_name, item_name, style=style, role=role, tags=tags, force_schema=force_schema)
     
     def instantiate(
         self, 
         name: str, 
         content: ContentType | None = None, 
-        attrs: dict | None = None, 
+        attrs: dict | None | UnsetType = UNSET, 
         style: str | None | UnsetType = UNSET, 
         role: str | None | UnsetType = UNSET, 
         tags: list[str] | None | UnsetType = UNSET,
         force_schema: bool = False,
     ):
+        print(f"instantiate: {name}")
         if self._is_top_committed():
             self._pop()
         if self.schema is None:
@@ -118,15 +168,19 @@ class BlockBuilderContext:
         # if isinstance(transformer.block_schema.parent, BlockListSchema):
         if transformer.is_list_item:
             # check if list is already instantiated
-            if not isinstance(self._top_or_none(), BlockList):
-                list_transformer = self._get_schema(transformer.block_schema.parent.name)
-                list_transformer.instantiate(content=None)
-                self._push(list_transformer)
+            # if not isinstance(self._top_or_none(), BlockList):
+            #     list_transformer = self._get_schema(transformer.block_schema.parent.name)
+            #     list_transformer.instantiate(content=None)
+            #     self._push(list_transformer)
+            if not self._top().is_list:
+                list_transformer = self.inst_list(name)
+                # if list_item_name := list_transformer.block_schema.item_name: 
+                    # content = list_item_name
         else:
             if isinstance(self._top_or_none(), BlockList):
                 self._pop()
                         
-        transformer.instantiate(content=content, style=style, role=role, tags=tags, force_schema=force_schema)
+        transformer.instantiate(content=content, attrs=attrs, style=style, role=role, tags=tags, force_schema=force_schema)
         # if content is not None:
         #     transformer.append(content)
         self._push(transformer)

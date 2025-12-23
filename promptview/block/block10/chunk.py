@@ -288,13 +288,32 @@ class BlockText:
 
         return chunk
     
+    def sanitize_chunks(self, chunks: list[BlockChunk], after: BlockChunk | None = None):
+        result = []
+        for i, chunk in enumerate(chunks):
+            if chunk._owner is not None:
+                if chunk._owner is not self:
+                    raise ValueError(f"Chunk {chunk.id} belongs to a different BlockText")
+                if i == 0:
+                    if after is not None:
+                        if after.id != chunk.id:
+                            raise ValueError(f"first chunk {chunk.id} belongs to this BlockText, but is not the after chunk '{after.id}'")
+                        continue
+                    else:
+                        if self.tail is not None:
+                            if self.tail.id != chunk.id:
+                                raise ValueError(f"first chunk {chunk.id} belongs to this BlockText, but is not the tail chunk '{self.tail.id}'")
+                        continue
+            result.append(chunk)
+        return result
+    
     
     def extend(self, chunks: list[BlockChunk], after: BlockChunk | None = None):
         result = []
         if after is None:
             for chunk in chunks:
                 if chunk._owner is not None:
-                    if self.tail is not None and self.tail.id != chunk.id:
+                    if chunk._owner is not self and self.tail is not None and self.tail.id != chunk.id:
                         raise ValueError(f"Chunk {chunk.id} already belongs to a BlockText")
                     result.append(chunk)
                     continue
@@ -302,7 +321,7 @@ class BlockText:
         else:
             for chunk in chunks:
                 if chunk._owner is not None:
-                    if self.tail is not None and self.tail.id != chunk.id:
+                    if chunk._owner is not self and self.tail is not None and self.tail.id != chunk.id:
                         raise ValueError(f"Chunk {chunk.id} already belongs to a BlockText")
                     result.append(chunk)
                     continue
@@ -689,6 +708,8 @@ class BlockText:
         if after._owner is not self:
             raise ValueError(f"Chunk {after.id} is not in this BlockText")
         if chunk._owner is not None:
+            # if chunk._owner is self:
+                # return chunk
             raise ValueError(f"Chunk {chunk.id} already belongs to a BlockText")
 
         chunk._owner = self

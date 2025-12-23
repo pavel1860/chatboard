@@ -104,9 +104,9 @@ def pydantic_to_block(name: str, cls: Type[BaseModel], key_field: str, style: st
     tool_name = camel_to_snake(cls.__name__)
     # with Block(tags=[tool_name, "model-schema"]) as tool:
     #     with tool.view(name, type=cls, tags=[tool_name, "model-schema"]) as b:
-    with BlockSchema(name, type=cls, tags=[tool_name, "model-schema"]) as b:
-            with b.view(key_field, type=str, tags=[key_field, "key-field"]) as bf:
-                bf /= tool_name
+    with BlockSchema(name, type=cls, tags=[tool_name, "model-schema"], attrs={key_field: tool_name}) as b:
+            # with b.view(key_field, type=str, tags=[key_field, "key-field"]) as bf:
+                # bf /= tool_name
             if not cls.__doc__:
                 raise ValueError(f"description is required for Tool {cls.__name__}")
             with b("Description", tags=["description"]) as desc:

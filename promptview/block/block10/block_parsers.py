@@ -116,7 +116,7 @@ class XmlParser(Process):
                     start_offset = end - chunk_start
                 if end_offset is None and start > chunk_start:
                     end_offset = start - chunk_start
-                result.append(chunk)
+                result.append((chunk_start, chunk_end, chunk))
                 self._last_used_chunk_idx = idx
                 idx += 1
                 
@@ -264,13 +264,18 @@ class XmlParser(Process):
             return
         
         event_type, event_data, start_byte = self.pending
-        # print("flush_pending", event_type, repr(event_data), start_byte, end_byte)
+        # print(f"<flush_pending '{event_type}'>")
+        # print("pending |",repr(event_data), "start_byte:", start_byte, "end_byte:", end_byte)
         chunks, as_child, start_offset, end_offset = self._get_chunks_in_range(event_type, start_byte, end_byte)
+        # print("get chunks |", event_type, "chunks:", [(s,e,repr(c.content), c.id) for s,e,c in chunks], "start_offset:", start_offset, "end_offset:", end_offset)
+        # print("</flush_pending>")
+        chunks = [c for _, _, c in chunks]
         if len(chunks) == 0:
             return
         if event_type == 'start':
             name, attrs = event_data
             if name == self.root_tag:
+                self.context.init_root()
                 return
             block = self.context.instantiate(name, chunks, attrs=attrs, style=None)
             self._push_block(block)
@@ -289,24 +294,28 @@ class XmlParser(Process):
         self.pending = None
     
     
-    def _on_start(self, name, attrs):
+    def _on_start(self, name, attrs):        
         current_pos = self.parser.CurrentByteIndex
         self._flush_pending(current_pos)
         self._tag_path.append(name)
+        # print('start##', (repr(name), attrs), current_pos)
         self.pending = ('start', (name, attrs), current_pos)
     
-    def _on_end(self, name):
+    def _on_end(self, name):        
         current_pos = self.parser.CurrentByteIndex
         self._flush_pending(current_pos)
         self._tag_path.pop()
+        # print('end##', repr(name), current_pos)
         self.pending = ('end', name, current_pos)
     
     def _on_chardata(self, data):
         # print(f"chardata: '{data}'")
+        
         current_pos = self.parser.CurrentByteIndex
         self._flush_pending(current_pos)
         # For chardata we could compute end directly, but for consistency
         # we'll use the deferred approach too
+        # print('chardata##', repr(data), current_pos)
         self.pending = ('chardata', data, current_pos)
     
     # def _on_start(self, name, attrs):

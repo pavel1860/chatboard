@@ -61,7 +61,8 @@ class OpenAiLLM(BaseLLM):
             
         messages = [
             # self.to_message(b.render(), role=b.role or "user", tool_calls=b.tool_calls, tool_call_id=b.id)
-            self.to_message(b.render(), role=b.role or "user", tool_call_id=b.id)
+            # self.to_message(b.render(), role=b.role or "user", tool_call_id=b.id)
+            self.to_message(b.render(), role=b.role or "user")
             for b in blocks
         ]
         llm_tools = None

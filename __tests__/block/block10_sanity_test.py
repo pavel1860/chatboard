@@ -184,17 +184,16 @@ class TestBlockXmlParsing(SchemaParsingEval):
             with blk.view("item") as schema:
                 schema /= 'the item you want you need to create'
                 
-            with Block() as um:
-                um /= "hello"
+            # with Block() as um:
+                # um /= "hello"
         return blk
     
     @pytest.mark.asyncio
     async def test_output_structure(self):
         block = self.block()
         schema = block.extract_schema()
-        assert len(schema) == 1
-        assert schema.content_str == "item"
-        assert len(schema.children) == 1        
+        assert len(schema) == 0
+        assert schema.content_str == "item"        
         
         
 

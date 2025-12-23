@@ -267,6 +267,7 @@ class Agent(Generic[P]):
         branch: "Branch | None" = None,         
         auto_commit: bool = True,
         level: Literal["chunk", "span", "turn"] = "chunk",      
+        verbose: bool = True,
         **kwargs: dict,
     ):
         ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id)
@@ -274,11 +275,12 @@ class Agent(Generic[P]):
             ctx.state = state
         async with ctx.start_turn(auto_commit=auto_commit) as turn:            
             async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
-                print("--------------------------------")
-                if isinstance(event, Block):
-                    event.print()
-                else:
-                    print(event)
+                if verbose:
+                    print("--------------------------------")
+                    if isinstance(event, Block):
+                        event.print()
+                    else:
+                        print(event)
                 yield event
 
     async def run_debug2(

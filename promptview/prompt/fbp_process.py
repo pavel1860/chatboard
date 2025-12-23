@@ -1775,6 +1775,9 @@ class StreamController(ObservableProcess):
         self._gen = stream
         if self._parser is not None:
             self._gen |= self._parser
+        else:
+            self._accumulator = Accumulator(Block())
+            self._gen |= self._accumulator
         
         
     async def on_value_event(self, payload: Any = None):

@@ -2,7 +2,7 @@ from collections import OrderedDict
 import copy
 from dataclasses import dataclass, field
 import textwrap
-from typing import Generator, Literal, Type, TypedDict
+from typing import Any, Generator, Literal, Type, TypedDict
 from .block import BlockBase, Block, BlockList, BlockSchema, ContentType, BlockListSchema
 from .path import Path
 from .chunk import BlockChunk
@@ -265,7 +265,7 @@ class BaseTransformer(metaclass=StyleMeta):
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
 
-    def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
+    def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, attrs: dict[str, Any] | None = None) -> BlockBase:
         raise NotImplementedError("Subclass must implement this method")
 
     def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
@@ -444,9 +444,19 @@ class XmlTransformer(ContentTransformer):
     def get_body(self) -> BlockList:
         return self.block.children[0].get_body()
     
+    
+    def render_attrs(self, block: BlockBase) -> str:
+        attrs = ""
+        for k, v in block.attrs.items():
+            attrs += f"{k}=\"{v}\""
+            
+        if attrs:
+            attrs = " " + attrs + " "
+        return attrs
+    
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         if len(block) == 0:
-            block = "<" & block & "/>"
+            block = "<" & block & self.render_attrs(block) & "/>"
             return block
         # elif len(block) == 1:
         #     content = block.content
@@ -457,13 +467,13 @@ class XmlTransformer(ContentTransformer):
         else:
             content = block.content
             with Block() as blk:
-                blk /= "<" & block.indent_body(2) & ">"
+                blk /= "<" & block.indent_body(2) & self.render_attrs(block) & ">"
                 blk /= "</" & content & ">"
             return blk
     
-    def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None) -> BlockBase:
+    def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, attrs: dict[str, Any] | None = None) -> BlockBase:
         # print("inst>", repr(content))
-        with Block(style=style, role=role, tags=tags) as blk:
+        with Block(style=style, role=role, tags=tags, attrs=attrs) as blk:
             blk /= content
         return blk
     
@@ -479,7 +489,7 @@ class XmlTransformer(ContentTransformer):
   
     
     def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
-        block.append_child(content, add_new_line=False)
+        block.append_child(content, add_new_line=True)
         # block /= content
         return block
     
@@ -502,12 +512,12 @@ class ToolDescriptionTransformer(BlockTransformer):
         # key_field = self.get_one("key-field")
         # description = self.get_one("description")
         # parameters = self.get_one("parameters")
-        key_field = block.get_one("key-field")
+        # key_field = block.get_one("key-field")
         description = block.get_one("description")
         parameters = block.get_one("parameters")
 
         # Build new output
-        with Block("# Name: " + key_field.body[0].content_str) as blk:
+        with Block("# Name: " + block.attrs.get("name", "")) as blk:
             with blk("## Purpose") as purpose:
                 purpose /= description.body[0].content_str
             with blk("## Parameters") as params:
@@ -564,6 +574,8 @@ class Transformer:
 class BlockSchemaTransformer:
     
     def __init__(self, block_schema: BlockSchema, transformers: list[BaseTransformer]):
+        if not isinstance(block_schema, BlockSchema):
+            raise ValueError("block_schema must be a BlockSchema")
         self.block_schema = block_schema
         self._block = None
         transformer_lookup = {}
@@ -594,6 +606,10 @@ class BlockSchemaTransformer:
     @property
     def is_list_item(self) -> bool:
         return self.block_schema.is_list_item
+    
+    
+    def get_one_or_none(self, tags: str | list[str]) -> BlockBase | None:
+        return self.block_schema.get_one_or_none(tags)
         
     def render(self, block: BlockBase, path: Path) -> BlockBase:
         render_order = ["content"]
@@ -610,6 +626,7 @@ class BlockSchemaTransformer:
         style: str | None | UnsetType = UNSET,
         role: str | None | UnsetType = UNSET,
         tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
         force_schema: bool = False,
     ) -> BlockBase:
         content_transformer = self.transformer_lookup.get("content")
@@ -619,6 +636,7 @@ class BlockSchemaTransformer:
                 style=style if style is not UNSET else self.block_schema.styles, 
                 role=role if role is not UNSET else self.block_schema.role, 
                 tags=tags if tags is not UNSET else self.block_schema.tags,
+                attrs=attrs if attrs is not UNSET else self.block_schema.attrs,
             )        
         else:
             self._block = content_transformer.instantiate(
@@ -626,6 +644,7 @@ class BlockSchemaTransformer:
                 style=style if style is not UNSET else self.block_schema.styles, 
                 role=role if role is not UNSET else self.block_schema.role, 
                 tags=tags if tags is not UNSET else self.block_schema.tags,
+                attrs=attrs if attrs is not UNSET else self.block_schema.attrs,
             )
             self._block_transformer = content_transformer
         self._did_init = True
@@ -646,6 +665,9 @@ class BlockSchemaTransformer:
 
     def commit(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, force_schema: bool = False):
         content_transformer = self.transformer_lookup.get("content")
+        for field in self.block_schema.children:
+            if self.block.get_one_or_none(field.name) is None and field.is_required:
+                raise ValueError(f"Field '{field.name}' is required but not found")
         if force_schema or content_transformer is None or not is_overridden(content_transformer.__class__, "commit", BaseTransformer):
             pass
         elif content is not None:    
@@ -674,6 +696,7 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     Builds the transformed tree incrementally - each block is copied
     individually and children are appended, avoiding upfront deep copy.
     """
+    # print("transform", depth, block.tags, block.styles)
     # Transform children first (recursive)
     transformed_children = []
     render_cfg = StyleMeta.resolve(

@@ -57,6 +57,7 @@ class BlockBase(ABC):
         "span",         
         "postfix_span",
         "prefix_span",
+        "attrs",
     ]
     
     def __init__(
@@ -66,6 +67,7 @@ class BlockBase(ABC):
         role: str | None = None,
         style: str | list[str] | None = None,
         tags: list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
         parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
@@ -81,7 +83,7 @@ class BlockBase(ABC):
         self.children = children or []
         self.postfix_span: Span | None = None
         self.prefix_span: Span | None = None
-
+        self.attrs: dict[str, Any] = attrs or {}
         if _skip_content:
             # For copy operations - span will be set by caller
             self.span = None
@@ -433,17 +435,22 @@ class BlockBase(ABC):
         yield self
         for child in self.children:
             yield from child.traverse()
+            
+    def get_all_lists(self) -> list["BlockList | BlockListSchema"]:
+        return [child for child in self.children if isinstance(child, BlockList) or isinstance(child, BlockListSchema)]
+        
 
-    def get_all(self, tags: str | list[str]) -> list["BlockBase"]:
+    def get_all(self, tags: str | list[str], children_only: bool = False) -> list["BlockBase"]:
         """
         Get all blocks matching a tag path.
 
         Supports dot-notation for nested tag searches:
-        - "response" - find all blocks with tag "response"
-        - "response.thinking" - find "thinking" blocks that are descendants of "response"
+        - "response" - find all blocks with tag "response" in direct children
+        - "response.thinking" - find "thinking" blocks that are descendants of "response" children
 
         Args:
             tags: Single tag, dot-separated path, or list of tags
+            children_only: If True, only search direct children for ALL tags (not just first)
 
         Returns:
             List of matching blocks
@@ -454,19 +461,40 @@ class BlockBase(ABC):
         if not tags:
             return []
 
-        # Find all blocks matching first tag
-        candidates = [b for b in self.traverse() if tags[0] in b.tags]
+        # Find all blocks matching first tag in direct children only
+        candidates = [child for child in self.children if tags[0] in child.tags]
 
-        # Filter through remaining tags
+        # Filter through remaining tags - search descendants within each candidate
         for tag in tags[1:]:
             next_candidates = []
             for blk in candidates:
-                for child in blk.traverse():
-                    if child is not blk and tag in child.tags:
-                        next_candidates.append(child)
+                if children_only:
+                    # Only search direct children
+                    for child in blk.children:
+                        if tag in child.tags:
+                            next_candidates.append(child)
+                else:
+                    # Search all descendants
+                    for child in blk.traverse():
+                        if child is not blk and tag in child.tags:
+                            next_candidates.append(child)
             candidates = next_candidates
 
         return candidates
+
+    
+    # def get_one_child(self, tags: str | list[str]) -> "BlockBase":
+    #     result = self.get_all(tags, body_only=True)
+    #     if not result:
+    #         raise ValueError(f'Tag path "{tags}" does not exist')
+    #     return result[0]
+    
+    # def get_one_body_or_none(self, tags: str | list[str]) -> "BlockBase | None":
+    #     result = self.get_all(tags, body_only=True)
+    #     if not result:
+    #         return None
+    #     return result[0]
+        
 
     def get_one(self, tags: str | list[str]) -> "BlockBase":
         """
@@ -571,19 +599,24 @@ class BlockBase(ABC):
         Note: None is not accepted - wrapper blocks should not call this method.
         """
         if isinstance(content, str):
-            return [BlockChunk(content)]
+            chunks = [BlockChunk(content)]
         elif isinstance(content, list):
-            return content
+            chunks = content
         elif isinstance(content, Block):
             if len(content) > 0:
                 raise ValueError("Cant append a block with body content")
-            return  [chunk.copy() for chunk in content.span.chunks()] if content.span else []
+            chunks =  [chunk.copy() for chunk in content.span.chunks()] if content.span else []
         elif isinstance(content, BlockChunk):
-            return [content]
+            chunks = [content]
         elif isinstance(content, bool):
-            return [BlockChunk(str(content))]        
+            chunks = [BlockChunk(str(content))]        
         else:
             raise ValueError(f"Invalid content type: {type(content)}")
+        return chunks
+    
+    def _remove_offset_chunks(self, chunks: list[BlockChunk], start_offset: int | None = None, end_offset: int | None = None) -> list[BlockChunk]:
+        return chunks[1 if start_offset else 0: -1 if end_offset else None]
+
     
     def promote_block_content(self, content: BlockBase |ContentType | None, style: str | None = None, tags: list[str] | None = None, role: str | None = None) -> "BlockBase":
         if isinstance(content, BlockBase):
@@ -667,9 +700,9 @@ class BlockBase(ABC):
             return
         for contentpart, tag in self._split_new_lines(content):            
             if tag == "content":
-                target_block.inline_append(contentpart, start_offset=start_offset, end_offset=end_offset)
+                target_block._inline_append(contentpart, start_offset=start_offset, end_offset=end_offset)
             elif tag == "new_line":
-                target_block.postfix_append(contentpart, start_offset=start_offset, end_offset=end_offset)
+                target_block._postfix_append(contentpart, start_offset=start_offset, end_offset=end_offset)
             elif tag == "sentence":
                 self.append_child(contentpart, add_new_line=False)
 
@@ -684,9 +717,11 @@ class BlockBase(ABC):
             self.span.start = SpanAnchor(chunk=chunks[0], offset=0)
             
             
-    def inline_append(self, chunks: list[BlockChunk], start_offset: int | None = None, end_offset: int | None = None):
+    def _inline_append(self, chunks: list[BlockChunk], start_offset: int | None = None, end_offset: int | None = None):
+        # print("_inline_append", chunks)
         start_offset = start_offset if start_offset is not None else 0
         end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
+        # ret_chunks = self.block_text.extend(chunks[1 if start_offset else 0:], after=self.content_end_chunk)
         chunks = self.block_text.extend(chunks, after=self.content_end_chunk)
         if self.span is None:
             # Wrapper block becoming a content block
@@ -699,19 +734,28 @@ class BlockBase(ABC):
         
     def postfix_append(self, content: ContentType, sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
         content = self.promote_content(content)
+        return self._postfix_append(content, sep, start_offset, end_offset)
+        
+    def _postfix_append(self, chunks: list[BlockChunk], sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
         start_offset = start_offset if start_offset is not None else 0
-        end_offset = end_offset if end_offset is not None else len(content[-1].content)
-        content = self._append_separator(content, sep, append=True)
-        chunks = self.block_text.extend(content, after=self.end_postfix_chunk)
+        end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
+        chunks = self._append_separator(chunks, sep, append=True)
+        # ret_chunks = self.block_text.extend(chunks[1 if start_offset else 0:], after=self.end_postfix_chunk)
+        chunks = self.block_text.extend(chunks, after=self.end_postfix_chunk)
         self.postfix_span = Span.from_chunks(chunks, start_offset=start_offset, end_offset=end_offset)
         return self
         
     def prefix_prepend(self, content: ContentType, sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
         content = self.promote_content(content)
+        return self._prefix_prepend(content, sep, start_offset, end_offset)
+    
+    def _prefix_prepend(self, chunks: list[BlockChunk], sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):        
+        # print("_prefix_prepend", chunks)
         start_offset = start_offset if start_offset is not None else 0
-        end_offset = end_offset if end_offset is not None else len(content[-1].content)
-        content = self._append_separator(content, sep, append=False)
-        chunks = self.block_text.left_extend(content, before=self.start_prefix_chunk)
+        end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
+        chunks = self._append_separator(chunks, sep, append=False)
+        # ret_chunks = self.block_text.left_extend(chunks[1 if start_offset else 0:], before=self.start_prefix_chunk)
+        chunks = self.block_text.left_extend(chunks, before=self.start_prefix_chunk)
         self.prefix_span = Span.from_chunks(chunks, start_offset=start_offset, end_offset=end_offset)
         return self
         
@@ -743,8 +787,11 @@ class BlockBase(ABC):
                 if not self.is_wrapper:
                     self.add_new_line()
             # Children - add newline to last child if not a wrapper
-            elif not self.children[-1]._has_end_of_line():
-                    self.children[-1].add_new_line()
+            # elif not self.children[-1]._has_end_of_line():
+            #     self.children[-1].add_new_line()
+            # last descendant is the last child that is not a wrapper
+            elif not self.children[-1].last_descendant._has_end_of_line():
+                    self.children[-1].last_descendant.add_new_line()
 
             # if len(self.children) > 0:
             #     if not self.children[-1]._has_end_of_line():
@@ -978,7 +1025,7 @@ class BlockBase(ABC):
     # -------------------------------------------------------------------------
     
     def add_new_line(self):
-        self.postfix_append(BlockChunk(content="\n"))
+        self._postfix_append([BlockChunk(content="\n")])
         
     def remove_new_line(self):
         if not self.postfix_span:
@@ -993,7 +1040,7 @@ class BlockBase(ABC):
     def indent(self, spaces: int = 2):        
         if not self.is_wrapper:            
             spaces_chunk = BlockChunk(content=" " * spaces)            
-            self.prefix_prepend(spaces_chunk)
+            self._prefix_prepend([spaces_chunk])
         for child in self.children:
             child.indent(spaces)
         return self
@@ -1228,8 +1275,9 @@ class BlockBase(ABC):
     def model_metadata_copy(self, overrides: dict[str, Any] | None = None) -> Self:
         dump = {
             "role": self.role,
-            "tags": self.tags,
-            "styles": self.styles,
+            "tags": list(self.tags),
+            "styles": list(self.styles),
+            "attrs": self.attrs.copy(),
         }
         if overrides:
             dump.update(overrides)
@@ -1463,7 +1511,7 @@ class BlockBase(ABC):
         #     tags=list(self.tags),
         # )
         if isinstance(self, BlockSchema):
-            new_schema = self.model_copy()            
+            new_schema = self.model_copy(copy_children=False)
         else:
             new_schema = BlockSchema(
                 self.content_str,
@@ -1529,11 +1577,12 @@ class BlockBase(ABC):
         return block
     
     @classmethod
-    def schema_view(cls, name: str | None = None, type: Type | None = None, tags: list[str] | None = None, style: str | None = None) -> "BlockSchema":
+    def schema_view(cls, name: str | None = None, type: Type | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> "BlockSchema":
         schema_block = BlockSchema(
             name,
             type=type,
             tags=tags,
+            attrs=attrs,
             styles=["xml"] if style is None and name is not None else parse_style(style),
         )
         return schema_block
@@ -1541,15 +1590,17 @@ class BlockBase(ABC):
     def view(
         self,
         name: str | None = None,
-        type: Type | None = None,
+        type: Type | None = None,        
         tags: list[str] | None = None,
         style: str | None = None,
+        attrs: dict[str, Any] | None = None,
         is_required: bool = True,
     ) -> "BlockSchema":
         schema_block = BlockSchema(
             name,
             type=type,
             tags=tags,
+            attrs=attrs,
             styles=["xml"] if style is None and name is not None else parse_style(style),
             is_required=is_required,
         )
@@ -1562,8 +1613,9 @@ class BlockBase(ABC):
         item_name: str,
         key: str | None = None,
         name: str | None = None,
-        tags: list[str] | None = None,
+        tags: list[str] | None = None,        
         style: str | None = None,
+        attrs: dict[str, Any] | None = None,
         is_required: bool = True,
     ) -> "BlockListSchema":
         schema_block = BlockListSchema(
@@ -1571,6 +1623,7 @@ class BlockBase(ABC):
             key=key,
             name=name,
             tags=tags,
+            attrs=attrs,
             styles=["xml-list"] if style is None else parse_style(style),
             is_required=is_required,
         )
@@ -1600,9 +1653,10 @@ class BlockBase(ABC):
         path = self.path
         path_str = str(path) if path else "(root)"
         wrapper_str = "(wrapper)" if self.is_wrapper else ""
+        schema_str = f"(schema)" if isinstance(self, BlockSchema) else "(block)"
         tags_str = f"tags={self.tags}" if self.tags else ""
         styles_str = f"styles={self.styles}" if self.styles else ""
-        header_parts = [f"[{path_str}]", wrapper_str, tags_str, styles_str]
+        header_parts = [f"[{path_str}]", wrapper_str, tags_str, styles_str, schema_str]
         header = " ".join(p for p in header_parts if p)
         lines.append(f"{prefix}{header}")
         
@@ -1742,7 +1796,7 @@ class BlockBase(ABC):
     def __and__(self, other: ContentType):
         # self.append(other, sep="")
         self_copy = self.copy()
-        self_copy.inline_append(self.promote_content(other))
+        self_copy._inline_append(self.promote_content(other))
         return self_copy
     
     def __rand__(self, other: ContentType):
@@ -1777,6 +1831,7 @@ class Block(BlockBase):
         role: str | None = None,
         style: str | list[str] | None = None,
         tags: list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
         parent: "Block | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
@@ -1784,7 +1839,7 @@ class Block(BlockBase):
         start_offset: int | None = None,
         end_offset: int | None = None,
     ):
-        super().__init__(content, children=children, role=role, style=style, tags=tags, parent=parent, block_text=block_text, styles=styles, _skip_content=_skip_content, start_offset=start_offset, end_offset=end_offset)
+        super().__init__(content, children=children, role=role, style=style, tags=tags, attrs=attrs, parent=parent, block_text=block_text, styles=styles, _skip_content=_skip_content, start_offset=start_offset, end_offset=end_offset)
         self._transformer: "BaseTransformer | None" = None
 
  
@@ -1813,8 +1868,9 @@ class Block(BlockBase):
     def model_copy(self, overrides: dict[str, Any] | None = None, copy_content: bool = False, fork_block_text: bool = False, copy_children: bool = True) -> "Block":
         block = Block(
             role=self.role,
-            tags=self.tags,
-            styles=self.styles,            
+            tags=list(self.tags),
+            styles=list(self.styles),
+            attrs=self.attrs.copy(),
         )
         return block
     
@@ -1822,7 +1878,8 @@ class Block(BlockBase):
     def __repr__(self) -> str:
         postfix = ", postfix=" + repr(self.postfix_span.text()) + " " if self.postfix_span else ""
         prefix = ", prefix=" + repr(self.prefix_span.text()) + " " if self.prefix_span else ""
-        return f"""Block({prefix}content="{str(self.content_str)}", {postfix}children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
+        attrs = ", attrs=" + repr(self.attrs) if self.attrs else ""
+        return f"""Block({prefix}content="{str(self.content_str)}", {postfix}children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles}{attrs})"""
 
 
 
@@ -1847,6 +1904,7 @@ class BlockSchema(BlockBase):
         role: str | None = None,
         tags: list[str] | None = None,
         style: str | list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
         parent: "BlockBase | None" = None,
         styles: list[str] | None = None,
         block_text: BlockText | None = None,
@@ -1871,6 +1929,7 @@ class BlockSchema(BlockBase):
             role=role, 
             style=style, 
             tags=tags, 
+            attrs=attrs,
             parent=parent, 
             block_text=block_text, 
             styles=styles, 
@@ -1894,16 +1953,20 @@ class BlockSchema(BlockBase):
         content: ContentType | dict | BaseModel | None = None,
         style: str | None | UnsetType = UNSET,
         role: str | None | UnsetType = UNSET,
-        tags: list[str] | None | UnsetType = UNSET
+        tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
     ) -> "Block":
         if isinstance(content, dict):
-            dump = {"name": self.tags[1], **content}
-            return self.inst_from_dict(dump)
+            # dump = {"name": self.tags[1], **content}
+            return self.inst_from_dict(content)
         elif isinstance(content, BaseModel):
-            dump = {"name": self.tags[1], **content.model_dump()}
-            return self.inst_from_dict(dump)
+            # dump = {"name": self.tags[1], **content.model_dump()}
+            if not isinstance(content, self.type):
+                raise ValueError(f"Content is not of type {self.type}")            
+            return self.inst_from_dict(dump, self.tags[1])
         styles = (parse_style(style) or self.styles) if style is not UNSET and style is not None else None
         tags = (tags or self.tags) if tags is not UNSET and tags is not None else None
+        attrs = (attrs or self.attrs) if attrs is not UNSET and attrs is not None else None
         role = role or self.role if role is not UNSET and role is not None else None
         # if isinstance(self.parent, BlockListSchema)
         return Block(
@@ -1912,10 +1975,11 @@ class BlockSchema(BlockBase):
             tags=tags,
             styles=styles,
             role=role or self.role,
+            attrs=attrs,
         )
         
         
-    def inst_from_dict(self, data: dict) -> "Block":
+    def inst_from_dict(self, data: dict, key: str | None = None) -> "Block":
         from .block_builder import BlockBuilderContext
         from .pydantic_helpers import traverse_dict
         builder = BlockBuilderContext(self)
@@ -1925,12 +1989,17 @@ class BlockSchema(BlockBase):
             # print(f"action: {action}, field_type: {field_type}, k: {k}, v: {v}, path: {path}, label_path: {label_path}")
             if action == "open":        
                 if field_type == "list-item" or field_type == "model-list-item":
-                    builder.instantiate_list_item(k, force_schema=True)
+                    builder.instantiate_list_item(k, force_schema=True, inst_key=True)
                 else:
                     builder.instantiate(k, k, force_schema=True)
                 # builder.append(v, force_schema=True)
-                builder.curr_block.append_child(v)
+                # builder.curr_block.append_child(v)
             elif action == "close":
+                # if field_type == "model-list-item":
+                #     builder.instantiate("name", "name", force_schema=True)
+                #     builder.curr_block.append_child(k)
+                #     builder.curr_block.children[-1].add_new_line()
+                #     builder.commit(k, force_schema=True)
                 builder.commit(k, force_schema=True)
             elif action == "open-close":
                 builder.instantiate(k, k, force_schema=True)
@@ -2005,9 +2074,10 @@ class BlockSchema(BlockBase):
             "name": self.name,
             "type": self.type,
             "role": self.role,
-            "tags": self.tags,
-            "styles": self.styles,
+            "tags": list(self.tags),
+            "styles": list(self.styles),
             "is_virtual": self.is_wrapper,
+            "attrs": self.attrs.copy(),
         }
         if overrides:
             dump.update(overrides)
@@ -2019,8 +2089,9 @@ class BlockSchema(BlockBase):
             name=self.name,
             type=self.type,
             role=self.role,
-            tags=self.tags,
-            styles=self.styles,
+            tags=list(self.tags),
+            styles=list(self.styles),
+            attrs=self.attrs.copy(),
             is_virtual=self.is_wrapper,
         )
         if copy_children:
@@ -2030,7 +2101,8 @@ class BlockSchema(BlockBase):
                 
                 
     def __repr__(self) -> str:
-        return f"""BlockSchema(name="{self.name}", type={self.type}, children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles})"""
+        attrs = ", attrs=" + repr(self.attrs) if self.attrs else ""
+        return f"""BlockSchema(name="{self.name}", type={self.type}, children={len(self.children)}, role={self.role}, tags={self.tags}, styles={self.styles}{attrs})"""
     
     
     
@@ -2227,13 +2299,14 @@ class BlockList(Block):
         tags: list[str] | None = None,
         style: str | None = None,
         styles: list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
         parent: "Block | None" = None,
         is_wrapper: bool = False,
         schema: "BlockSchema | None" = None,
         block_text: BlockText | None = None,
         _skip_content: bool = False,
     ):
-        super().__init__(children=children, role=role, tags=tags, style=style, styles=styles, parent=parent, block_text=block_text, _skip_content=_skip_content)
+        super().__init__(children=children, role=role, tags=tags, style=style, styles=styles, attrs=attrs, parent=parent, block_text=block_text, _skip_content=_skip_content)
     
     def edit(self) -> ListEditor:
         return ListEditor(self)
@@ -2261,10 +2334,11 @@ class BlockList(Block):
             
             
     def model_copy(self, copy_content: bool = False, fork_block_text: bool = False, copy_children: bool = True) -> "BlockList":
-        block = BlockList(            
+        block = BlockList(
             role=self.role,
-            tags=self.tags,
-            styles=self.styles,
+            tags=list(self.tags),
+            styles=list(self.styles),
+            attrs=self.attrs.copy(),
         )
         if copy_children:
             for child in self.children:
@@ -2319,6 +2393,7 @@ class BlockListSchema(BlockSchema):
         role: str | None = None, 
         tags: list[str] | None = None, 
         style: str | None = None, 
+        attrs: dict[str, Any] | None = None,
         parent: "BlockSchema | None" = None, 
         styles: list[str] | None = None, 
         block_text: BlockText | None = None, 
@@ -2331,7 +2406,7 @@ class BlockListSchema(BlockSchema):
         name = name or f"{item_name}_list"
         if name not in tags:
             tags.insert(0, name)
-        super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content, is_required=is_required)
+        super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, attrs=attrs, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content, is_required=is_required)
         self.name = name
         self.item_name = item_name
         self.tags.insert(0, name)
@@ -2386,6 +2461,12 @@ class BlockListSchema(BlockSchema):
         self.append_child(block)
         return block
     
+    def get_item_by_key(self, key: str) -> "BlockSchema | None":
+        for block in self.list_schemas:
+            if block.attrs.get(self.key) == key:
+                return block
+        return None
+    
     def model_metadata_copy(self, overrides: dict[str, Any] | None = None) -> Self:
         dump = {
             "item_name": self.item_name,
@@ -2393,8 +2474,9 @@ class BlockListSchema(BlockSchema):
             "key": self.key,
             "type": self.type,
             "role": self.role,
-            "tags": self.tags,
-            "styles": self.styles,
+            "tags": list(self.tags),
+            "styles": list(self.styles),
+            "attrs": self.attrs.copy(),
         }
         if overrides:
             dump.update(overrides)
@@ -2408,10 +2490,10 @@ class BlockListSchema(BlockSchema):
             key=self.key,
             type=self.type,
             role=self.role,
-            tags=self.tags,
-            styles=self.styles,
+            tags=list(self.tags),
+            styles=list(self.styles),
+            attrs=self.attrs.copy(),
         )
-        return block
         if copy_children:
             for child in self.children:
                 block.append_child(child.model_copy(copy_content, fork_block_text, copy_children))
