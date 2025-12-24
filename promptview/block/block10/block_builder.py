@@ -14,10 +14,14 @@ class BlockBuilderError(Exception):
 class BlockBuilderContext:
     
     def __init__(self, schema: "BlockSchema | None"):        
-        self.schema = schema.extract_schema() if schema is not None else None        
+        self.schema = schema.extract_schema() if schema is not None else None  
         self._stack = []
         self._root = None
         self._block_text = None
+        if self.schema.is_wrapper:
+            self.init_root()      
+        
+        
         
         
     def init_root(self):
@@ -86,8 +90,12 @@ class BlockBuilderContext:
         from .block_transformers import BlockSchemaTransformer
         if self.schema is None:
             raise RuntimeError("Schema not initialized")
-        # block_schema = self.schema.get_one(name)
-        block_schema = self._top().get_one_or_none(name)
+        # block_schema = self._top().get_one_or_none(name)
+        block_schema = None
+        if top := self._top_or_none():
+            block_schema = top.block_schema.get_one_or_none(name)
+        elif name in self.schema.tags:
+            block_schema = self.schema
         if block_schema is None:
             raise RuntimeError(f"Schema '{name}' not found")
         block_transformer = BlockSchemaTransformer.from_block_schema(block_schema)
@@ -159,11 +167,19 @@ class BlockBuilderContext:
         tags: list[str] | None | UnsetType = UNSET,
         force_schema: bool = False,
     ):
-        print(f"instantiate: {name}")
         if self._is_top_committed():
             self._pop()
         if self.schema is None:
             raise RuntimeError("Schema not initialized")
+        if self._top_or_none() and self._top().is_list:
+            if name not in self._top().block_schema.tags:
+                raise BlockBuilderError(f"Schema '{name}' not found in list '{self._top().block_schema.name}'")
+            if attrs is UNSET or not attrs:
+                raise BlockBuilderError("Attributes are required for list item")
+            if item_name := attrs.get("name"):
+                name = item_name
+            else:
+                raise BlockBuilderError("Attribute 'name' is required for list item")
         transformer = self._get_schema(name)
         # if isinstance(transformer.block_schema.parent, BlockListSchema):
         if transformer.is_list_item:
@@ -176,6 +192,13 @@ class BlockBuilderContext:
                 list_transformer = self.inst_list(name)
                 # if list_item_name := list_transformer.block_schema.item_name: 
                     # content = list_item_name
+        elif transformer.is_list:
+            transformer.instantiate(force_schema=force_schema)
+            self._push(transformer)
+            if attrs is UNSET or not attrs:
+                raise BlockBuilderError("Attributes are required for list item")
+            if item_name := attrs.get(transformer.block_schema.key):
+                transformer = self._get_schema(item_name)
         else:
             if isinstance(self._top_or_none(), BlockList):
                 self._pop()

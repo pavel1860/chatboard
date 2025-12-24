@@ -106,9 +106,8 @@ class XmlParser(Process):
                 for offset, (c, kind) in enumerate(chunk.iter_kind()):
                     if kind == "newline":
                         isspace = True
-                        break
                     elif kind == "space":
-                        pass
+                        isspace = True
                     else:
                         has_content = True
                         isspace = False
@@ -264,11 +263,11 @@ class XmlParser(Process):
             return
         
         event_type, event_data, start_byte = self.pending
-        # print(f"<flush_pending '{event_type}'>")
-        # print("pending |",repr(event_data), "start_byte:", start_byte, "end_byte:", end_byte)
+        print(f"<flush_pending '{event_type}'>---------------------------------------------------")
+        print("pending |",repr(event_data), "start_byte:", start_byte, "end_byte:", end_byte)
         chunks, as_child, start_offset, end_offset = self._get_chunks_in_range(event_type, start_byte, end_byte)
-        # print("get chunks |", event_type, "chunks:", [(s,e,repr(c.content), c.id) for s,e,c in chunks], "start_offset:", start_offset, "end_offset:", end_offset)
-        # print("</flush_pending>")
+        print("get chunks |", event_type, "chunks:", [(s,e,repr(c.content), c.id) for s,e,c in chunks], "start_offset:", start_offset, "end_offset:", end_offset)
+        print("</flush_pending>--------------------------------------------------")
         chunks = [c for _, _, c in chunks]
         if len(chunks) == 0:
             return

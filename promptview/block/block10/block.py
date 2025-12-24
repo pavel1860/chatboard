@@ -2403,7 +2403,8 @@ class BlockListSchema(BlockSchema):
         tags = tags or []
         if not styles:
             styles = ["xml-list"]
-        name = name or f"{item_name}_list"
+        # name = name or f"{item_name}_list"
+        name = name or item_name
         if name not in tags:
             tags.insert(0, name)
         super().__init__(None, type=type, children=children, role=role, tags=tags, style=style, attrs=attrs, parent=parent, styles=styles, block_text=block_text, _skip_content=_skip_content, is_required=is_required)

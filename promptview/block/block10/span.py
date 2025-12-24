@@ -165,7 +165,7 @@ class Span:
         if len(chunks) == 0:
             return cls(start=SpanAnchor(chunk=None, offset=0), end=SpanAnchor(chunk=None, offset=0))
         if len(chunks) == 1:
-            return cls(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[0], offset=end_offset))
+            return cls(start=SpanAnchor(chunk=chunks[0], offset=0), end=SpanAnchor(chunk=chunks[0], offset=end_offset))        
         start = SpanAnchor(chunk=chunks[0], offset=start_offset)
         end = SpanAnchor(chunk=chunks[-1], offset=end_offset)
         return cls(start=start, end=end)
