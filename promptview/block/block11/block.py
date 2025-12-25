@@ -160,17 +160,27 @@ class Mutator(metaclass=MutatorMeta):
     def _attach_child(self, child: Block) -> None:
         """Attach a child to this block (set parent and inherit block_text)."""
         child.parent = self._block
-        # Child inherits parent's BlockText
+        # Copy child's spans into parent's BlockText
         if self._block is not None:
             parent_bt = self._block.block_text
-            # Move child's span from its BlockText to parent's BlockText
-            if child.block_text is not parent_bt and child.span is not None:
-                # Remove from old BlockText if it's there
-                if child.span.owner is child.block_text:
-                    child.block_text.remove(child.span)
-                # Add to parent's BlockText
-                parent_bt.append(child.span)
-            child.block_text = parent_bt
+            if child.block_text is not parent_bt:
+                # Copy spans from the child and its descendants to parent's BlockText
+                # and update the block's span reference to the new copy
+                for block in child.iter_depth_first():
+                    if block.span is not None:
+                        new_span = block.span.copy()
+                        parent_bt.append(new_span)
+                        block.span = new_span
+                # Recursively update block_text on child and all descendants
+                self._set_block_text_recursive(child, parent_bt)
+            else:
+                child.block_text = parent_bt
+
+    def _set_block_text_recursive(self, block: Block, bt: "BlockText") -> None:
+        """Recursively set block_text on a block and all its descendants."""
+        block.block_text = bt
+        for child in block.children:
+            self._set_block_text_recursive(child, bt)
 
     def append_child(self, child: Block) -> Mutator:
         """Append a child block to the body."""
@@ -201,12 +211,38 @@ class Mutator(metaclass=MutatorMeta):
             # Note: we don't clear block_text - the span is still owned by it
             body.remove(child)
         return self
+    
+    
+    def get_last_span(self) -> Span:
+        if len(self.get_body()) == 0:
+            return self.block.span
+        return self.get_body()[-1].mutator.get_last_span()
+    
+    
+    def get_last_block(self) -> Block:
+        if len(self.get_body()) == 0:
+            return self.block
+        return self.get_body()[-1].mutator.get_last_block()
+    
+    def _auto_handle_newline(self) -> Block:
+        """Auto handle newline for the block."""
+        if last := self.get_last_block():
+            if not last.has_end_of_line() and not last.is_wrapper:
+                last.add_newline()
+        return last
+
 
     # -------------------------------------------------------------------------
     # Render (transformation point)
     # -------------------------------------------------------------------------
+    
+    def render_and_set(self, block: Block) -> Block:
+        """Render the block and set the mutator."""
+        block = self.render(block)
+        self.block = block
+        return block
 
-    def render(self) -> Block:
+    def render(self, block: Block) -> Block:
         """
         Transform the block structure.
 
@@ -216,9 +252,10 @@ class Mutator(metaclass=MutatorMeta):
         Returns:
             The (possibly transformed) block with this mutator attached.
         """
-        if self._block is None:
-            raise ValueError("Mutator has no block attached")
-        return self._block
+        return block
+        # if self._block is None:
+        #     raise ValueError("Mutator has no block attached")
+        # return self._block
 
 
 class Block:
@@ -382,7 +419,7 @@ class Block:
             block = content
         else:
             block = Block(content, role=role, tags=tags, style=style)        
-        self._auto_handle_newline()
+        self.mutator._auto_handle_newline()
         self.append_child(block)
         
         return block
@@ -458,29 +495,12 @@ class Block:
         return self.span.is_empty
     
     
-    def get_last_span(self) -> Span:
-        if len(self.children) == 0:
-            return self.span
-        return self.children[-1].get_last_span()
-    
-    
-    def get_last_block(self) -> Block:
-        if len(self.children) == 0:
-            return self
-        return self.children[-1].get_last_block()
-    
-    def _auto_handle_newline(self) -> Block:
-        """Auto handle newline for the block."""
-        if last := self.get_last_block():
-            if not last.has_end_of_line() and not last.is_wrapper:
-                last.add_newline()
-        return last
     
     # -------------------------------------------------------------------------
     # Operator Overloading
     # -------------------------------------------------------------------------
     def __itruediv__(self, other: Block | ContentType | tuple):
-        self._auto_handle_newline()
+        self.mutator._auto_handle_newline()
         if isinstance(other, tuple):
             if len(other) == 0:
                 return self
@@ -586,10 +606,26 @@ class Block:
     # -------------------------------------------------------------------------
     # Rendering
     # -------------------------------------------------------------------------
-
-    def render(self) -> Block:
+    
+    def print_text(self):
+        """Print the text of the block."""
+        print(self.block_text.text())
+    
+    
+    def transform(self) -> Block:
         """Apply mutator transformation."""
-        return self.mutator.render()
+        from .rendering import render
+        return render(self)
+    
+    
+    def render(self) -> Block:
+        """Render the block."""
+        output = self.transform()
+        return output.block_text.text()
+    
+    def print(self):
+        """Print the transformed block."""
+        print(self.render())
 
     def render_text(self) -> str:
         """Render tree to text (depth-first span concatenation)."""
@@ -601,6 +637,29 @@ class Block:
     # -------------------------------------------------------------------------
     # Copy
     # -------------------------------------------------------------------------
+
+    def copy_head(self) -> Block:
+        """
+        Copy only the block's span (head) without children.
+
+        Creates a new Block with a copied span but no children.
+        The new block gets its own BlockText.
+        """
+        from .block_text import BlockText
+
+        new_block_text = BlockText()
+        new_span = self.span.copy() if self.span else None
+        if new_span:
+            new_block_text.append(new_span)
+
+        return Block(
+            _span=new_span,
+            _children=[],
+            role=self.role,
+            tags=self.tags.copy() if self.tags else [],
+            style=self._style.copy() if self._style else [],
+            block_text=new_block_text,
+        )
 
     def copy(self, deep: bool = True) -> Block:
         """
@@ -700,3 +759,8 @@ class Block:
         print(self.debug())
         if spliter:
             print(spliter * 100)
+            
+            
+    def print_block_texts(self):
+        for block in self.iter_depth_first():
+            print(id(block.block_text))  

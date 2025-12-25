@@ -78,6 +78,5 @@ class MutatorMeta(type):
             if style == "hidden":
                 mutator_cfg.hidden = True                
             elif style_cls := current.get(style): 
-                if targets is None or style_cls.target in targets: 
-                    mutator_cfg[style_cls.target] = style_cls                          
+                mutator_cfg["mutator"] = style_cls                          
         return mutator_cfg

@@ -345,6 +345,21 @@ class TestBlockCopy:
         assert copy.span is original.span
         assert copy.block_text is original.block_text
 
+    def test_copy_head(self):
+        parent = Block("Parent", role="test")
+        child1 = Block("Child1")
+        child2 = Block("Child2")
+        parent.append_child(child1)
+        parent.append_child(child2)
+
+        head_copy = parent.copy_head()
+
+        assert head_copy.content == "Parent"
+        assert head_copy.role == "test"
+        assert len(head_copy.children) == 0
+        assert head_copy.span is not parent.span
+        assert head_copy.block_text is not parent.block_text
+
 
 class TestBlockMutatedAccess:
     """Tests for mutator-based access (head, body, content)."""

@@ -346,3 +346,7 @@ class BlockText:
         for i, span in enumerate(self):
             lines.append(f"  [{i}] {span}")
         return "\n".join(lines)
+
+    def print_debug(self):
+        """Print debug representation."""
+        print(self.debug())

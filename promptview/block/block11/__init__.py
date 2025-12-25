@@ -1,7 +1,7 @@
 from .span import Chunk, Span
 from .block_text import BlockText
 from .block import Block, Mutator, ContentType, BaseContentTypes
-
+from .mutators import XmlMutator
 
 __all__ = [
     "Chunk",
@@ -11,4 +11,5 @@ __all__ = [
     "Mutator",
     "ContentType",
     "BaseContentTypes",
+    "XmlMutator",
 ]
