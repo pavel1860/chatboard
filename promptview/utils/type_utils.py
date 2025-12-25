@@ -1,3 +1,4 @@
+from typing import Any
 from pydantic import BaseModel
 from datetime import datetime, date, time
 from enum import Enum
@@ -86,5 +87,13 @@ class UnsetType(Enum):
     
     def __bool__(self):
         return False
+    
+    @staticmethod
+    def get_value(value: Any, default: Any = None) -> Any:
+        if value is UNSET:
+            if default is not None:
+                return default
+            return UNSET            
+        return value
 
 UNSET = UnsetType.UNSET

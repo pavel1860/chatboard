@@ -1,11 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterator, Callable
+from typing import TYPE_CHECKING, Any, Iterator, Callable, Type
 
 from .span import Span, Chunk
 from .mutator_meta import MutatorMeta
 if TYPE_CHECKING:
     from .block_text import BlockText
+    from .schema import BlockSchema
 
 
 
@@ -38,8 +39,10 @@ class Mutator(metaclass=MutatorMeta):
     """
     styles = []
 
-    def __init__(self, block: Block | None = None):
+    def __init__(self, block: Block | None = None, did_instantiate: bool = True, did_commit: bool = True):
         self._block: Block | None = block
+        self._did_instantiate: bool = did_instantiate
+        self._did_commit: bool = False
 
     @property
     def block(self) -> Block | None:
@@ -181,6 +184,38 @@ class Mutator(metaclass=MutatorMeta):
         block.block_text = bt
         for child in block.children:
             self._set_block_text_recursive(child, bt)
+            
+            
+    
+            
+            
+    def append(self, content: ContentType) -> Mutator:
+        """Append content to the last block"""
+        target_chunks = []
+        target_block = self.get_last_appendable_block()
+        chunks = self.promote(content)
+        # def append_chunks(target_block: "Block | None", chunks: list[Chunk]) -> "Block | None":
+        #     if target_block is None:
+        #         target_block = self.append_child(chunks, add_new_line=False)
+        #     else:
+        #         target_block._inline_append(chunks)
+        #     return target_block
+        
+        for i, chunk in enumerate(chunks):
+            if chunk.is_line_end:
+                if target_chunks:
+                    target_block = target_block.mutator.append_content(target_chunks)
+                    target_block.mutator.append_postfix([chunk])
+                else:
+                    target_block.mutator.append_postfix([chunk])
+                target_chunks = []
+                if i < len(chunks) - 1:
+                    target_block = self.get_last_appendable_block()
+            else:
+                target_chunks.append(chunk)
+        if target_chunks:
+            target_block.mutator.append_content(target_chunks)
+        return self
 
     def append_child(self, child: Block) -> Mutator:
         """Append a child block to the body."""
@@ -224,6 +259,20 @@ class Mutator(metaclass=MutatorMeta):
             return self.block
         return self.get_body()[-1].mutator.get_last_block()
     
+    def get_last_appendable_block(self) -> Block:
+        if len(self.get_body()) == 0:
+            if self.get_head().has_end_of_line():
+                self.append_child(Block())
+                return self.get_body()[-1]
+            else:
+                return self.block
+        if last := self.get_body()[-1]:
+            if last.has_end_of_line():
+                self.append_child(Block())
+                return self.get_body()[-1]
+            else:
+                return last
+    
     def _auto_handle_newline(self) -> Block:
         """Auto handle newline for the block."""
         if last := self.get_last_block():
@@ -253,9 +302,82 @@ class Mutator(metaclass=MutatorMeta):
             The (possibly transformed) block with this mutator attached.
         """
         return block
-        # if self._block is None:
-        #     raise ValueError("Mutator has no block attached")
-        # return self._block
+
+    # -------------------------------------------------------------------------
+    # Schema Operations (for BlockSchema support)
+    # -------------------------------------------------------------------------
+    
+    def call_instantiate(self, content: "ContentType | None" = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None) -> Block:
+        """
+        Call the instantiate method of the block.
+        """
+        block = self.instantiate(content, role, tags, style)
+        # block.mutator = self.__class__(block, did_instantiate=True, did_commit=False)
+        block.mutator = self
+        self.block = block
+        self._did_instantiate = True
+        self._did_commit = False
+        return block
+
+    def instantiate(self, content: "ContentType | None" = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None) -> Block:
+        """
+        Create a Block instance from a schema.
+
+        Base implementation creates a simple block with the content.
+        Subclasses override for style-specific instantiation (e.g., XML structure).
+
+        Args:
+            schema: The schema to instantiate from
+            content: Content for the new block
+            **kwargs: Additional arguments
+
+        Returns:
+            A new Block instance
+        """
+        # Default: create a block with the content (or schema name)
+        block = Block(
+            content=content,
+            role=role,
+            tags=tags,
+            style=style,
+        )
+
+        # Recursively instantiate child schemas
+        # for child in schema.children:
+        #     if hasattr(child, 'instantiate'):
+        #         # Child is a schema - instantiate it
+        #         block.append_child(child.instantiate())
+        #     else:
+        #         # Child is a regular block - copy it
+        #         block.append_child(child.copy())
+
+        return block
+
+    def commit(self, content: ContentType) -> Block:
+        """
+        Validate and finalize a block against a schema.
+
+        Base implementation returns the block unchanged.
+        Subclasses override for validation logic.
+
+        Args:
+            block: The block to validate
+            schema: The schema to validate against
+
+        Returns:
+            The validated block
+        """
+        return self.block
+    
+    
+    def call_commit(self, block: Block) -> Block:
+        """
+        Call the commit method of the block.
+        """
+        block = self.commit(block)
+        block.mutator._did_commit = True
+        block.mutator._did_instantiate = True
+        return block
 
 
 class Block:
@@ -268,7 +390,7 @@ class Block:
     The Mutator provides indirection for accessing/mutating fields.
     """
 
-    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "_mutator", "_style"]
+    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style"]
 
     def __init__(
         self,
@@ -276,7 +398,7 @@ class Block:
         *,
         role: str | None = None,
         tags: list[str] | None = None,
-        style: str | None = None,
+        style: str | list[str] | None = None,
         mutator: Mutator | None = None,
         block_text: "BlockText | None" = None,
         # Internal: for factory methods
@@ -306,9 +428,9 @@ class Block:
 
         # Set up mutator first (needed for promote)
         if mutator is None:
-            self._mutator = Mutator(self)
+            self.mutator = Mutator(self)
         else:
-            self._mutator = mutator
+            self.mutator = mutator
             mutator.block = self
 
         # Set up BlockText - root blocks create their own, children inherit
@@ -323,7 +445,7 @@ class Block:
         else:
             # Create span via BlockText so it's properly owned
             if content is not None:
-                chunks = self._mutator.promote(content)
+                chunks = self.mutator.promote(content)
                 self.span = self.block_text.create_span()
                 self.span.content = chunks
             else:
@@ -356,18 +478,18 @@ class Block:
     # Properties (only where logic is needed)
     # -------------------------------------------------------------------------
 
-    @property
-    def mutator(self) -> Mutator:
-        """Get the mutator for this block."""
-        if self._mutator is None:
-            self._mutator = Mutator(self)
-        return self._mutator
+    # @property
+    # def mutator(self) -> Mutator:
+    #     """Get the mutator for this block."""
+    #     if self._mutator is None:
+    #         self._mutator = Mutator(self)
+    #     return self._mutator
 
-    @mutator.setter
-    def mutator(self, value: Mutator) -> None:
-        """Set a new mutator for this block."""
-        self._mutator = value
-        value.block = self
+    # @mutator.setter
+    # def mutator(self, value: Mutator) -> None:
+    #     """Set a new mutator for this block."""
+    #     self._mutator = value
+    #     value.block = self
 
     @property
     def style(self) -> list[str]:
@@ -413,7 +535,7 @@ class Block:
         content: ContentType | Block | None = None,
         role: str | None = None,
         tags: list[str] | None = None,
-        style: str | None = None,
+        style: str | list[str] | None = None,
     ) -> "Block":
         if isinstance(content, Block):
             block = content
@@ -423,10 +545,38 @@ class Block:
         self.append_child(block)
         
         return block
+    
+    
+    def view(
+        self,
+        name: str | None = None,
+        type: Type | None = None,        
+        tags: list[str] | None = None,
+        style: str | list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
+        is_required: bool = True,
+    ) -> "BlockSchema":
+        from .schema import BlockSchema
+        schema_block = BlockSchema(
+            name,
+            type=type,
+            tags=tags,
+            attrs=attrs,
+            style="xml" if style is None and name is not None else style,
+            is_required=is_required,
+        )
+        self.append_child(schema_block)
+        return schema_block
+
 
     # -------------------------------------------------------------------------
     # Mutation (via mutator)
     # -------------------------------------------------------------------------
+    
+    def append(self, content: ContentType) -> Block:
+        """Append content to the last block"""
+        self.mutator.append(content)
+        return self
 
     def append_content(self, content: ContentType) -> Block:
         """Append to head content."""
@@ -468,10 +618,24 @@ class Block:
         if self.span is not None:
             return self.span.has_end_of_line()
         return False
-
-    def append_child(self, child: Block) -> Block:
+    
+    
+    # def append_child(self, child: ContentType) -> Block:
+    #     """Append child to body."""
+    #     block = Block(content=child)
+    #     self.mutator.append_child(block)
+    #     return self
+    
+    # def append_child(self, child: Block) -> Block:
+    #     """Append child to body."""
+    #     self.mutator.append_child(child)
+    #     return self
+    def append_child(self, child: Block | ContentType) -> Block:
         """Append child to body."""
-        self.mutator.append_child(child)
+        if isinstance(child, Block):
+            self.mutator.append_child(child)
+        else:
+            self.mutator.append_child(Block(content=child))
         return self
 
     def prepend_child(self, child: Block) -> Block:
@@ -568,6 +732,9 @@ class Block:
     # -------------------------------------------------------------------------
     # Iteration
     # -------------------------------------------------------------------------
+    
+    def traverse(self) -> Iterator[Block]:
+        yield from self.iter_depth_first()
 
     def iter_depth_first(self) -> Iterator[Block]:
         """Iterate blocks depth-first (pre-order)."""
@@ -748,9 +915,9 @@ class Block:
 
         if self.children:
             parts.append(f"children={len(self.children)}")
-
-        lines = [f"{ind}Block({', '.join(parts)})"]
-        for child in self.body:
+        cls_name = self.__class__.__name__
+        lines = [f"{ind}{cls_name}({', '.join(parts)})"]
+        for child in self.children:
             lines.append(child.debug(indent + 1))
         return "\n".join(lines)
     
