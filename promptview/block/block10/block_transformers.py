@@ -253,10 +253,13 @@ class BaseTransformer(metaclass=StyleMeta):
     #     return self._copy is not None
     
     def get_content(self) -> BlockBase:
-        raise NotImplementedError("Subclass must implement this method")
+        return self.block.get_content()
+    
+    def get_head(self) -> BlockBase:
+        return self.block.get_head()
     
     def get_body(self) -> BlockList:
-        raise NotImplementedError("Subclass must implement this method")
+        return self.block.get_body()
 
     # -------------------------------------------------------------------------
     # Transform methods (to be implemented by subclasses)
@@ -437,12 +440,14 @@ class AsteriskTransformer(ContentTransformer):
 class XmlTransformer(ContentTransformer):
     styles = ["xml"]
     
+    def get_head(self) -> BlockBase:
+        return self.block.children[0].get_head()
     
     def get_content(self) -> BlockBase:
         return self.block.children[0].get_content()
     
     def get_body(self) -> BlockList:
-        return self.block.children[0].get_body()
+        return self.block.children[1].get_body()
     
     
     def render_attrs(self, block: BlockBase) -> str:
@@ -454,45 +459,70 @@ class XmlTransformer(ContentTransformer):
             attrs = " " + attrs + " "
         return attrs
     
+    # def render(self, block: BlockBase, path: Path) -> BlockBase:
+    #     if len(block) == 0:
+    #         block = "<" & block & self.render_attrs(block) & "/>"
+    #         return block
+    #     # elif len(block) == 1:
+    #     #     content = block.content
+    #     #     blk = Block()
+    #     #     blk.append_child("<" & block & ">", add_new_line=False)
+    #     #     blk.append_child("</" & content & ">", add_new_line=False)
+    #     #     return blk                
+    #     else:
+    #         content = block.content
+    #         with Block() as blk:
+    #             blk /= "<" & block.indent_body(2) & self.render_attrs(block) & ">"
+    #             blk /= "</" & content & ">"
+    #         return blk
     def render(self, block: BlockBase, path: Path) -> BlockBase:
-        if len(block) == 0:
-            block = "<" & block & self.render_attrs(block) & "/>"
-            return block
-        # elif len(block) == 1:
-        #     content = block.content
-        #     blk = Block()
-        #     blk.append_child("<" & block & ">", add_new_line=False)
-        #     blk.append_child("</" & content & ">", add_new_line=False)
-        #     return blk                
-        else:
-            content = block.content
-            with Block() as blk:
-                blk /= "<" & block.indent_body(2) & self.render_attrs(block) & ">"
-                blk /= "</" & content & ">"
-            return blk
-    
+        
+        
+        with Block() as blk:
+            with blk(block.content, tags=["opening-tag"]) as content:
+                content.prefix_prepend("<")
+                content.postfix_append(">")
+            with blk() as body:
+                for child in block.children:
+                    body /= child
+            with blk(block.content, tags=["closing-tag"]) as postfix:
+                postfix.prefix_prepend("</")
+                postfix.postfix_append(">")
+        return blk
+            
     def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, attrs: dict[str, Any] | None = None) -> BlockBase:
-        # print("inst>", repr(content))
-        with Block(style=style, role=role, tags=tags, attrs=attrs) as blk:
-            blk /= content
+        with Block() as blk:
+            with blk(content, tags=tags) as head:
+                pass
+            with blk() as body:
+                pass
         return blk
     
-    def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
-        block.append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
-        # if len(block) == 2:
-        #     block.children[1].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
-        # else:
-        #     if as_child or len(block.children[0]) > 0:    
-        #         block.children[0].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
-        #     else:
-        #         block.append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
-        return block
-  
     
     def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
-        block.append_child(content, add_new_line=True)
-        # block /= content
+        block.children[-1].append(content)
         return block
+    # def instantiate(self, content: ContentType | None = None, style: str | None = None, role: str | None = None, tags: list[str] | None = None, attrs: dict[str, Any] | None = None) -> BlockBase:
+    #     # print("inst>", repr(content))
+    #     with Block(style=style, role=role, tags=tags, attrs=attrs) as blk:
+    #         blk /= content
+    #     return blk
+    
+    # def append(self, block: BlockBase, chunk: BlockChunk, as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None) -> BlockBase:
+    #     block.append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
+    #     # if len(block) == 2:
+    #     #     block.children[1].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
+    #     # else:
+    #     #     if as_child or len(block.children[0]) > 0:    
+    #     #         block.children[0].append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
+    #     #     else:
+    #     #         block.append(chunk, sep="", as_child=as_child, start_offset=start_offset, end_offset=end_offset)
+    #     return block
+  
+    
+    # def commit(self, block: BlockBase, content: ContentType, style: str | None = None, role: str | None = None, tags: list[str] | None = None):
+    #     block.append_child(content, add_new_line=True)
+    #     return block
     
     
 class XmlDefTransformer(ContentTransformer):
@@ -647,7 +677,8 @@ class BlockSchemaTransformer:
                 tags=tags if tags is not UNSET else self.block_schema.tags,
                 attrs=attrs if attrs is not UNSET else self.block_schema.attrs,
             )
-            self._block_transformer = content_transformer
+            self._block._transformer = content_transformer
+            content_transformer.block = self._block
         self._did_init = True
         return self._block
     
@@ -699,6 +730,8 @@ def transform(block: BlockBase, depth: int = 0) -> BlockBase:
     """
     # print("transform", depth, block.tags, block.styles)
     # Transform children first (recursive)
+    if block._transformer is not None:
+        return block
     transformed_children = []
     render_cfg = StyleMeta.resolve(
         block.styles     

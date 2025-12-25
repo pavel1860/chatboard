@@ -844,14 +844,31 @@ class BlockText:
 
         return left, right
 
-    def text(self) -> str:
+    def text(self, start: SpanAnchor | None = None, end: SpanAnchor | None = None) -> str:
         """
         Get full text content by concatenating all chunks.
 
         Returns:
             Concatenated content of all chunks
         """
-        return "".join(chunk.content for chunk in self)
+        start_chunk = self.head
+        end_chunk = self.tail
+        if start is not None:
+            start_chunk = start.chunk
+        if end is not None:
+            end_chunk = end.chunk
+        
+        curr = start_chunk
+        result = [] 
+        while curr is not None:
+            result.append(curr.content)            
+            if curr is end_chunk:
+                break
+            curr = curr.next
+        return "".join(result)
+            
+        
+        # return "".join(chunk.content for chunk in self)
 
     def fork(
         self,
@@ -938,3 +955,109 @@ class BlockText:
         str_linage = "\n".join([f"{chunk.prev.id if chunk.prev else 'None'} -> [{chunk.id}] -> {chunk.next.id if chunk.next else 'None'} : {repr(chunk.content)}" for chunk in self])
         print(str_linage)
         # return str_linage
+
+    def __getitem__(self, span: "Span | None") -> "BlockTextView":
+        """
+        Index BlockText with a Span to get a view for span-relative operations.
+
+        Args:
+            span: Span to view, or None for operations at the boundaries
+
+        Returns:
+            BlockTextView for extend/prepend operations
+
+        Example:
+            # Extend postfix span
+            self.postfix_span = self.block_text[self.postfix_span].extend(chunks)
+
+            # Prepend to prefix span
+            self.prefix_span = self.block_text[self.prefix_span].prepend(chunks)
+        """
+        return BlockTextView(self, span)
+
+
+class BlockTextView:
+    """
+    A view into BlockText via a Span, providing span-relative operations.
+
+    BlockTextView ties together a BlockText and a Span, allowing operations
+    like extend and prepend that modify the span in place.
+
+    The span must not be None - caller must ensure the span exists before
+    creating a view. Use Span.from_chunks() to create an initial span.
+
+    Example:
+        # Extend existing postfix span
+        self.postfix_span = self.block_text[self.postfix_span].extend(chunks)
+
+        # Prepend to existing prefix span
+        self.prefix_span = self.block_text[self.prefix_span].prepend(chunks)
+    """
+
+    def __init__(self, block_text: BlockText, span: "Span"):
+        if span is None:
+            raise ValueError("BlockTextView requires a valid Span, got None. Create a span first using Span.from_chunks().")
+        self.block_text = block_text
+        self.span = span
+
+    def extend(self, chunks: list[BlockChunk], end_offset: int | None = None) -> "Span":
+        """
+        Extend at the end of the span, return the updated span.
+
+        Inserts chunks after the span's end and extends the span to include them.
+
+        Args:
+            chunks: Chunks to append
+            end_offset: Offset within last chunk for span end (default: end of chunk)
+
+        Returns:
+            The updated Span
+        """
+        from .span import SpanAnchor
+
+        if not chunks:
+            return self.span
+
+        end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
+
+        # Insert chunks after span's end
+        new_chunks = self.block_text.extend(chunks, after=self.span.end.chunk)
+
+        # Extend span's end to include new chunks
+        self.span.end = SpanAnchor(chunk=new_chunks[-1], offset=end_offset)
+        return self.span
+
+    def prepend(self, chunks: list[BlockChunk], start_offset: int | None = None) -> "Span":
+        """
+        Prepend at the start of the span, return the updated span.
+
+        Inserts chunks before the span's start and extends the span to include them.
+
+        Args:
+            chunks: Chunks to prepend
+            start_offset: Offset within first chunk for span start (default: 0)
+
+        Returns:
+            The updated Span
+        """
+        from .span import SpanAnchor
+
+        if not chunks:
+            return self.span
+
+        start_offset = start_offset if start_offset is not None else 0
+
+        # Insert chunks before span's start
+        new_chunks = self.block_text.left_extend(chunks, before=self.span.start.chunk)
+
+        # Extend span's start to include new chunks
+        self.span.start = SpanAnchor(chunk=new_chunks[0], offset=start_offset)
+        return self.span
+
+    def text(self) -> str:
+        """Get the text content of this view's span."""
+        return self.span.text()
+
+    def __repr__(self) -> str:
+        text_preview = self.span.text()[:30]
+        return f"BlockTextView(Span({text_preview!r}...))"

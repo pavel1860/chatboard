@@ -100,7 +100,7 @@ class BlockBase(ABC):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):        
-        if len(self.children) > 0 and not self.children[-1]._has_end_of_line():
+        if len(self.children) > 0 and not self.children[-1].has_end_of_line():
             self.children[-1].add_new_line()
 
     def __len__(self) -> int:
@@ -138,37 +138,27 @@ class BlockBase(ABC):
             raise ValueError("Cannot get content of wrapper block (no content). Check is_wrapper first.")
 
         # Fork just the content span's chunks
-        new_block_text = self.block_text.fork(
-            start=self.span.start.chunk,
-            end=self.span.end.chunk
-        )
+        # new_block_text = self.block_text.fork(
+        #     start=self.span.start.chunk,
+        #     end=self.span.end.chunk
+        # )
 
         # Create block with the new BlockText
         block = Block(
-            block_text=new_block_text,
+            # block_text=new_block_text,
+            block_text=self.block_text,            
             _skip_content=True,
+            # tags=self.tags,
+            # styles=self.styles,
+            # role=self.role,
+            # attrs=self.attrs,
         )
-        block.span = Span.from_chunks(list(new_block_text))
+        # block.span = Span.from_chunks(list(new_block_text))
+        block.span = self.span
+        # block.postfix_span = self.postfix_span
+        # block.prefix_span = self.prefix_span
         return block
     
-    # def get_content(self, raise_on_wrapper: bool = True) -> "BlockBase":
-    #     if self.span is None:
-    #         if raise_on_wrapper:
-    #             raise ValueError("Cannot get content of wrapper block (no content). Check is_wrapper first.")
-    #         return Block(_skip_content=True)
-
-    #     new_block_text = self.block_text.fork(
-    #         start=self.span.start.chunk,
-    #         end=self.span.end.chunk
-    #     )
-
-    #     # Create block with the new BlockText
-    #     block = Block(
-    #         block_text=new_block_text,
-    #         _skip_content=True,
-    #     )
-    #     block.span = Span.from_chunks(list(new_block_text))
-    #     return block
     
     
     @property
@@ -179,16 +169,43 @@ class BlockBase(ABC):
         if self.is_wrapper:
             return ""
         content = self.content
-        text = content.block_text.text()
+        # text = content.block_text.text()
+        if content.span is None:
+            return ""
+        text = content.span.text()
         return text
     
     @property
-    def body(self) -> "BlockList":
+    def head(self) -> "BlockBase":
+        return self.get_head()
+    
+    def get_head(self) -> "BlockBase":
+        if self.span is None:
+            raise ValueError("Cannot get content of wrapper block (no content). Check is_wrapper first.")
+
+        # Create block with the new BlockText
+        block = Block(
+            # block_text=new_block_text,
+            block_text=self.block_text,            
+            _skip_content=True,
+            tags=self.tags,
+            styles=self.styles,
+            role=self.role,
+            attrs=self.attrs,
+        )
+        block.span = self.span
+        block.postfix_span = self.postfix_span
+        block.prefix_span = self.prefix_span
+        return block
+    
+    @property
+    def body(self) -> "list[BlockBase]":
         return self.get_body()
     
     
-    def get_body(self) -> "BlockList":
-        return BlockList(self.children, role=self.role, tags=self.tags)
+    def get_body(self) -> "list[BlockBase]":
+        return self.children
+        # return BlockList(self.children, role=self.role, tags=self.tags)
     
     @property
     def last_descendant(self) -> "BlockBase":
@@ -659,7 +676,7 @@ class BlockBase(ABC):
     #     else:
     #         self.span.end = SpanAnchor(chunk=chunks[-1], offset=len(chunks[-1].content))
     
-    def _has_end_of_line(self) -> bool:
+    def has_end_of_line(self) -> bool:
         # Check own postfix first
         if self.postfix_span is not None:
             for c in self.postfix_span.chunks():
@@ -667,7 +684,7 @@ class BlockBase(ABC):
                     return True
         # For wrapper blocks with children, check last child's end-of-line
         if self.is_wrapper and self.children:
-            return self.children[-1]._has_end_of_line()
+            return self.children[-1].has_end_of_line()
         return False
     
     
@@ -686,25 +703,66 @@ class BlockBase(ABC):
         if sentence:
             yield sentence, tag
             
-            
-        
+                    
+    # def append(self, content: BlockBase | ContentType, sep: str | None = " ", as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None):
+    #     content = self.promote_content(content)
+    #     content = self._append_separator(content, sep, append=True)
+    #     target_block = self
+    #     if len(self) > 0:
+    #         target_block = self.children[-1]
+    #     if target_block.has_end_of_line() or as_child:
+    #         self.append_child(content, add_new_line=False, start_offset=start_offset, end_offset=end_offset)
+    #         return
+    #     for contentpart, tag in self._split_new_lines(content):            
+    #         if tag == "content":
+    #             target_block._inline_append(contentpart, start_offset=start_offset, end_offset=end_offset)
+    #         elif tag == "new_line":
+    #             target_block._postfix_append(contentpart, start_offset=start_offset, end_offset=end_offset)
+    #         elif tag == "sentence":
+    #             self.append_child(contentpart, add_new_line=False)
     
     def append(self, content: BlockBase | ContentType, sep: str | None = " ", as_child: bool = False, start_offset: int | None = None, end_offset: int | None = None):
         content = self.promote_content(content)
         content = self._append_separator(content, sep, append=True)
-        target_block = self
-        if len(self) > 0:
-            target_block = self.children[-1]
-        if target_block._has_end_of_line() or as_child:
-            self.append_child(content, add_new_line=False, start_offset=start_offset, end_offset=end_offset)
-            return
-        for contentpart, tag in self._split_new_lines(content):            
-            if tag == "content":
-                target_block._inline_append(contentpart, start_offset=start_offset, end_offset=end_offset)
-            elif tag == "new_line":
-                target_block._postfix_append(contentpart, start_offset=start_offset, end_offset=end_offset)
-            elif tag == "sentence":
-                self.append_child(contentpart, add_new_line=False)
+        return self._append(content, start_offset=start_offset, end_offset=end_offset)
+                
+                
+    def _get_appendable_block(self) -> "BlockBase | None":
+        if self.span and not self.get_head().has_end_of_line():
+            return self.get_head()
+        body = self.get_body()
+        if body and not body[-1].has_end_of_line():
+            return body[-1]
+        return None
+                
+    def _append(self, chunks: list[BlockChunk],  start_offset: int | None = None, end_offset: int | None = None):
+        target_chunks = []
+        end_idx = len(chunks) - 1  
+        target_block = self._get_appendable_block()
+        
+        def append_chunks(target_block: "BlockBase | None", chunks: list[BlockChunk]) -> "BlockBase | None":
+            if target_block is None:
+                target_block = self.append_child(chunks, add_new_line=False)
+            else:
+                target_block._inline_append(chunks)
+            return target_block
+        
+        for i, chunk in enumerate(chunks):
+            if chunk.is_line_end:
+                if target_chunks:
+                    target_block = append_chunks(target_block, target_chunks)                  
+                    target_block._postfix_append([chunk])
+                else:
+                    self.last_descendant._postfix_append([chunk])
+                target_chunks = []
+                target_block = None
+            else:
+                target_chunks.append(chunk)
+        if target_chunks:
+            append_chunks(target_block, target_chunks)
+        return self
+    
+
 
     def prepend(self, content: ContentType, sep: str | None = " "):
         content = self.promote_content(content)
@@ -737,26 +795,19 @@ class BlockBase(ABC):
         return self._postfix_append(content, sep, start_offset, end_offset)
         
     def _postfix_append(self, chunks: list[BlockChunk], sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
-        start_offset = start_offset if start_offset is not None else 0
-        end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
+        end_offset = end_offset if end_offset is not None else len(chunks[-1].content) if chunks else 0
         chunks = self._append_separator(chunks, sep, append=True)
-        # ret_chunks = self.block_text.extend(chunks[1 if start_offset else 0:], after=self.end_postfix_chunk)
-        chunks = self.block_text.extend(chunks, after=self.end_postfix_chunk)
-        self.postfix_span = Span.from_chunks(chunks, start_offset=start_offset, end_offset=end_offset)
+        self.postfix_span = self.block_text[self.postfix_span].extend(chunks, end_offset=end_offset)
         return self
         
     def prefix_prepend(self, content: ContentType, sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
         content = self.promote_content(content)
         return self._prefix_prepend(content, sep, start_offset, end_offset)
     
-    def _prefix_prepend(self, chunks: list[BlockChunk], sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):        
-        # print("_prefix_prepend", chunks)
+    def _prefix_prepend(self, chunks: list[BlockChunk], sep: str | None = "", start_offset: int | None = None, end_offset: int | None = None):
         start_offset = start_offset if start_offset is not None else 0
-        end_offset = end_offset if end_offset is not None else len(chunks[-1].content)
         chunks = self._append_separator(chunks, sep, append=False)
-        # ret_chunks = self.block_text.left_extend(chunks[1 if start_offset else 0:], before=self.start_prefix_chunk)
-        chunks = self.block_text.left_extend(chunks, before=self.start_prefix_chunk)
-        self.prefix_span = Span.from_chunks(chunks, start_offset=start_offset, end_offset=end_offset)
+        self.prefix_span = self.block_text[self.prefix_span].prepend(chunks, start_offset=start_offset)
         return self
         
     def append_child(self, child_content: BlockBase | ContentType, copy: bool = True, add_new_line: bool = True, start_offset: int | None = None, end_offset: int | None = None):
@@ -783,15 +834,15 @@ class BlockBase(ABC):
         # Add newline separator (skip for wrapper blocks with no content)
         if add_new_line:
             # No children - add newline to content if not a wrapper
-            if not self.children:
+            if not self.get_body():
                 if not self.is_wrapper:
                     self.add_new_line()
             # Children - add newline to last child if not a wrapper
             # elif not self.children[-1]._has_end_of_line():
             #     self.children[-1].add_new_line()
             # last descendant is the last child that is not a wrapper
-            elif not self.children[-1].last_descendant._has_end_of_line():
-                    self.children[-1].last_descendant.add_new_line()
+            elif not self.get_body()[-1].last_descendant.has_end_of_line():
+                    self.get_body()[-1].last_descendant.add_new_line()
 
             # if len(self.children) > 0:
             #     if not self.children[-1]._has_end_of_line():
@@ -803,8 +854,8 @@ class BlockBase(ABC):
         # (If block already shares our BlockText, chunks are already in place)
         if block.block_text is not self.block_text:
             # Determine insertion point - after last child or after this block's content
-            if self.children:
-                insert_after_chunk = self.children[-1].end_chunk
+            if self.get_body():
+                insert_after_chunk = self.get_body()[-1].end_chunk
             else:
                 insert_after_chunk = self.end_postfix_chunk or self.content_end_chunk
 
@@ -819,7 +870,7 @@ class BlockBase(ABC):
             self._remap_block_text(block, self.block_text)
 
         # Add to children list
-        self.children.append(block)
+        self.get_body().append(block)
         block.parent = self
         return block
         
@@ -1436,13 +1487,6 @@ class BlockBase(ABC):
 
     def _copy_tree(self, chunk_map: dict, new_block_text: BlockText) -> "BlockBase":
         """Copy this block using chunk mapping."""
-        # new_block = Block(
-        #     styles=list(self.styles),
-        #     tags=list(self.tags),
-        #     role=self.role,
-        #     block_text=new_block_text,
-        #     _skip_content=True,
-        # )
         new_block = self.model_metadata_copy(overrides={"block_text": new_block_text, "_skip_content": True})
 
         # Remap spans (only if not a wrapper block)
@@ -1463,6 +1507,12 @@ class BlockBase(ABC):
                 start=SpanAnchor(chunk_map[self.postfix_span.start.chunk.id], self.postfix_span.start.offset),
                 end=SpanAnchor(chunk_map[self.postfix_span.end.chunk.id], self.postfix_span.end.offset),
             )
+
+        # Copy transformer if present
+        if hasattr(self, '_transformer') and self._transformer is not None:
+            new_transformer = self._transformer.__class__(new_block)
+            new_transformer.block = new_block
+            new_block._transformer = new_transformer
 
         # Copy children
         for child in self.children:
@@ -1856,12 +1906,18 @@ class Block(BlockBase):
     #     return block
     
     def get_content(self) -> "BlockBase":
-        if self._transformer is not None and self._transformer.has_method("get_content"):
+        if self._transformer is not None:
             return self._transformer.get_content()
         return super().get_content()
     
+    
+    def get_head(self) -> "BlockBase":
+        if self._transformer is not None:
+            return self._transformer.get_head()
+        return super().get_head()
+    
     def get_body(self) -> "BlockList":
-        if self._transformer is not None and self._transformer.has_method("get_body"):
+        if self._transformer is not None:
             return self._transformer.get_body()
         return super().get_body()
     

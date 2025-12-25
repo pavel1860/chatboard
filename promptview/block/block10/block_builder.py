@@ -31,7 +31,7 @@ class BlockBuilderContext:
             raise RuntimeError("Schema not initialized")
         self._root = BlockSchemaTransformer.from_block_schema(self.schema)
         content = self._root.block_schema.name if not self._root.block_schema.is_wrapper else None
-        self._root.instantiate(content, tags=["root"], force_schema=True)        
+        self._root.instantiate(content, tags=["root"], force_schema=True)       
         self._stack.append(self._root)
 
     @property
