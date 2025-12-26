@@ -39,6 +39,14 @@ class Chunk:
             content=self.content,
             logprob=self.logprob,
         )
+        
+    def split(self, offset: int) -> tuple[Chunk, Chunk]:
+        """Split a chunk into two chunks at the given start and end positions."""
+        left = self.content[:offset]
+        right = self.content[offset:]        
+        lchunk = Chunk(content=left, logprob=self.logprob)
+        rchunk = Chunk(content=right, logprob=self.logprob)
+        return lchunk, rchunk
 
     def __repr__(self) -> str:
         return f"Chunk({self.content!r})"

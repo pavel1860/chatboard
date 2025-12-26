@@ -15,7 +15,8 @@ class XmlMutator(Mutator):
     
     
     def get_body(self) -> list[Block]:
-        return self.block.children[1].children
+        # return self.block.children[1].children
+        return self.block.children[0].children
     
     def get_content(self) -> str:
         return self.block.children[0].content
@@ -41,11 +42,10 @@ class XmlMutator(Mutator):
         with Block(role=role, tags=tags, style=style) as block:
             with block(content) as head:
                 pass
-            with block() as body:
-                pass
+            # with block() as body:
+            #     pass
         return block
-    
-    
+            
     
     def commit(self, content: ContentType) -> Block:
         self.block.append_child(content)

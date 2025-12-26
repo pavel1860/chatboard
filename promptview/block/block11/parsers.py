@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from xml.parsers import expat
 
+
 from .block import Block
 from .span import Chunk
 from ...prompt.fbp_process import Process
@@ -119,7 +120,6 @@ class XmlParser(Process):
         while not self._output_queue:
             try:
                 chunk = await super().__anext__()
-                print(chunk)
                 # Feed the chunk (may produce output)
                 if hasattr(chunk, 'content'):
                     self.feed(Chunk(content=chunk.content))
@@ -197,13 +197,31 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Chunk retrieval
     # -------------------------------------------------------------------------
-
+    
     def _get_chunks_in_range(self, start: int, end: int) -> list[Chunk]:
         """Get chunks overlapping the byte range [start, end)."""
         result = []
+        
+        # print(f"---------------[{start}, {end}]-------------------")
+        def print_chunks(chunk, chunk_start, chunk_end):
+            start_sign = "<" if chunk_start < start else "="
+            end_sign = ">" if chunk_end > end else "="
+            start_cond = "√" if chunk_start < end else "x"
+            end_cond = "√" if chunk_end > start else "x"
+            cond = "√" if chunk_start < end and chunk_end > start else "x"
+            split_end = "split end" if chunk_end > end else ""
+            split_start = "split start" if chunk_start < start else ""
+                
+            print(chunk_start,"<", f"'{end}'", start_cond, "&",  chunk_end, ">", f"'{start}'", end_cond, "|", chunk, cond, split_start, split_end)         
         for chunk_start, chunk_end, chunk in self._chunks:
+            # print_chunks(chunk, chunk_start, chunk_end)
             if chunk_start < end and chunk_end > start:
+                if chunk_end > end:
+                    chunk, _ = chunk.split(chunk_end - end)
+                if chunk_start < start:
+                    _, chunk = chunk.split(start - chunk_start)
                 result.append(chunk)
+                
         return result
 
     # -------------------------------------------------------------------------
@@ -221,7 +239,7 @@ class XmlParser(Process):
 
         if not chunks:
             return
-
+        print(event_type, repr(event_data), chunks)
         if event_type == "start":
             name, attrs = event_data
             self._handle_start(name, attrs, chunks)

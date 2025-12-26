@@ -114,7 +114,10 @@ class BlockSchema(Block):
         if config.mutator is None:
             raise ValueError(f"No mutator found for style {UnsetType.get_value(style, self.style)}")
         mutator = config.mutator()
-        block = mutator.call_instantiate(content, role=UnsetType.get_value(role, self.role), tags=UnsetType.get_value(tags, self.tags), style=UnsetType.get_value(style, self.style))
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)
+        style = UnsetType.get_value(style, self.style)
+        block = mutator.call_instantiate(content, role=role, tags=tags, style=style)
         return block
     
     
