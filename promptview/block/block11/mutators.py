@@ -27,19 +27,19 @@ class XmlMutator(Mutator):
     def render(self, block: Block) -> Block:
         with Block() as xml_blk:
             with xml_blk(block.content, tags=["opening-tag"]) as content:
-                content.prepend_prefix("<")
-                content.append_postfix(">")    
+                content.append_prefix("<")
+                content.prepend_postfix(">")    
             with xml_blk() as body:
                 for child in block.body:
                     body.append_child(child)
             with xml_blk(block.content, tags=["closing-tag"]) as postfix:
-                postfix.prepend_prefix("</")
-                postfix.append_postfix(">")
+                postfix.append_prefix("</")
+                postfix.prepend_postfix(">")
         return xml_blk
     
     
     def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None) -> Block:
-        with Block(role=role, tags=tags, style=style) as block:
+        with Block(role=role, tags=tags) as block:
             with block(content) as head:
                 pass
             # with block() as body:

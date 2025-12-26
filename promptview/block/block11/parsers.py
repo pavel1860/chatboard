@@ -49,7 +49,7 @@ class XmlParser(Process):
 
     def __init__(self, schema: "BlockSchema", upstream: Process | None = None):
         super().__init__(upstream)
-        self.schema = schema
+        self.schema = schema.extract_schema(style="xml")
         self._root: Block | None = None
         self._stack: list[tuple["BlockSchema", Block]] = []
 
@@ -217,8 +217,10 @@ class XmlParser(Process):
             # print_chunks(chunk, chunk_start, chunk_end)
             if chunk_start < end and chunk_end > start:
                 if chunk_end > end:
-                    chunk, _ = chunk.split(chunk_end - end)
+                    # chunk, _ = chunk.split(chunk_end - end)
+                    chunk, _ = chunk.split(end - start)
                 if chunk_start < start:
+                    # _, chunk = chunk.split(start - chunk_start)
                     _, chunk = chunk.split(start - chunk_start)
                 result.append(chunk)
                 
@@ -286,7 +288,7 @@ class XmlParser(Process):
             raise ParserError(f"Unknown tag '{name}' - no matching schema found")
 
         # Instantiate block from schema
-        child_block = child_schema.instantiate(chunks, style=None)
+        child_block = child_schema.instantiate(name=chunks, extract_schema=False)
 
         # Set attributes if any
         if attrs and hasattr(child_block, 'attrs'):

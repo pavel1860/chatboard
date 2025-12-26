@@ -6,7 +6,7 @@ from .span import Span, Chunk
 from .mutator_meta import MutatorMeta
 if TYPE_CHECKING:
     from .block_text import BlockText
-    from .schema import BlockSchema
+    from .schema import BlockSchema, BlockListSchema
 
 
 
@@ -273,7 +273,7 @@ class Mutator(metaclass=MutatorMeta):
             else:
                 return last
     
-    def _auto_handle_newline(self) -> Block:
+    def auto_handle_newline(self) -> Block:
         """Auto handle newline for the block."""
         if last := self.get_last_block():
             if not last.has_end_of_line() and not last.is_wrapper:
@@ -284,6 +284,25 @@ class Mutator(metaclass=MutatorMeta):
     # -------------------------------------------------------------------------
     # Render (transformation point)
     # -------------------------------------------------------------------------
+    
+    
+    def apply_style(self, style: str, only_views: bool = False, copy: bool = True, recursive: bool = True):
+        from .schema import BlockSchema
+        if self.block is None:
+            raise ValueError("Block is not set")
+        block_copy = self.block.copy(copy) if copy else self.block
+        styles = parse_style(style)
+        
+        if recursive:
+            for block in block_copy.traverse():
+                if only_views and not isinstance(block, BlockSchema):
+                    continue
+                if block.is_leaf():
+                    continue
+                block.style.extend(styles)
+        else:
+            block_copy.style.extend(styles)
+        return block_copy
     
     def render_and_set(self, block: Block) -> Block:
         """Render the block and set the mutator."""
@@ -541,10 +560,24 @@ class Block:
             block = content
         else:
             block = Block(content, role=role, tags=tags, style=style)        
-        self.mutator._auto_handle_newline()
+        self.mutator.auto_handle_newline()
         self.append_child(block)
         
         return block
+    
+    
+    @classmethod
+    def schema_view(cls, name: str | None = None, type: Type | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> "BlockSchema":
+        from .schema import BlockSchema
+        schema_block = BlockSchema(
+            name,
+            type=type,
+            tags=tags,
+            attrs=attrs,
+            style=["xml"] if style is None and name is not None else parse_style(style),
+        )
+        return schema_block
+
     
     
     def view(
@@ -562,9 +595,38 @@ class Block:
             type=type,
             tags=tags,
             attrs=attrs,
-            style="xml" if style is None and name is not None else style,
+            # style="xml" if style is None and name is not None else style,
+            style=style,
             is_required=is_required,
         )
+        self.mutator.auto_handle_newline()
+        self.append_child(schema_block)
+        return schema_block
+    
+    
+    
+    def view_list(
+        self,
+        item_name: str,
+        key: str | None = None,
+        name: str | None = None,
+        tags: list[str] | None = None,        
+        style: str | None = None,
+        attrs: dict[str, Any] | None = None,
+        is_required: bool = True,
+    ) -> "BlockListSchema":
+        from .schema import BlockListSchema
+        schema_block = BlockListSchema(
+            item_name=item_name,
+            key=key,
+            name=name,
+            tags=tags,
+            attrs=attrs,
+            # style=["xml-list"] if style is None else parse_style(style),
+            style=style,
+            is_required=is_required,
+        )
+        self.mutator.auto_handle_newline()
         self.append_child(schema_block)
         return schema_block
 
@@ -632,10 +694,12 @@ class Block:
     #     return self
     def append_child(self, child: Block | ContentType) -> Block:
         """Append child to body."""
+        self.mutator.auto_handle_newline()
         if isinstance(child, Block):
             self.mutator.append_child(child)
         else:
             self.mutator.append_child(Block(content=child))
+        # self.mutator.auto_handle_newline()
         return self
 
     def prepend_child(self, child: Block) -> Block:
@@ -664,7 +728,7 @@ class Block:
     # Operator Overloading
     # -------------------------------------------------------------------------
     def __itruediv__(self, other: Block | ContentType | tuple):
-        self.mutator._auto_handle_newline()
+        self.mutator.auto_handle_newline()
         if isinstance(other, tuple):
             if len(other) == 0:
                 return self
@@ -728,10 +792,98 @@ class Block:
         while node.parent is not None:
             node = node.parent
         return node
+    
+    # -------------------------------------------------------------------------
+    # Accessors
+    # -------------------------------------------------------------------------
+    
+    def get_all(self, tags: str | list[str], children_only: bool = False) -> list["Block"]:
+        """
+        Get all blocks matching a tag path.
+
+        Supports dot-notation for nested tag searches:
+        - "response" - find all blocks with tag "response" in direct children
+        - "response.thinking" - find "thinking" blocks that are descendants of "response" children
+
+        Args:
+            tags: Single tag, dot-separated path, or list of tags
+            children_only: If True, only search direct children for ALL tags (not just first)
+
+        Returns:
+            List of matching blocks
+        """
+        if isinstance(tags, str):
+            tags = tags.split(".")
+
+        if not tags:
+            return []
+
+        # Find all blocks matching first tag in direct children only
+        candidates = [child for child in self.body if tags[0] in child.tags]
+
+        # Filter through remaining tags - search descendants within each candidate
+        for tag in tags[1:]:
+            next_candidates = []
+            for blk in candidates:
+                if children_only:
+                    # Only search direct children
+                    for child in blk.body:
+                        if tag in child.tags:
+                            next_candidates.append(child)
+                else:
+                    # Search all descendants
+                    for child in blk.traverse():
+                        if child is not blk and tag in child.tags:
+                            next_candidates.append(child)
+            candidates = next_candidates
+
+        return candidates
+
+
+    def get_one(self, tags: str | list[str]) -> "Block":
+        """
+        Get the first block matching a tag path.
+
+        Args:
+            tags: Single tag, dot-separated path, or list of tags
+
+        Returns:
+            First matching block
+
+        Raises:
+            ValueError: If no matching block found
+        """
+        result = self.get_all(tags, children_only=True)
+        if not result:
+            raise ValueError(f'Tag path "{tags}" does not exist')
+        return result[0]
+
+    def get_one_or_none(self, tags: str | list[str]) -> "Block | None":
+        """
+        Get the first block matching a tag path, or None if not found.
+
+        Args:
+            tags: Single tag, dot-separated path, or list of tags
+
+        Returns:
+            First matching block, or None
+        """
+        result = self.get_all(tags, children_only=True)
+        return result[0] if result else None
+    
+    
+    def __getitem__(self, index: int) -> Block:
+        return self.body[index]
+
 
     # -------------------------------------------------------------------------
     # Iteration
     # -------------------------------------------------------------------------
+    
+    def __iter__(self):
+        return iter(self.body)
+    
+    
     
     def traverse(self) -> Iterator[Block]:
         yield from self.iter_depth_first()
@@ -773,6 +925,9 @@ class Block:
     # -------------------------------------------------------------------------
     # Rendering
     # -------------------------------------------------------------------------
+    
+    def apply_style(self, style: str, only_views: bool = False, copy: bool = True, recursive: bool = True):
+        return self.mutator.apply_style(style, only_views, copy, recursive)
     
     def print_text(self):
         """Print the text of the block."""
@@ -873,6 +1028,89 @@ class Block:
     # -------------------------------------------------------------------------
 
     # -------------------------------------------------------------------------
+    # Schema Extraction
+    # -------------------------------------------------------------------------
+
+    def extract_schema(self, style: str | list[str] | None = None) -> "BlockSchema | None":
+        """
+        Extract a new BlockSchema tree containing only BlockSchema nodes.
+
+        Traverses this block's subtree and creates a new BlockSchema with
+        only BlockSchema children, preserving the schema hierarchy while
+        filtering out regular Block nodes.
+
+        Returns:
+            A new BlockSchema tree with only schema nodes, or None if no schemas found
+        """
+        from .schema import BlockSchema, BlockListSchema
+
+        # Create a schema from this block
+        if isinstance(self, BlockSchema):
+            # Already a schema - copy without children
+            new_schema = self.copy_head()
+            # Ensure xml style is present for rendering
+            if style:
+                styles = parse_style(style)
+                for style in styles:
+                    if style not in new_schema._style:
+                        new_schema._style.append(style)
+            # if "xml" not in new_schema._style:
+            #     new_schema._style.append("xml")
+        else:
+            # Regular block - don't create a schema, just collect children
+            new_schema = None
+
+        # Collect schema children
+        schema_children = []
+        for child in self.children:
+            if isinstance(child, (BlockSchema, BlockListSchema)):
+                child_schema = child.extract_schema(style=style)
+                if child_schema is not None:
+                    schema_children.append(child_schema)
+            else:
+                # For regular blocks, search their children for nested schemas
+                self._collect_nested_schemas(child, schema_children, style=style)
+
+        if new_schema is not None:
+            # Add collected children to the schema
+            for child_schema in schema_children:
+                new_schema.append_child(child_schema)
+            return new_schema
+        else:
+            # No parent schema - return based on number of children found
+            if len(schema_children) == 0:
+                return None
+            elif len(schema_children) == 1:
+                return schema_children[0]
+            else:
+                # Multiple schemas at root level - create a virtual wrapper
+                wrapper_schema = BlockSchema(
+                    style=[],  # No style - won't render tags
+                )
+                # Clear the span to make it a true wrapper (no content)
+                wrapper_schema.span = self.block_text.create_span()
+                for child_schema in schema_children:
+                    wrapper_schema.append_child(child_schema)
+                return wrapper_schema
+
+    def _collect_nested_schemas(self, block: "Block", result: list, style: str | list[str] | None = None) -> None:
+        """
+        Recursively search a Block's children for BlockSchema nodes.
+
+        Collects found BlockSchema nodes into the result list.
+        """
+        from .schema import BlockSchema, BlockListSchema
+
+        for child in block.children:
+            if isinstance(child, (BlockSchema, BlockListSchema)):
+                child_schema = child.extract_schema(style=style)
+                if child_schema is not None:
+                    result.append(child_schema)
+            else:
+                # Keep searching deeper
+                self._collect_nested_schemas(child, result, style=style)
+
+    # -------------------------------------------------------------------------
     # Debug
     # -------------------------------------------------------------------------
 
@@ -912,6 +1150,9 @@ class Block:
                 parts.append(f"content={content_text!r}")
             if postfix_text:
                 parts.append(f"postfix={postfix_text!r}")
+                
+        if self.style:
+            parts.append(f"style={self.style!r}")
 
         if self.children:
             parts.append(f"children={len(self.children)}")

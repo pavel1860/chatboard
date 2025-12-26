@@ -27,7 +27,20 @@ class Chunk:
     @property
     def is_line_end(self) -> bool:
         """True if content ends with newline."""
-        return self.content.endswith("\n")
+        return "\n" in self.content
+    
+    def isspace(self) -> bool:
+        return self.content.isspace()
+    
+    def isalpha(self) -> bool:
+        return self.content.isalpha()
+    
+    def isdigit(self) -> bool:
+        return self.content.isdigit()
+    
+    def isalnum(self) -> bool:
+        return self.content.isalnum()
+
 
     def __len__(self) -> int:
         """Length of content."""
@@ -109,9 +122,10 @@ class Span:
     def has_end_of_line(self) -> bool:
         """True if postfix ends with newline."""
         if self.postfix:
-            return self.postfix[-1].is_line_end
-        if self.content:
-            return self.content[-1].is_line_end
+            return any(c.is_line_end for c in self.postfix)
+            # return self.postfix[-1].is_line_end
+        # if self.content:
+        #     return self.content[-1].is_line_end
         return False
 
     # --- Chunk Iteration ---
