@@ -74,13 +74,45 @@ class Mutator(metaclass=MutatorMeta):
     def current_head(self) -> Span:
         if not self.body:
             return self.head
-        return self.body[-1].mutator.current_head
+        # return self.body[-1].mutator.current_head
+        return self.body[-1].mutator.block_end
     
     @property
     def block_end(self) -> Span:
         if not self.body:
             return self.head
         return self.body[-1].mutator.block_end
+    
+    
+
+    def is_head_closed(self) -> bool:
+        return self.head.has_newline()
+    
+    def is_head_open(self, chunks: list[Chunk]) -> bool:
+        return not self.head.has_newline()
+    
+    def is_last_block_open(self,  chunks: list[Chunk]) -> bool:
+        if not self.body:
+            return False
+        elif self.body[-1].has_newline():
+            return False
+        else:
+            return True
+   
+   
+    def get_appendable_target(self) -> Block | None:
+        if not self.body:
+            if self.head.has_newline():
+                return None
+            else:
+                return self.block
+        if last := self.body[-1]:
+            if last.has_newline():
+                return None
+            else:
+                return last
+        return None
+        
     
     def _spawn_block(self, chunks: list[Chunk] | None = None) -> Block:
         block = Block(chunks, block_text=self.block.block_text)        
@@ -99,12 +131,21 @@ class Mutator(metaclass=MutatorMeta):
     def commit(self, chunks: list[Chunk]):
         return self.on_text(chunks)
         
+    # def on_newline(self, chunk: Chunk):
+    #     if self.body:
+    #         # if not self.body[-1].head.has_end_of_line():
+    #         self.body[-1].head.append_postfix([chunk])
+    #     elif not self.head.has_newline():
+    #         self.head.append_postfix([chunk])
+    #     else:
+    #         block = self._spawn_block([chunk])
+    #         self.append_child(block)
+    
     def on_newline(self, chunk: Chunk):
-        if self.body:
-            # if not self.body[-1].head.has_end_of_line():
-            self.body[-1].head.append_postfix([chunk])
-        elif not self.head.has_newline():
+        if self.is_head_open([chunk]):
             self.head.append_postfix([chunk])
+        elif self.is_last_block_open([chunk]):
+            self.body[-1].head.append_postfix([chunk])
         else:
             block = self._spawn_block([chunk])
             self.append_child(block)
@@ -116,25 +157,33 @@ class Mutator(metaclass=MutatorMeta):
         return self.on_text([chunk])
     
     
-    def on_text(self, chunks: list[Chunk]):
-        if len(self.body) > 0:
-            if self.body[-1].has_newline():
-                block = self._spawn_block()
-                self.append_child(block)
-            self.body[-1].head.append_content(chunks)
-            # elif self.block.dfs(post=True, stop=lambda x: x.has_end_of_line and x.is_leaf())
+    # def on_text2(self, chunks: list[Chunk]):
+    #     if len(self.body) > 0:
+    #         if self.body[-1].has_newline():
+    #             block = self._spawn_block()
+    #             self.append_child(block)
+    #         self.body[-1].head.append_content(chunks)
+    #         # elif self.block.dfs(post=True, stop=lambda x: x.has_end_of_line and x.is_leaf())
             
-            return
-        if self.head.has_newline():
-            block = self._spawn_block(chunks)
-            self.append_child(block)
-            return
-        else:
-            self.head.append_content(chunks)
+    #         return
+    #     if self.head.has_newline():
+    #         block = self._spawn_block(chunks)
+    #         self.append_child(block)
+    #         return
+    #     else:
+    #         self.head.append_content(chunks)
         
             
             
-            
+    def on_text(self, chunks: list[Chunk]):
+        if self.is_head_open(chunks):
+            self.head.append_content(chunks)
+        elif self.is_last_block_open(chunks):
+            self.body[-1].head.append_content(chunks)
+        else:
+            block = self._spawn_block(chunks)
+            self.append_child(block)
+        
     
     
         
@@ -741,6 +790,7 @@ class Block:
         
         # prefix, item, postfix = next(((chunks[:i], chunks[i], chunks[i+1:]) for i in range(len(chunks)) if not chunks[i].is_text))
         text_chunks = []
+        # last_idx = 0
         last_idx = -1
         for i in range(len(chunks)):
             if not chunks[i].is_text:
@@ -757,7 +807,9 @@ class Block:
                 else:
                     self.mutator.on_symbol(sep)
         else:
+            # if last_idx < len(chunks):
             if last_idx < len(chunks) - 1:
+                last_idx = max(last_idx, 0)
                 text_chunks = chunks[last_idx:]
                 self.mutator.on_text(text_chunks)
 
@@ -815,6 +867,21 @@ class Block:
         # if self.span is not None:
         #     return self.span.has_end_of_line()
         return self.head.has_newline()
+    
+    
+    
+    def indent(self, spaces: int = 2):        
+        if not self.is_wrapper:            
+            spaces_chunk = Chunk(content=" " * spaces)            
+            self.mutator.head.prepend_prefix([spaces_chunk])
+        for child in self.children:
+            child.indent(spaces)
+        return self
+    
+    def indent_body(self, spaces: int = 2):
+        for child in self.children:
+            child.indent(spaces)
+        return self
     
     
     # def append_child(self, child: ContentType) -> Block:

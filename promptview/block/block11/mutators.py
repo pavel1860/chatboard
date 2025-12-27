@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Generator
 
-from .span import Span, Chunk, split_chunks
+from .span import Span, Chunk, chunks_contain, split_chunks
 from .block import Block, Mutator, ContentType
 
 if TYPE_CHECKING:
@@ -31,6 +31,18 @@ class XmlMutator(Mutator):
     def block_end(self) -> Span:
         return self.block.children[1].span
     
+    
+    def is_head_open(self, chunks: list[Chunk]) -> bool:
+        if self.block.children[0].children:
+            return False
+        if chunks_contain(self.block.children[0].span.postfix, ">"):
+            if all(chunk.isspace() or chunk.is_line_end for chunk in chunks):
+                return True
+            else:
+                return False
+        else:
+            return True
+    
     def render(self, block: Block) -> Block:
         with Block() as xml_blk:
             with xml_blk(block.content, tags=["opening-tag"]) as content:
@@ -38,6 +50,7 @@ class XmlMutator(Mutator):
                 content.prepend_postfix(">")    
                 for child in block.body:
                     content.append_child(child)
+                content.indent_body()
             with xml_blk(block.content, tags=["closing-tag"]) as postfix:
                 postfix.append_prefix("</")
                 postfix.prepend_postfix(">")
@@ -65,11 +78,18 @@ class XmlMutator(Mutator):
     def commit(self, chunks: list[Chunk]) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "<")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
+        if self.is_last_block_open(chunks):
+            self.body[-1].add_newline()
         with self.block as blk:
             with blk(content_chunks, tags=["opening-tag"]) as end_tag:
                 end_tag.append_prefix(prev_chunks + start_chunk)
                 end_tag.append_postfix(end_chunk + post_chunks)
         return blk
+    
+    
+    
+
+        
     
     # def commit(self, content: ContentType) -> Block:
     #     self.block.append_child(content)

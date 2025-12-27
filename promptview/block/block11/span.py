@@ -12,6 +12,23 @@ def _generate_id() -> str:
     return uuid4().hex[:8]
 
 
+def chunks_contain(chunks: list[Chunk], s: str) -> bool:
+    """
+    Check if a string is present in the chunks (may span multiple chunks).
+
+    Args:
+        chunks: List of Chunk objects
+        s: String to search for
+
+    Returns:
+        True if string is found, False otherwise
+    """
+    if not chunks or not s:
+        return False
+    full_text = "".join(c.content for c in chunks)
+    return s in full_text
+
+
 def split_chunks(chunks: list[Chunk], sep: str) -> tuple[list[Chunk], list[Chunk], list[Chunk]]:
     """
     Split chunks on a separator that may span multiple chunks.
