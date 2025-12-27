@@ -12,6 +12,88 @@ def _generate_id() -> str:
     return uuid4().hex[:8]
 
 
+def split_chunks(chunks: list[Chunk], sep: str) -> tuple[list[Chunk], list[Chunk], list[Chunk]]:
+    """
+    Split chunks on a separator that may span multiple chunks.
+
+    Args:
+        chunks: List of Chunk objects
+        sep: Separator string to split on
+
+    Returns: (before, separator, after)
+        - before: Chunk objects before the separator
+        - separator: Chunk objects that make up the separator (empty if not found)
+        - after: Chunk objects after the separator
+
+    Note: If separator falls mid-chunk, that chunk is split using Chunk.split()
+    """
+    if not chunks or not sep:
+        return list(chunks), [], []
+
+    # Build full text
+    full_text = "".join(c.content for c in chunks)
+
+    # Find separator
+    sep_idx = full_text.find(sep)
+    if sep_idx == -1:
+        return list(chunks), [], []
+
+    sep_end_idx = sep_idx + len(sep)
+
+    # Track position as we iterate
+    pos = 0
+    before: list[Chunk] = []
+    separator: list[Chunk] = []
+    after: list[Chunk] = []
+
+    for chunk in chunks:
+        chunk_start = pos
+        chunk_end = pos + len(chunk.content)
+
+        if chunk_end <= sep_idx:
+            # Whole chunk is before separator
+            before.append(chunk)
+        elif chunk_start >= sep_end_idx:
+            # Whole chunk is after separator
+            after.append(chunk)
+        elif chunk_start >= sep_idx and chunk_end <= sep_end_idx:
+            # Whole chunk is within separator
+            separator.append(chunk)
+        else:
+            # Chunk overlaps with separator boundary
+            if chunk_start < sep_idx:
+                # Chunk starts before separator
+                split_offset = sep_idx - chunk_start
+                left_chunk, right_chunk = chunk.split(split_offset)
+                if left_chunk.content:
+                    before.append(left_chunk)
+
+                if chunk_end <= sep_end_idx:
+                    # Rest of chunk is part of separator
+                    if right_chunk.content:
+                        separator.append(right_chunk)
+                else:
+                    # Separator ends within this chunk too
+                    sep_part_len = sep_end_idx - sep_idx
+                    sep_chunk, after_chunk = right_chunk.split(sep_part_len)
+                    if sep_chunk.content:
+                        separator.append(sep_chunk)
+                    if after_chunk.content:
+                        after.append(after_chunk)
+            else:
+                # Chunk starts within separator but extends past it
+                sep_part_len = sep_end_idx - chunk_start
+                sep_chunk, after_chunk = chunk.split(sep_part_len)
+                if sep_chunk.content:
+                    separator.append(sep_chunk)
+                if after_chunk.content:
+                    after.append(after_chunk)
+
+        pos = chunk_end
+
+    return before, separator, after
+
+
 @dataclass
 class Chunk:
     """

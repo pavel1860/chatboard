@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Generator
 
-from .span import Span, Chunk
+from .span import Span, Chunk, split_chunks
 from .block import Block, Mutator, ContentType
 
 if TYPE_CHECKING:
@@ -14,24 +14,30 @@ class XmlMutator(Mutator):
     styles = ["xml"]
     
     
-    def get_body(self) -> list[Block]:
-        # return self.block.children[1].children
+    @property
+    def head(self) -> Span:
+        return self.block.children[0].span
+    
+    @property
+    def body(self) -> list[Block]:        
         return self.block.children[0].children
     
-    def get_content(self) -> str:
-        return self.block.children[0].content
     
-    def get_head(self) -> Span | None:
-        return self.block.children[0].head
+    @property
+    def content(self) -> str:
+        return self.block.children[0].span.content_text
+    
+    @property
+    def block_end(self) -> Span:
+        return self.block.children[1].span
     
     def render(self, block: Block) -> Block:
         with Block() as xml_blk:
             with xml_blk(block.content, tags=["opening-tag"]) as content:
                 content.append_prefix("<")
                 content.prepend_postfix(">")    
-            with xml_blk() as body:
                 for child in block.body:
-                    body.append_child(child)
+                    content.append_child(child)
             with xml_blk(block.content, tags=["closing-tag"]) as postfix:
                 postfix.append_prefix("</")
                 postfix.prepend_postfix(">")
@@ -45,26 +51,44 @@ class XmlMutator(Mutator):
             # with block() as body:
             #     pass
         return block
-            
-    
-    def commit(self, content: ContentType) -> Block:
-        self.block.append_child(content)
-        return self.block
     
     
-    def on_text(self, block: Block, chunks: list[Chunk]) -> Block:
-        pass
+    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None) -> Block:
+        prev_chunks, start_chunk, post = split_chunks(chunks, "<")
+        content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
+        with Block() as xml_blk:
+            with xml_blk(content_chunks, tags=["opening-tag"]) as content:
+                content.append_prefix(prev_chunks + start_chunk)
+                content.append_postfix(end_chunk + post_chunks)
+        return xml_blk
     
-    # def on_symbol(self, block: Block, chunks: list[Chunk]) -> Block:
+    def commit(self, chunks: list[Chunk]) -> Block:
+        prev_chunks, start_chunk, post = split_chunks(chunks, "<")
+        content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
+        with self.block as blk:
+            with blk(content_chunks, tags=["opening-tag"]) as end_tag:
+                end_tag.append_prefix(prev_chunks + start_chunk)
+                end_tag.append_postfix(end_chunk + post_chunks)
+        return blk
+    
+    # def commit(self, content: ContentType) -> Block:
+    #     self.block.append_child(content)
+    #     return self.block
+    
+    
+    # def on_text(self, block: Block, chunks: list[Chunk]) -> Block:
     #     pass
+    
+    # # def on_symbol(self, block: Block, chunks: list[Chunk]) -> Block:
+    # #     pass
         
-    # def on_start(self, block: Block, chunks: list[Chunk]) -> Block:
+    # # def on_start(self, block: Block, chunks: list[Chunk]) -> Block:
+    # #     pass
+    # def on_chunks(self, block: Block, chunks: list[Chunk]) -> Block:
     #     pass
-    def on_chunks(self, block: Block, chunks: list[Chunk]) -> Block:
-        pass
     
-    def on_end(self, block: Block, chunks: list[Chunk]) -> Block:
-        pass
+    # def on_end(self, block: Block, chunks: list[Chunk]) -> Block:
+    #     pass
     
     
     # def parse(self, prefix: list[Chunk], content: list[Chunk], postfix: list[Chunk]) -> Generator[list[Chunk], Block, None]:

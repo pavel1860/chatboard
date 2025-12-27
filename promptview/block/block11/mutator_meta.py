@@ -21,10 +21,15 @@ TargetType = Literal["content", "block", "children", "tree", "subtree"]
     
 @dataclass
 class MutatorConfig:
-    mutator: "Type[Mutator] | None" = None    
+    mutator: "Type[Mutator]"
     hidden: "bool" = False
     is_wrapper: "bool" = False
     
+    
+    def __post_init__(self):
+        from .block import Mutator
+        if self.mutator is None:
+            self.mutator = Mutator
     
     def get(self, key: str, default: "Type[MutatorConfig] | None" = None) -> "Type[MutatorConfig] | None":
         return getattr(self, key)
@@ -68,12 +73,13 @@ class MutatorMeta(type):
     @classmethod
     def resolve(
         cls, 
-        styles: list[str], 
-        targets: set[TargetType] | None = None,
+        styles: list[str] | None = None, 
     ) -> "MutatorConfig":
         from .block import Mutator
         current = style_registry_ctx.get()
         mutator_cfg = MutatorConfig(mutator=Mutator)
+        if styles is None:
+            return mutator_cfg
         for style in styles:
             if style == "hidden":
                 mutator_cfg.hidden = True                

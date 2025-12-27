@@ -93,7 +93,60 @@ class BlockSchema(Block):
     def is_wrapper(self) -> bool:
         return self.name is None
 
+
     def instantiate(
+        self,
+        content: ContentType | dict | BaseModel | None = None,
+        name: ContentType | None = None,
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+        extract_schema: bool = True,
+    ) -> Block:        
+        from .mutator_meta import MutatorMeta
+        from .span import Chunk
+        
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        
+        if isinstance(content, dict):
+            pass
+        elif isinstance(content, BaseModel):
+            pass
+        else:            
+            config = MutatorMeta.resolve()
+            mutator = config.mutator()            
+            name_chunks = [Chunk(self.name)] if self.name else []
+            block = mutator.call_init(name_chunks, tags=tags, role=role, style=style)
+            if content is not None:
+                chunks = mutator.promote(content)
+                # block.append(chunks)
+                block /= chunks
+            return block
+        
+    def instantiate_partial(
+        self,
+        content: ContentType | None = None,
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+    ) -> Block:
+        from .mutator_meta import MutatorMeta
+        
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        
+        config = MutatorMeta.resolve(style)
+        mutator = config.mutator()            
+        chunks = mutator.promote(content) if content is not None else []
+        block = mutator.call_init(chunks, tags=tags, role=role, style=style)
+        return block
+
+        
+        
+    def instantiate2(
         self,
         content: ContentType | dict | BaseModel | None = None,
         name: ContentType | None = None,
@@ -124,8 +177,7 @@ class BlockSchema(Block):
             return schema.instantiate(content, name=name, style=style, role=role, tags=tags, extract_schema=False)
         
         role = UnsetType.get_value(role, self.role)
-        tags = UnsetType.get_value(tags, self.tags)
-        
+        tags = UnsetType.get_value(tags, self.tags)        
         style = UnsetType.get_value(style, self.style)
 
         if isinstance(content, dict):
