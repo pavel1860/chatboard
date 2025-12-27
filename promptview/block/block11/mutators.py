@@ -43,7 +43,13 @@ class XmlMutator(Mutator):
         if self.block.children[0].children:
             return False
         if chunks_contain(self.block.children[0].span.postfix, ">"):
-            if all(chunk.isspace() or chunk.is_line_end for chunk in chunks):
+            # if all(chunk.isspace() or chunk.is_line_end for chunk in chunks):
+            #     return True
+            if all(chunk.isspace() for chunk in chunks):
+                if self.block.children[0].has_newline():
+                    return False                
+                return True
+            if all(chunk.is_line_end for chunk in chunks):
                 return True
             else:
                 return False
@@ -73,10 +79,10 @@ class XmlMutator(Mutator):
         return block
     
     
-    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None) -> Block:
+    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "<")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-        with Block() as xml_blk:
+        with Block(_auto_handle=_auto_handle) as xml_blk:
             with xml_blk(content_chunks, tags=["opening-tag"]) as content:
                 content.append_prefix(prev_chunks + start_chunk)
                 content.append_postfix(end_chunk + post_chunks)
@@ -91,7 +97,7 @@ class XmlMutator(Mutator):
         with Block(content_chunks, tags=["closing-tag"]) as end_tag:
             end_tag.append_prefix(prev_chunks + start_chunk)
             end_tag.append_postfix(end_chunk + post_chunks)
-        self.block.mutator.append_child(end_tag)
+        self.block.mutator.append_child(end_tag, to_body=False)
         return end_tag
     
     

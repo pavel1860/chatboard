@@ -116,15 +116,16 @@ class Mutator(metaclass=MutatorMeta):
         
     
     def _spawn_block(self, chunks: list[Chunk] | None = None) -> Block:
-        block = Block(chunks, block_text=self.block.block_text)        
+        block = Block(chunks, block_text=self.block.block_text, _auto_handle=self.block._auto_handle)        
         return block
         
-    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None):
-        block = Block(chunks, tags=tags, role=role, style=style)        
+    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True):
+        block = Block(chunks, tags=tags, role=role, style=style, _auto_handle=_auto_handle)        
         return block
     
-    def call_init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None):
-        block = self.init(chunks, tags, role, style)
+    def call_init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True):
+        block = self.init(chunks, tags, role, style, _auto_handle)
+        block._auto_handle = _auto_handle
         block.mutator = self
         self.block = block
         return block
@@ -345,10 +346,13 @@ class Mutator(metaclass=MutatorMeta):
     #         target_block.mutator.append_content(target_chunks)
     #     return self
 
-    def append_child(self, child: Block) -> Mutator:
+    def append_child(self, child: Block, to_body: bool = True) -> Mutator:
         """Append a child block to the body."""        
         self._attach_child(child)
-        self.body.append(child)
+        if to_body:
+            self.body.append(child)
+        else:
+            self.block.children.append(child)
         return self
 
     def prepend_child(self, child: Block) -> Mutator:
@@ -448,8 +452,8 @@ class Mutator(metaclass=MutatorMeta):
         Returns:
             The (possibly transformed) block with this mutator attached.
         """
-        if not block.head.has_newline():
-            block.head.append_postfix([Chunk(content="\n")])
+        # if not block.head.has_newline():
+            # block.head.append_postfix([Chunk(content="\n")])
         return block
 
     # -------------------------------------------------------------------------
@@ -489,6 +493,7 @@ class Mutator(metaclass=MutatorMeta):
             role=role,
             tags=tags,
             style=style,
+            _auto_handle=self.block._auto_handle,
         )
 
         # Recursively instantiate child schemas
@@ -539,7 +544,7 @@ class Block:
     The Mutator provides indirection for accessing/mutating fields.
     """
 
-    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style"]
+    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style", "_auto_handle"]
 
     def __init__(
         self,
@@ -553,6 +558,7 @@ class Block:
         # Internal: for factory methods
         _span: Span | None = None,
         _children: list["Block"] | None = None,
+        _auto_handle: bool = True,
     ):
         """
         Create a block.
@@ -574,6 +580,7 @@ class Block:
         self.role = role
         self.tags = tags or []
         self._style = parse_style(style)
+        self._auto_handle = _auto_handle
 
         # Set up mutator first (needed for promote)
         if mutator is None:
@@ -699,12 +706,13 @@ class Block:
         if isinstance(content, Block):
             block = content
         else:
-            block = Block(content, role=role, tags=tags, style=style)        
+            block = Block(content, role=role, tags=tags, style=style, _auto_handle=self._auto_handle)        
         # self.mutator.auto_handle_newline()
-        curr_head = self.mutator.current_head
-        if not curr_head.has_newline() and not curr_head.is_empty:
-            self.mutator.current_head.add_newline()
-        self.head.has_newline()
+        if self._auto_handle:
+            curr_head = self.mutator.current_head
+            if not curr_head.has_newline() and not curr_head.is_empty:
+                self.mutator.current_head.add_newline()
+        # self.head.has_newline()
         self.mutator.append_child(block)
         
         return block
@@ -719,7 +727,7 @@ class Block:
             tags=tags,
             attrs=attrs,
             # style=["xml"] if style is None and name is not None else parse_style(style),
-            style=style,
+            style=style,            
         )
         return schema_block
 
@@ -744,9 +752,10 @@ class Block:
             style=style,
             is_required=is_required,
         )
-        curr_head = self.mutator.current_head
-        if not curr_head.has_newline() and not curr_head.is_empty:
-            self.mutator.current_head.add_newline()
+        if self._auto_handle:
+            curr_head = self.mutator.current_head
+            if not curr_head.has_newline() and not curr_head.is_empty:
+                self.mutator.current_head.add_newline()
         self.mutator.append_child(schema_block)
         return schema_block
     
@@ -775,9 +784,10 @@ class Block:
         )
         # if not self.mutator.current_head.has_newline():
             # self.mutator.current_head.add_newline()
-        curr_head = self.mutator.current_head
-        if not curr_head.has_newline() and not curr_head.is_empty:
-            self.mutator.current_head.add_newline()
+        if self._auto_handle:
+            curr_head = self.mutator.current_head
+            if not curr_head.has_newline() and not curr_head.is_empty:
+                self.mutator.current_head.add_newline()
         self.mutator.append_child(schema_block)
         return schema_block
 
@@ -909,9 +919,10 @@ class Block:
     def append_child(self, child: Block | ContentType) -> Block:
         """Append child to body.""" 
         # curr_head = self.mutator.current_head
-        curr_head = self.mutator.block_end
-        if not curr_head.has_newline() and not curr_head.is_empty:
-            curr_head.add_newline()    
+        if self._auto_handle:
+            curr_head = self.mutator.block_end
+            if not curr_head.has_newline() and not curr_head.is_empty:
+                curr_head.add_newline()    
         if isinstance(child, Block):
             self.mutator.append_child(child)
         else:
@@ -949,7 +960,7 @@ class Block:
     # -------------------------------------------------------------------------
     def __itruediv__(self, other: Block | ContentType | tuple):
         curr_head = self.mutator.current_head        
-        if not curr_head.has_newline():
+        if self._auto_handle and not curr_head.has_newline():
             self.append("\n")
         if isinstance(other, tuple):
             if len(other) == 0:

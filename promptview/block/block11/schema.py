@@ -141,7 +141,7 @@ class BlockSchema(Block):
         config = MutatorMeta.resolve(style)
         mutator = config.mutator()            
         chunks = mutator.promote(content) if content is not None else []
-        block = mutator.call_init(chunks, tags=tags, role=role, style=style)
+        block = mutator.call_init(chunks, tags=tags, role=role, style=style, _auto_handle=False)
         return block
 
         
