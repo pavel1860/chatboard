@@ -111,7 +111,7 @@ class BlockSchema(Block):
         style = UnsetType.get_value(style, self.style)
         
         if isinstance(content, dict):
-            pass
+            return self.inst_from_dict(content, style=style, role=role, tags=tags)
         elif isinstance(content, BaseModel):
             pass
         else:            

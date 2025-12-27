@@ -77,15 +77,16 @@ class XmlMutator(Mutator):
         return xml_blk
     
     def commit(self, chunks: list[Chunk]) -> Block:
-        prev_chunks, start_chunk, post = split_chunks(chunks, "<")
+        prev_chunks, start_chunk, post = split_chunks(chunks, "</")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
         if self.is_last_block_open(chunks):
             self.body[-1].add_newline()
-        with self.block as blk:
-            with blk(content_chunks, tags=["opening-tag"]) as end_tag:
-                end_tag.append_prefix(prev_chunks + start_chunk)
-                end_tag.append_postfix(end_chunk + post_chunks)
-        return blk
+        
+        with Block(content_chunks, tags=["closing-tag"]) as end_tag:
+            end_tag.append_prefix(prev_chunks + start_chunk)
+            end_tag.append_postfix(end_chunk + post_chunks)
+        self.block.mutator.append_child(end_tag)
+        return end_tag
     
     
 

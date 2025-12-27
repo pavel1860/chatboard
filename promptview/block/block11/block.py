@@ -630,6 +630,7 @@ class Block:
         """        
         chunks = self.mutator.promote(content) if content is not None else []
         self.mutator.commit(chunks)
+        self.mutator._did_commit = True
         return self
 
     # -------------------------------------------------------------------------

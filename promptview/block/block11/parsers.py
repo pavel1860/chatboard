@@ -70,18 +70,25 @@ class XmlParser(Process):
         # Output queue for blocks
         self._output_queue: list[Block] = []
 
-        # Synthetic root tag handling
+        # Synthetic root tag handling - always use synthetic root for consistent parsing
         self._root_tag = "_root_tag_"
-        self._has_synthetic_root = False
+        self._has_synthetic_root = True
 
-        # Auto-add synthetic root if schema is wrapper (no content)
-        if schema.span is None or schema.span.is_empty:
-            self.feed_str(f"<{self._root_tag}>")
-            self._has_synthetic_root = True
+        # Create wrapper schema that contains the real schema as child
+        from .schema import BlockSchema
+        self._wrapper_schema = BlockSchema(name=self._root_tag, style=[])
+        self._wrapper_schema.children.append(self.schema)
+
+        self.feed_str(f"<{self._root_tag}>")
 
     @property
     def result(self) -> Block | None:
-        """Get the built block tree."""
+        """Get the built block tree, unwrapping synthetic root if needed."""
+        if self._root is None:
+            return None
+        # Unwrap synthetic root if it has exactly one child
+        if self._has_synthetic_root and len(self._root.body) == 1:
+            return self._root.body[0]
         return self._root
 
     @property
@@ -275,11 +282,11 @@ class XmlParser(Process):
 
     def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
         """Handle opening tag - instantiate block from schema."""
-        # Skip synthetic root
+        # Handle synthetic root
         if name == self._root_tag:
-            # Initialize root block
-            self._root = self.schema.instantiate()
-            self._stack.append((self.schema, self._root))
+            # Initialize root block with wrapper schema
+            self._root = self._wrapper_schema.instantiate_partial()
+            self._stack.append((self._wrapper_schema, self._root))
             return
 
         # Find child schema
@@ -288,7 +295,7 @@ class XmlParser(Process):
             raise ParserError(f"Unknown tag '{name}' - no matching schema found")
 
         # Instantiate block from schema
-        child_block = child_schema.instantiate(name=chunks, extract_schema=False)
+        child_block = child_schema.instantiate_partial(chunks)
 
         # Set attributes if any
         if attrs and hasattr(child_block, 'attrs'):
@@ -320,16 +327,17 @@ class XmlParser(Process):
             raise ParserError(f"Mismatched closing tag: expected '{schema.name}', got '{name}'")
 
         # Commit could be called here for validation
-        block.mutator.commit(chunks)
+        block.commit(chunks)
 
     def _handle_chardata(self, chunks: list[Chunk]):
         """Handle character data - append to current block."""
-        if not self.current_block:
+        if self.current_block is None:
             return
 
+        self.current_block.append(chunks)
         # Append content from chunks
-        for chunk in chunks:
-            # Skip whitespace-only content between tags
-            self.current_block.append(chunk)
+        # for chunk in chunks:
+        #     # Skip whitespace-only content between tags
+        #     self.current_block.append(chunk)
             # if chunk.content.strip():
                 # self.current_block.append_content(chunk.content)
