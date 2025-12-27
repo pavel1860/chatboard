@@ -97,7 +97,7 @@ class TestBlockContentMutation:
         block = Block("text")
         block.add_newline()
         assert block.span.postfix_text == "\n"
-        assert block.has_end_of_line() is True
+        assert block.has_newline() is True
 
     def test_method_chaining(self):
         block = (
@@ -292,7 +292,7 @@ class TestBlockOperators:
         block /= "Third"
 
         # First should have newline added before Second was appended
-        assert block.span.has_end_of_line() is True
+        assert block.span.has_newline() is True
 
     def test_context_manager(self):
         with Block("Header") as block:

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generator
 
 from .span import Span, Chunk
 from .block import Block, Mutator, ContentType
@@ -50,3 +50,37 @@ class XmlMutator(Mutator):
     def commit(self, content: ContentType) -> Block:
         self.block.append_child(content)
         return self.block
+    
+    
+    def on_text(self, block: Block, chunks: list[Chunk]) -> Block:
+        pass
+    
+    # def on_symbol(self, block: Block, chunks: list[Chunk]) -> Block:
+    #     pass
+        
+    # def on_start(self, block: Block, chunks: list[Chunk]) -> Block:
+    #     pass
+    def on_chunks(self, block: Block, chunks: list[Chunk]) -> Block:
+        pass
+    
+    def on_end(self, block: Block, chunks: list[Chunk]) -> Block:
+        pass
+    
+    
+    # def parse(self, prefix: list[Chunk], content: list[Chunk], postfix: list[Chunk]) -> Generator[list[Chunk], Block, None]:
+    #     # self.block[0]
+    #     start_tag = False
+    #     end_tag = False
+    #     with Block(prefix=prefix, content=content, postfix=postfix) as block:
+    #         chunks = yield block
+    #         for chunk in chunks:
+    #             block += chunk
+    #             if not start_tag:                    
+    #                 if chunk.is_line_end:
+    #                     start_tag = True
+    #             else:
+    #                 if chunk.isspace():
+                        
+                    
+            
+            

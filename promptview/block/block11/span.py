@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterator, Literal
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -21,9 +21,15 @@ class Chunk:
     metadata like logprobs from LLM responses.
     """
     content: str
+    is_text: bool = False
     id: str = field(default_factory=_generate_id)
     logprob: float | None = None
-
+    
+    
+    
+    def __post_init__(self):
+        self.is_text = not (self.is_line_end or self.isspace())
+        
     @property
     def is_line_end(self) -> bool:
         """True if content ends with newline."""
@@ -40,6 +46,10 @@ class Chunk:
     
     def isalnum(self) -> bool:
         return self.content.isalnum()
+    
+    
+    def __contains__(self, item: str) -> bool:
+        return item in self.content
 
 
     def __len__(self) -> int:
@@ -119,7 +129,7 @@ class Span:
         """True if all three lists are empty."""
         return not self.prefix and not self.content and not self.postfix
 
-    def has_end_of_line(self) -> bool:
+    def has_newline(self) -> bool:
         """True if postfix ends with newline."""
         if self.postfix:
             return any(c.is_line_end for c in self.postfix)
@@ -127,6 +137,11 @@ class Span:
         # if self.content:
         #     return self.content[-1].is_line_end
         return False
+    
+    def add_newline(self) -> Span:
+        """Add newline to postfix."""
+        self.postfix.append(Chunk(content="\n"))
+        return self
 
     # --- Chunk Iteration ---
 

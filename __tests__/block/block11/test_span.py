@@ -71,15 +71,15 @@ class TestSpan:
             content=[Chunk("Hello")],
             postfix=[Chunk("\n")],
         )
-        assert span.has_end_of_line() is True
+        assert span.has_newline() is True
 
     def test_span_has_end_of_line_content(self):
         span = Span(content=[Chunk("Hello\n")])
-        assert span.has_end_of_line() is True
+        assert span.has_newline() is True
 
     def test_span_no_end_of_line(self):
         span = Span(content=[Chunk("Hello")])
-        assert span.has_end_of_line() is False
+        assert span.has_newline() is False
 
     def test_span_chunks_iteration(self):
         span = Span(
@@ -117,7 +117,7 @@ class TestSpan:
         span = Span(content=[Chunk("text")])
         span.append_postfix([Chunk("\n")])
         assert span.postfix_text == "\n"
-        assert span.has_end_of_line() is True
+        assert span.has_newline() is True
 
     def test_span_prepend_postfix(self):
         span = Span(postfix=[Chunk("\n")])
