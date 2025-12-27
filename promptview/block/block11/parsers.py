@@ -4,11 +4,12 @@ from xml.parsers import expat
 
 
 from .block import Block
+from .schema import BlockListSchema, BlockList
 from .span import Chunk
 from ...prompt.fbp_process import Process
 
 if TYPE_CHECKING:
-    from .schema import BlockSchema
+    from .schema import BlockSchema, BlockListSchema
 
 
 class ParserError(Exception):
@@ -75,9 +76,15 @@ class XmlParser(Process):
         self._has_synthetic_root = True
 
         # Create wrapper schema that contains the real schema as child
+        # But if schema is already a wrapper (no name), use it directly
         from .schema import BlockSchema
-        self._wrapper_schema = BlockSchema(name=self._root_tag, style=[])
-        self._wrapper_schema.children.append(self.schema)
+        if self.schema.name is None or (self.schema.span and self.schema.span.is_empty):
+            # Schema is already a wrapper - use it as the root schema
+            self._wrapper_schema = self.schema
+        else:
+            # Schema has content - wrap it
+            self._wrapper_schema = BlockSchema(name=self._root_tag, style=[])
+            self._wrapper_schema.children.append(self.schema)
 
         self.feed_str(f"<{self._root_tag}>")
 
@@ -279,21 +286,51 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Block building
     # -------------------------------------------------------------------------
+    
+    def _push_block(self, schema: BlockSchema, block: Block):
+        # Append to current block
+        if self.current_block is not None:
+            self.current_block.append_child(block)
+        else:
+            self._root = block
+
+        # Push to stack
+        self._stack.append((schema, block))
+        
+    def _is_top_list_schema(self) -> bool:
+        if not self._stack:
+            return False
+        return isinstance(self._stack[-1][0], BlockListSchema)
 
     def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
         """Handle opening tag - instantiate block from schema."""
+
         # Handle synthetic root
         if name == self._root_tag:
             # Initialize root block with wrapper schema
             self._root = self._wrapper_schema.instantiate_partial()
             self._stack.append((self._wrapper_schema, self._root))
             return
+        
+        if self._is_top_list_schema():
+            name = attrs["name"]
 
         # Find child schema
         child_schema = self._get_child_schema(name)
         if child_schema is None:
             raise ParserError(f"Unknown tag '{name}' - no matching schema found")
-
+        
+        
+        if isinstance(child_schema, BlockListSchema):
+            if self._stack[-1][0] != child_schema:
+                child_block = child_schema.instantiate(chunks)
+                self._push_block(child_schema, child_block)
+            name = attrs["name"]
+            child_schema = self._get_child_schema(name)
+            if child_schema is None:
+                raise ParserError(f"Unknown tag '{name}' - no matching schema found")
+            
+        
         # Instantiate block from schema
         child_block = child_schema.instantiate_partial(chunks)
 
@@ -302,13 +339,7 @@ class XmlParser(Process):
             child_block.attrs = attrs
 
         # Append to current block
-        if self.current_block is not None:
-            self.current_block.append_child(child_block)
-        else:
-            self._root = child_block
-
-        # Push to stack
-        self._stack.append((child_schema, child_block))
+        self._push_block(child_schema, child_block)
 
     def _handle_end(self, name: str, chunks: list[Chunk]):
         """Handle closing tag - commit and pop stack."""

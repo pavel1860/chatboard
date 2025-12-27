@@ -30,6 +30,12 @@ class XmlMutator(Mutator):
     
     @property
     def block_end(self) -> Span:
+        if len(self.block.children) == 1:
+            # return self.body[-1].span
+            if len(self.block.children[0].children) == 0:
+                return self.block.children[0].span
+            else:
+                return self.block.children[0].children[-1].span
         return self.block.children[1].span
     
     
