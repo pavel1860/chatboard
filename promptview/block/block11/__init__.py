@@ -4,6 +4,7 @@ from .block import Block, Mutator, ContentType, BaseContentTypes
 from .schema import BlockSchema, BlockList, BlockListSchema
 from .mutators import XmlMutator
 from .parsers import XmlParser, ParserError
+from .path import Path, compute_path
 
 __all__ = [
     "Chunk",
@@ -19,4 +20,6 @@ __all__ = [
     "XmlMutator",
     "XmlParser",
     "ParserError",
+    "Path",
+    "compute_path",
 ]

@@ -11,11 +11,12 @@ def render(block: Block, depth: int = 0) -> Block:
     config = MutatorMeta.resolve(block.style)
     
     new_block = block.copy_head()
+    path = block.path
     for child in block.children:
         child = render(child, depth + 1)
         new_block.append_child(child)
         # new_block.mutator.append_child(child)
         # new_block /= child
     mutator = config.mutator()
-    tran_block = mutator.render_and_set(new_block)
+    tran_block = mutator.render_and_set(new_block, path)
     return tran_block

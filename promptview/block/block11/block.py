@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Iterator, Callable, Type
 
 from .span import Span, Chunk
 from .mutator_meta import MutatorMeta
+from .path import Path, compute_path
 if TYPE_CHECKING:
     from .block_text import BlockText
     from .schema import BlockSchema, BlockListSchema
@@ -429,15 +430,15 @@ class Mutator(metaclass=MutatorMeta):
             block_copy.style.extend(styles)
         return block_copy
     
-    def render_and_set(self, block: Block) -> Block:
+    def render_and_set(self, block: Block, path: Path) -> Block:
         """Render the block and set the mutator."""
         self._is_rendered = True
-        block = self.render(block)
+        block = self.render(block, path)
         self.block = block
         block.mutator = self
         return block
 
-    def render(self, block: Block) -> Block:
+    def render(self, block: Block, path: Path) -> Block:
         """
         Transform the block structure.
 
@@ -995,6 +996,19 @@ class Block:
     # -------------------------------------------------------------------------
     # Tree Navigation
     # -------------------------------------------------------------------------
+
+    @property
+    def path(self) -> Path:
+        """
+        Compute the path for this block in the logical tree.
+
+        Uses mutator.body for navigation, making style wrappers
+        (like XML tags) transparent to the path.
+
+        Returns:
+            Path representing this block's position
+        """
+        return compute_path(self)
 
     def is_leaf(self) -> bool:
         """True if block has no children."""

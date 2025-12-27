@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Generator
 
 from .span import Span, Chunk, chunks_contain, split_chunks
 from .block import Block, Mutator, ContentType
+from .path import Path
 
 if TYPE_CHECKING:
     pass
@@ -43,7 +44,7 @@ class XmlMutator(Mutator):
         else:
             return True
     
-    def render(self, block: Block) -> Block:
+    def render(self, block: Block, path: Path) -> Block:
         with Block() as xml_blk:
             with xml_blk(block.content, tags=["opening-tag"]) as content:
                 content.append_prefix("<")
@@ -87,7 +88,18 @@ class XmlMutator(Mutator):
         return blk
     
     
+
+
+
+class MarkdownMutator(Mutator):
+    styles = ["markdown", "md"]
     
+    
+    def render(self, block: Block, path: Path) -> Block:
+        block.prepend_prefix("#" * (path.depth + 1) + " ")
+        return block
+        
+                
 
         
     
