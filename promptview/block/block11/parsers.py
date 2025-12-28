@@ -70,6 +70,11 @@ class XmlParser(Process):
 
         # Pending event for deferred processing
         self._pending: tuple[str, Any, int] | None = None
+        
+        self._pending_event: tuple[Literal["start", "end"], Any, list[BlockChunk]] | None = None
+        self._pending_prefix: list[BlockChunk] = []
+        self._pending_has_ending = False
+        self._in_text_chunks = False
 
         # Output queue for blocks
         self._output_queue: list[ParserEvent] = []
@@ -308,6 +313,65 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Event handling
     # -------------------------------------------------------------------------
+    
+    def _stage_event(self, event_type: Literal["start", "end", "chardata"], event_data: tuple[str, dict | None] | str, chunks: list[BlockChunk]) -> list[tuple[Literal["start", "end", "chardata"], Any, list[BlockChunk]]]:
+        
+        def get_chunk_kind(chunks: list[BlockChunk]) -> Literal["text", "space", "newline"]:
+            if all(chunk.is_line_end for chunk in chunks):
+                return "newline"
+            elif all(chunk.isspace() for chunk in chunks):
+                return "space"
+            else:
+                return "text"
+            
+        if event_type == "chardata":
+            if self._pending_event is None:
+                chunk_kind = get_chunk_kind(chunks)
+                if not self._in_text_chunks:
+                    if chunk_kind == "space":
+                        self._pending_prefix.extend(chunks)
+                        return []
+                    else:
+                        self._in_text_chunks = True
+                return [("chardata", None, chunks)]
+            else:
+                chunk_kind = get_chunk_kind(chunks)
+                if chunk_kind == "newline":
+                    self._pending_event[2].extend(chunks)
+                    self._in_text_chunks = False
+                    self._pending_has_ending = True
+                    return []
+                elif chunk_kind == "space":
+                    self._pending_prefix.extend(chunks)
+                    if self._pending_has_ending:
+                        pending_event = self._pending_event
+                        self._pending_event = None
+                        self._pending_has_ending = False
+                        return [pending_event]                    
+                    return []
+                else:
+                    self._in_text_chunks = True
+                    _event_type, _event_data, _chunks = self._pending_event
+                    _chunks = self._pending_prefix + _chunks
+                    self._pending_prefix = []
+                    self._pending_event = None
+                    return [
+                        (_event_type, _event_data, _chunks),
+                        ("chardata", None, chunks)
+                    ]
+        else:    # start or end event  
+            self._in_text_chunks = False      
+            if self._pending_event is None:
+                self._pending_event = (event_type, event_data, chunks)
+                return []
+            else:
+                pending_event = self._pending_event
+                self._pending_event = (event_type, event_data, chunks)
+                return [pending_event]
+        
+            
+        
+        
 
     def _flush_pending(self, end_byte: int):
         """Process any pending event."""
@@ -322,32 +386,28 @@ class XmlParser(Process):
         if not chunks:
             return
         
+        if event_type != "chardata":
+            print(f"############# {event_type} - {repr(event_data)} ############")
         print(self._index, event_type, repr(event_data), chunks)
-        if event_type == "start":
-            if self._last_data_type == "end":
-                self._pop()
-            name, attrs = event_data
-            self._handle_start(name, attrs, chunks)
-            self._last_data_type = "start"
-        elif event_type == "end":
-            if self._last_data_type == "end":
-                self._pop()
-            name = event_data
-            self._handle_end(name, chunks)
-            self._last_data_type = "end"
-        elif event_type == "chardata":
-            if self._last_data_type == "end":
-                if self._try_append_to_block_postfix(chunks):
-                    return
-                else:
-                    self._pop()
-                    self._last_data_type = "start"
-                    self._output_queue.append({"type": "delta", "value": chunks})
-                    return
-                # if self._should_pop(chunks):
-                #     self._pop()
-                #     self._last_data_type = "start"
-            self._handle_chardata(chunks)
+        
+        for event_type, event_data, chunks in self._stage_event(event_type, event_data, chunks):
+            # print("Handling event:", event_type, event_data, chunks)
+            if event_type == "start":
+                name, attrs = event_data
+                self._handle_start(name, attrs, chunks)
+            elif event_type == "end":
+                name = event_data
+                self._handle_end(name, chunks)
+            elif event_type == "chardata":
+                self._handle_chardata(chunks)
+        # if event_type == "start":
+        #     name, attrs = event_data
+        #     self._handle_start(name, attrs, chunks)
+        # elif event_type == "end":
+        #     name = event_data
+        #     self._handle_end(name, chunks)
+        # elif event_type == "chardata":
+        #     self._handle_chardata(chunks)
 
     def _on_start(self, name: str, attrs: dict):
         """Handle start tag event from expat."""
@@ -363,7 +423,7 @@ class XmlParser(Process):
 
     def _on_chardata(self, data: str):
         """Handle character data event from expat."""
-        print(f"{repr(data)}")
+        # print(f"{repr(data)}")
         current_pos = self._parser.CurrentByteIndex
         self._flush_pending(current_pos)
         self._pending = ("chardata", data, current_pos)
@@ -455,8 +515,8 @@ class XmlParser(Process):
             raise ParserError(f"Unexpected closing tag '{name}' - stack is empty")
 
         # Pop from stack
-        # schema, block = self._stack.pop()
-        schema, block = self._top()
+        schema, block = self._stack.pop()
+        # schema, block = self._top()
 
         # Validate name matches
         if name != schema.name and name not in schema.tags:
