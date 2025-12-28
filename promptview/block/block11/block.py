@@ -119,12 +119,12 @@ class Mutator(metaclass=MutatorMeta):
         block = Block(chunks, block_text=self.block.block_text, _auto_handle=self.block._auto_handle)        
         return block
         
-    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True):
-        block = Block(chunks, tags=tags, role=role, style=style, _auto_handle=_auto_handle)        
+    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True):
+        block = Block(chunks, tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle)        
         return block
     
-    def call_init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True):
-        block = self.init(chunks, tags, role, style, _auto_handle)
+    def call_init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True, attrs: dict[str, Any] | None = None):
+        block = self.init(chunks, tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle)
         block._auto_handle = _auto_handle
         block.mutator = self
         self.block = block
@@ -472,7 +472,7 @@ class Mutator(metaclass=MutatorMeta):
         self._did_commit = False
         return block
 
-    def instantiate(self, content: "ContentType | None" = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None) -> Block:
+    def instantiate(self, content: "ContentType | None" = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
         """
         Create a Block instance from a schema.
 
@@ -493,6 +493,7 @@ class Mutator(metaclass=MutatorMeta):
             role=role,
             tags=tags,
             style=style,
+            attrs=attrs,
             _auto_handle=self.block._auto_handle,
         )
 
@@ -544,7 +545,7 @@ class Block:
     The Mutator provides indirection for accessing/mutating fields.
     """
 
-    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style", "_auto_handle"]
+    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style", "_auto_handle", "attrs"]
 
     def __init__(
         self,
@@ -553,6 +554,7 @@ class Block:
         role: str | None = None,
         tags: list[str] | None = None,
         style: str | list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
         mutator: Mutator | None = None,
         block_text: "BlockText | None" = None,
         # Internal: for factory methods
@@ -581,7 +583,7 @@ class Block:
         self.tags = tags or []
         self._style = parse_style(style)
         self._auto_handle = _auto_handle
-
+        self.attrs = attrs or {}
         # Set up mutator first (needed for promote)
         if mutator is None:
             self.mutator = Mutator(self)
@@ -702,11 +704,12 @@ class Block:
         role: str | None = None,
         tags: list[str] | None = None,
         style: str | list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
     ) -> "Block":
         if isinstance(content, Block):
             block = content
         else:
-            block = Block(content, role=role, tags=tags, style=style, _auto_handle=self._auto_handle)        
+            block = Block(content, role=role, tags=tags, style=style, attrs=attrs, _auto_handle=self._auto_handle)        
         # self.mutator.auto_handle_newline()
         if self._auto_handle:
             curr_head = self.mutator.current_head
@@ -1246,6 +1249,7 @@ class Block:
             role=self.role,
             tags=self.tags.copy() if self.tags else [],
             style=self._style.copy() if self._style else [],
+            attrs=self.attrs.copy() if self.attrs else {},
             block_text=new_block_text,
         )
 

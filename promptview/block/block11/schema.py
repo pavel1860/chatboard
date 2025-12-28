@@ -74,6 +74,7 @@ class BlockSchema(Block):
             role=role,
             tags=tags,
             style=style,
+            attrs=attrs,
             mutator=mutator,
             block_text=block_text,
             _span=_span,
@@ -84,7 +85,6 @@ class BlockSchema(Block):
         self.name = name
         self.type = type
         self.is_required = is_required
-        self.attrs = attrs or {}
 
     # -------------------------------------------------------------------------
     # Schema Operations
@@ -92,39 +92,9 @@ class BlockSchema(Block):
     @property
     def is_wrapper(self) -> bool:
         return self.name is None
-
-
-    def instantiate(
-        self,
-        content: ContentType | dict | BaseModel | None = None,
-        name: ContentType | None = None,
-        style: str | list[str] | None | UnsetType = UNSET,
-        role: str | None | UnsetType = UNSET,
-        tags: list[str] | None | UnsetType = UNSET,
-        extract_schema: bool = True,
-    ) -> Block:        
-        from .mutator_meta import MutatorMeta
-        from .span import Chunk
-        
-        role = UnsetType.get_value(role, self.role)
-        tags = UnsetType.get_value(tags, self.tags)        
-        style = UnsetType.get_value(style, self.style)
-        
-        if isinstance(content, dict):
-            return self.inst_from_dict(content, style=style, role=role, tags=tags)
-        elif isinstance(content, BaseModel):
-            pass
-        else:            
-            config = MutatorMeta.resolve()
-            mutator = config.mutator()            
-            name_chunks = [Chunk(self.name)] if self.name else []
-            block = mutator.call_init(name_chunks, tags=tags, role=role, style=style)
-            if content is not None:
-                chunks = mutator.promote(content)
-                # block.append(chunks)
-                block /= chunks
-            return block
-        
+    
+    
+    
     def instantiate_partial(
         self,
         content: ContentType | None = None,
@@ -144,6 +114,65 @@ class BlockSchema(Block):
         block = mutator.call_init(chunks, tags=tags, role=role, style=style, _auto_handle=False)
         return block
 
+
+
+    def instantiate(
+        self,
+        content: ContentType | dict | BaseModel | None = None,
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
+    ) -> Block:        
+        from .mutator_meta import MutatorMeta
+        from .span import Chunk
+        
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        attrs = UnsetType.get_value(attrs, self.attrs)
+        
+        schema = self.extract_schema()
+        if schema is None:
+            raise ValueError("Schema is not supported for instantiation")
+            
+        
+        if isinstance(content, dict):
+            return schema.inst_from_dict(content, style=style, role=role, tags=tags, attrs=attrs)
+        elif isinstance(content, BaseModel):
+            pass
+        else: 
+            return schema.inst_content(content, tags=tags, role=role, style=style, attrs=attrs)            
+            # config = MutatorMeta.resolve()
+            # mutator = config.mutator()            
+            # name_chunks = [Chunk(self.name)] if self.name else []
+            # block = mutator.call_init(name_chunks, tags=tags, role=role, style=style)
+            # if content is not None:
+            #     chunks = mutator.promote(content)
+            #     # block.append(chunks)
+            #     block /= chunks
+            # return block
+            
+        
+    def inst_content(self, content: ContentType | None = None, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:
+        from .mutator_meta import MutatorMeta
+        from .span import Chunk
+        
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        attrs = UnsetType.get_value(attrs, self.attrs)
+        
+        config = MutatorMeta.resolve()
+        mutator = config.mutator()            
+        name_chunks = [Chunk(self.name)] if self.name else []
+        block = mutator.call_init(name_chunks, tags=tags, role=role, style=style, attrs=attrs)
+        if content is not None:
+            chunks = mutator.promote(content)
+            # block.append(chunks)
+            block /= chunks
+        return block
+        
         
         
     def instantiate2(
@@ -201,6 +230,7 @@ class BlockSchema(Block):
         style: str | list[str] | None = None,
         role: str | None = None,
         tags: list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
     ) -> Block:
         """
         Create a Block instance from a dictionary.
@@ -219,19 +249,14 @@ class BlockSchema(Block):
         """
         from .mutator_meta import MutatorMeta
 
-        # Resolve style and get mutator
-        style = style if style is not None else self.style
-        role = role if role is not None else self.role
-        tags = tags if tags is not None else self.tags
-        # config = MutatorMeta.resolve(style)
-        # config = MutatorMeta.resolve([])
-        # if config.mutator is None:
-        #     raise ValueError(f"No mutator found for style {style}")
-        # mutator = config.mutator()
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        attrs = UnsetType.get_value(attrs, self.attrs)
 
         # Create the parent block with schema name as content (for XML tag rendering)        
         # block = mutator.call_instantiate(self.name, role=role, tags=tags)
-        block = self.instantiate(role=role, tags=tags, style=style)
+        block = self.inst_content(role=role, tags=tags, style=style, attrs=attrs)
 
         # Build lookup of child schemas by name
         child_schemas: dict[str, BlockSchema] = {}
@@ -260,7 +285,7 @@ class BlockSchema(Block):
                     child_block = child_schema.inst_from_list(value, style=style)
                 else:
                     # Scalar value
-                    child_block = child_schema.instantiate(value, style=style)
+                    child_block = child_schema.inst_content(value, style=style)
                     # child_block.append(value)
 
                 block.append_child(child_block)

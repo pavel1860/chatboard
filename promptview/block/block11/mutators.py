@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, Any, Generator
 
 from .span import Span, Chunk, chunks_contain, split_chunks
 from .block import Block, Mutator, ContentType
@@ -55,23 +55,34 @@ class XmlMutator(Mutator):
                 return False
         else:
             return True
+        
+        
+    def render_attrs(self, block: Block) -> str:
+        attrs = ""
+        for k, v in block.attrs.items():
+            attrs += f"{k}=\"{v}\""
+            
+        if attrs:
+            attrs = " " + attrs
+        return attrs
     
     def render(self, block: Block, path: Path) -> Block:
         with Block() as xml_blk:
-            with xml_blk(block.content, tags=["opening-tag"]) as content:
+            tag_name =block.content.lower().replace(" ", "_")
+            with xml_blk(tag_name + self.render_attrs(block), tags=["opening-tag"]) as content:
                 content.append_prefix("<")
                 content.prepend_postfix(">")    
                 for child in block.body:
                     content.append_child(child)
                 content.indent_body()
-            with xml_blk(block.content, tags=["closing-tag"]) as postfix:
+            with xml_blk(tag_name, tags=["closing-tag"]) as postfix:
                 postfix.append_prefix("</")
                 postfix.prepend_postfix(">")
         return xml_blk
     
     
-    def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None) -> Block:
-        with Block(role=role, tags=tags) as block:
+    def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
+        with Block(role=role, tags=tags, attrs=attrs) as block:
             with block(content) as head:
                 pass
             # with block() as body:
@@ -79,7 +90,7 @@ class XmlMutator(Mutator):
         return block
     
     
-    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True) -> Block:
+    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "<")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
         with Block(_auto_handle=_auto_handle) as xml_blk:
@@ -114,42 +125,29 @@ class MarkdownMutator(Mutator):
         
                 
 
-        
+   
+
+class ToolDescriptionMutator(Mutator):
+    styles = ["tool-desc"]
     
-    # def commit(self, content: ContentType) -> Block:
-    #     self.block.append_child(content)
-    #     return self.block
+    def render(self, block: Block, path: Path) -> Block:
+
+        description = block.get_one("description")
+        parameters = block.get_one("parameters")
+
+        # Build new output
+        with Block("# Name: " + block.attrs.get("name", "")) as blk:
+            with blk("## Purpose") as purpose:
+                purpose /= description.body[0].content
+            with blk("## Parameters") as params:
+                for param in parameters.children:
+                    with params(param.content) as param_blk:
+                        param_blk /= param.body
+                        if hasattr(param, 'type_str') and param.type_str is not None:
+                            param_blk /= "Type:", param.type_str
+                        if hasattr(param, 'is_required'):
+                            param_blk /= "Required:", param.is_required                        
+        return blk
+
     
     
-    # def on_text(self, block: Block, chunks: list[Chunk]) -> Block:
-    #     pass
-    
-    # # def on_symbol(self, block: Block, chunks: list[Chunk]) -> Block:
-    # #     pass
-        
-    # # def on_start(self, block: Block, chunks: list[Chunk]) -> Block:
-    # #     pass
-    # def on_chunks(self, block: Block, chunks: list[Chunk]) -> Block:
-    #     pass
-    
-    # def on_end(self, block: Block, chunks: list[Chunk]) -> Block:
-    #     pass
-    
-    
-    # def parse(self, prefix: list[Chunk], content: list[Chunk], postfix: list[Chunk]) -> Generator[list[Chunk], Block, None]:
-    #     # self.block[0]
-    #     start_tag = False
-    #     end_tag = False
-    #     with Block(prefix=prefix, content=content, postfix=postfix) as block:
-    #         chunks = yield block
-    #         for chunk in chunks:
-    #             block += chunk
-    #             if not start_tag:                    
-    #                 if chunk.is_line_end:
-    #                     start_tag = True
-    #             else:
-    #                 if chunk.isspace():
-                        
-                    
-            
-            
