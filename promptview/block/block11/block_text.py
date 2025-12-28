@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Iterator, TYPE_CHECKING
 
-from .span import Span, Chunk
+from .span import Span, BlockChunk
 
 if TYPE_CHECKING:
     pass
@@ -53,7 +53,7 @@ class BlockText:
 
     def create_span(
         self,
-        content: str | list[Chunk] | None = None,
+        content: str | list[BlockChunk] | None = None,
         after: Span | None = None,
     ) -> Span:
         """
@@ -70,7 +70,7 @@ class BlockText:
 
         if content is not None:
             if isinstance(content, str):
-                span.content = [Chunk(content=content)]
+                span.content = [BlockChunk(content=content)]
             else:
                 span.content = content
 

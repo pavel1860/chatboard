@@ -5,7 +5,7 @@ from xml.parsers import expat
 
 from .block import Block
 from .schema import BlockListSchema, BlockList
-from .span import Chunk
+from .span import BlockChunk
 from ...prompt.fbp_process import Process
 
 if TYPE_CHECKING:
@@ -62,7 +62,7 @@ class XmlParser(Process):
         self._parser.CharacterDataHandler = self._on_chardata
 
         # Chunk tracking for logprobs
-        self._chunks: list[tuple[int, int, Chunk]] = []  # (start_byte, end_byte, chunk)
+        self._chunks: list[tuple[int, int, BlockChunk]] = []  # (start_byte, end_byte, chunk)
         self._total_bytes = 0
 
         # Pending event for deferred processing
@@ -136,9 +136,9 @@ class XmlParser(Process):
                 chunk = await super().__anext__()
                 # Feed the chunk (may produce output)
                 if hasattr(chunk, 'content'):
-                    self.feed(Chunk(content=chunk.content))
+                    self.feed(BlockChunk(content=chunk.content))
                 else:
-                    self.feed(Chunk(content=str(chunk)))
+                    self.feed(BlockChunk(content=str(chunk)))
             except StopAsyncIteration:
                 # Upstream exhausted
                 if self._output_queue:
@@ -151,7 +151,7 @@ class XmlParser(Process):
     # Feeding data
     # -------------------------------------------------------------------------
 
-    def feed(self, chunk: Chunk, is_final: bool = False):
+    def feed(self, chunk: BlockChunk, is_final: bool = False):
         """
         Feed a chunk to the parser.
 
@@ -173,7 +173,7 @@ class XmlParser(Process):
 
     def feed_str(self, text: str, is_final: bool = False):
         """Feed a string to the parser (convenience method)."""
-        self.feed(Chunk(content=text), is_final)
+        self.feed(BlockChunk(content=text), is_final)
 
     def close(self):
         """Close the parser and finalize the block tree."""
@@ -212,7 +212,7 @@ class XmlParser(Process):
     # Chunk retrieval
     # -------------------------------------------------------------------------
     
-    def _get_chunks_in_range(self, start: int, end: int) -> list[Chunk]:
+    def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
         """Get chunks overlapping the byte range [start, end)."""
         result = []
         
@@ -302,7 +302,7 @@ class XmlParser(Process):
             return False
         return isinstance(self._stack[-1][0], BlockListSchema)
 
-    def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
+    def _handle_start(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         """Handle opening tag - instantiate block from schema."""
 
         # Handle synthetic root
@@ -341,7 +341,7 @@ class XmlParser(Process):
         # Append to current block
         self._push_block(child_schema, child_block)
 
-    def _handle_end(self, name: str, chunks: list[Chunk]):
+    def _handle_end(self, name: str, chunks: list[BlockChunk]):
         """Handle closing tag - commit and pop stack."""
         # Skip synthetic root
         if name == self._root_tag:
@@ -360,7 +360,7 @@ class XmlParser(Process):
         # Commit could be called here for validation
         block.commit(chunks)
 
-    def _handle_chardata(self, chunks: list[Chunk]):
+    def _handle_chardata(self, chunks: list[BlockChunk]):
         """Handle character data - append to current block."""
         if self.current_block is None:
             return

@@ -2,9 +2,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterator, Callable, Type
 
-from .span import Span, Chunk
+from .span import Span, BlockChunk
 from .mutator_meta import MutatorMeta
 from .path import Path, compute_path
+from pydantic import BaseModel, GetCoreSchemaHandler
+from pydantic_core import core_schema
 if TYPE_CHECKING:
     from .block_text import BlockText
     from .schema import BlockSchema, BlockListSchema
@@ -21,7 +23,7 @@ def parse_style(style: str | list[str] | None) -> list[str]:
         return []
 
 BaseContentTypes = str | bool | int | float
-ContentType = BaseContentTypes | list[str] | list[Chunk] | Chunk
+ContentType = BaseContentTypes | list[str] | list[BlockChunk] | BlockChunk
 
 
 
@@ -89,10 +91,10 @@ class Mutator(metaclass=MutatorMeta):
     def is_head_closed(self) -> bool:
         return self.head.has_newline()
     
-    def is_head_open(self, chunks: list[Chunk]) -> bool:
+    def is_head_open(self, chunks: list[BlockChunk]) -> bool:
         return not self.head.has_newline()
     
-    def is_last_block_open(self,  chunks: list[Chunk]) -> bool:
+    def is_last_block_open(self,  chunks: list[BlockChunk]) -> bool:
         if not self.body:
             return False
         elif self.body[-1].has_newline():
@@ -115,22 +117,22 @@ class Mutator(metaclass=MutatorMeta):
         return None
         
     
-    def _spawn_block(self, chunks: list[Chunk] | None = None) -> Block:
+    def _spawn_block(self, chunks: list[BlockChunk] | None = None) -> Block:
         block = Block(chunks, block_text=self.block.block_text, _auto_handle=self.block._auto_handle)        
         return block
         
-    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True):
+    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True):
         block = Block(chunks, tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle)        
         return block
     
-    def call_init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True, attrs: dict[str, Any] | None = None):
+    def call_init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True, attrs: dict[str, Any] | None = None):
         block = self.init(chunks, tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle)
         block._auto_handle = _auto_handle
         block.mutator = self
         self.block = block
         return block
     
-    def commit(self, chunks: list[Chunk]):
+    def commit(self, chunks: list[BlockChunk]):
         return self.on_text(chunks)
         
     # def on_newline(self, chunk: Chunk):
@@ -143,7 +145,7 @@ class Mutator(metaclass=MutatorMeta):
     #         block = self._spawn_block([chunk])
     #         self.append_child(block)
     
-    def on_newline(self, chunk: Chunk):
+    def on_newline(self, chunk: BlockChunk):
         if self.is_head_open([chunk]):
             self.head.append_postfix([chunk])
         elif self.is_last_block_open([chunk]):
@@ -152,10 +154,10 @@ class Mutator(metaclass=MutatorMeta):
             block = self._spawn_block([chunk])
             self.append_child(block)
     
-    def on_space(self, chunk: Chunk):
+    def on_space(self, chunk: BlockChunk):
         return self.on_text([chunk])
     
-    def on_symbol(self, chunk: Chunk):
+    def on_symbol(self, chunk: BlockChunk):
         return self.on_text([chunk])
     
     
@@ -177,7 +179,7 @@ class Mutator(metaclass=MutatorMeta):
         
             
             
-    def on_text(self, chunks: list[Chunk]):
+    def on_text(self, chunks: list[BlockChunk]):
         if self.is_head_open(chunks):
             self.head.append_content(chunks)
         elif self.is_last_block_open(chunks):
@@ -254,7 +256,7 @@ class Mutator(metaclass=MutatorMeta):
     # Content Promotion
     # -------------------------------------------------------------------------
 
-    def promote(self, content: ContentType) -> list[Chunk]:
+    def promote(self, content: ContentType) -> list[BlockChunk]:
         """
         Promote content of various types to list[Chunk].
 
@@ -273,19 +275,19 @@ class Mutator(metaclass=MutatorMeta):
             list[Chunk]
         """
         if isinstance(content, str):
-            return [Chunk(content=content)]
+            return [BlockChunk(content=content)]
         elif isinstance(content, bool):
-            return [Chunk(content=str(content).lower())]
+            return [BlockChunk(content=str(content).lower())]
         elif isinstance(content, (int, float)):
-            return [Chunk(content=str(content))]
-        elif isinstance(content, Chunk):
+            return [BlockChunk(content=str(content))]
+        elif isinstance(content, BlockChunk):
             return [content]
         elif isinstance(content, list):
             if len(content) == 0:
                 return []
             if isinstance(content[0], str):
-                return [Chunk(content=s) for s in content]
-            elif isinstance(content[0], Chunk):
+                return [BlockChunk(content=s) for s in content]
+            elif isinstance(content[0], BlockChunk):
                 return content
         return []
 
@@ -874,7 +876,7 @@ class Block:
 
     def add_newline(self) -> Block:
         """Add newline to head postfix."""
-        self.head.append_postfix([Chunk(content="\n")])
+        self.head.append_postfix([BlockChunk(content="\n")])
         return self
     
     def has_newline(self) -> bool:
@@ -887,7 +889,7 @@ class Block:
     
     def indent(self, spaces: int = 2):        
         if not self.is_wrapper:            
-            spaces_chunk = Chunk(content=" " * spaces)            
+            spaces_chunk = BlockChunk(content=" " * spaces)            
             self.mutator.head.prepend_prefix([spaces_chunk])
         for child in self.children:
             child.indent(spaces)
@@ -1379,6 +1381,37 @@ class Block:
             else:
                 # Keep searching deeper
                 self._collect_nested_schemas(child, result, style=style)
+                
+    # -------------------------------------------------------------------------
+    # Pydantic model support
+    # -------------------------------------------------------------------------
+    
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize
+            )
+        )
+        
+    @staticmethod
+    def _validate(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v
+        elif isinstance(v, dict):
+            if "_type" in v and v["_type"] == "Block":
+                return Block.model_validate(v)
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
+    @staticmethod
+    def _serialize(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v.model_dump()
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
 
     # -------------------------------------------------------------------------
     # Debug
@@ -1453,7 +1486,173 @@ class Block:
         for block in self.iter_depth_first():
             s.add(id(block.block_text))
         return s
-            
+
     def print_block_texts(self):
         for block in self.iter_depth_first():
-            print(id(block.block_text))  
+            print(id(block.block_text))
+
+    # -------------------------------------------------------------------------
+    # Serialization (model_dump / model_validate)
+    # -------------------------------------------------------------------------
+
+    def model_dump(
+        self,
+        *,
+        include_chunks: bool = False,
+        include_span: bool = False,
+        exclude_none: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Serialize block tree to a JSON-compatible dict.
+
+        Args:
+            include_chunks: Include chunk-level detail with logprobs
+            include_span: Include full span structure (prefix/content/postfix)
+            exclude_none: Exclude None values from output
+
+        Returns:
+            Dict representation suitable for JSON serialization
+
+        Example:
+            block.model_dump()
+            # {"content": "hello", "role": "user", "children": [...]}
+
+            block.model_dump(include_chunks=True)
+            # {"content": "hello", "chunks": [{"content": "hello", "logprob": -0.1}], ...}
+        """
+        result: dict[str, Any] = {}
+
+        # Content (always include as simple string)
+        result["content"] = self.content
+
+        # Core fields
+        if self.role is not None or not exclude_none:
+            result["role"] = self.role
+        if self.tags:
+            result["tags"] = self.tags
+        if self._style:
+            result["style"] = self._style
+        if self.attrs:
+            result["attrs"] = self.attrs
+
+        # Span detail (optional)
+        if include_span or include_chunks:
+            span_data: dict[str, Any] = {}
+            if self.span:
+                span_data["prefix"] = self.span.prefix_text
+                span_data["content"] = self.span.content_text
+                span_data["postfix"] = self.span.postfix_text
+
+                if include_chunks:
+                    span_data["prefix_chunks"] = [
+                        {"content": c.content, "logprob": c.logprob}
+                        for c in self.span.prefix
+                    ]
+                    span_data["content_chunks"] = [
+                        {"content": c.content, "logprob": c.logprob}
+                        for c in self.span.content
+                    ]
+                    span_data["postfix_chunks"] = [
+                        {"content": c.content, "logprob": c.logprob}
+                        for c in self.span.postfix
+                    ]
+            result["span"] = span_data
+
+        # Children (recursive)
+        if self.children:
+            result["children"] = [
+                child.model_dump(
+                    include_chunks=include_chunks,
+                    include_span=include_span,
+                    exclude_none=exclude_none,
+                )
+                for child in self.children
+            ]
+        else:
+            result["children"] = []
+
+        return result
+
+    @classmethod
+    def model_validate(
+        cls,
+        data: dict[str, Any],
+        *,
+        block_text: "BlockText | None" = None,
+    ) -> "Block":
+        """
+        Deserialize a dict to a Block tree.
+
+        Args:
+            data: Dict from model_dump() or JSON
+            block_text: Shared BlockText for all blocks (created if None)
+
+        Returns:
+            Reconstructed Block tree
+
+        Example:
+            data = {"content": "hello", "role": "user", "children": []}
+            block = Block.model_validate(data)
+        """
+        from .block_text import BlockText
+        from .schema import BlockSchema
+
+        # Create shared BlockText if not provided
+        if block_text is None:
+            block_text = BlockText()
+
+        # Check if this is a BlockSchema (has 'name' field)
+        if data.get("name") is not None:
+            return BlockSchema.model_validate(data, block_text=block_text)
+
+        # Extract fields
+        content = data.get("content")
+        role = data.get("role")
+        tags = data.get("tags")
+        style = data.get("style")
+        attrs = data.get("attrs")
+
+        # Handle span with chunks if present
+        span = None
+        span_data = data.get("span")
+        if span_data and (span_data.get("content_chunks") or span_data.get("prefix_chunks")):
+            # Reconstruct span from chunks
+            from .span import BlockChunk
+            prefix_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("prefix_chunks", [])
+            ]
+            content_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("content_chunks", [])
+            ]
+            postfix_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("postfix_chunks", [])
+            ]
+            span = Span(prefix=prefix_chunks, content=content_chunks, postfix=postfix_chunks)
+            block_text.append(span)
+            content = None  # Content comes from span
+
+        # Create block
+        block = cls(
+            content=content,
+            role=role,
+            tags=tags,
+            style=style,
+            attrs=attrs,
+            block_text=block_text,
+            _span=span,
+        )
+
+        # If we reconstructed span, set it
+        if span is not None:
+            block.span = span
+
+        # Recursively load children
+        for child_data in data.get("children", []):
+            child = cls.model_validate(child_data, block_text=block_text)
+            child.parent = block
+            block.children.append(child)
+
+        return block

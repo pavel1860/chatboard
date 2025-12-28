@@ -1,4 +1,4 @@
-from .span import Chunk, Span
+from .span import BlockChunk, Span
 from .block_text import BlockText
 from .block import Block, Mutator, ContentType, BaseContentTypes
 from .schema import BlockSchema, BlockList, BlockListSchema
@@ -7,7 +7,7 @@ from .parsers import XmlParser, ParserError
 from .path import Path, compute_path
 
 __all__ = [
-    "Chunk",
+    "BlockChunk",
     "Span",
     "BlockText",
     "Block",

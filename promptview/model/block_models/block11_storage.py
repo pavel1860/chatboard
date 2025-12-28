@@ -26,7 +26,7 @@ from ..fields import KeyField, ModelField, RelationField
 from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
-    from ...block.block11 import Block, Chunk, Span, BlockSchema
+    from ...block.block11 import Block, BlockChunk, Span, BlockSchema
 
 
 # =============================================================================
@@ -152,7 +152,7 @@ def compute_block_hash(
 # Serialization (Dump)
 # =============================================================================
 
-def dump_chunks(chunks: list["Chunk"]) -> list[dict]:
+def dump_chunks(chunks: list["BlockChunk"]) -> list[dict]:
     """Serialize chunks to list of dicts."""
     return [
         {"content": c.content, "logprob": c.logprob}
@@ -276,7 +276,7 @@ def load_block(
 
     Creates a shared BlockText for all blocks in the tree.
     """
-    from ...block.block11 import Block, BlockSchema, Chunk, Span, BlockText
+    from ...block.block11 import Block, BlockSchema, BlockChunk, Span, BlockText
 
     # Single shared BlockText for the entire tree
     shared_block_text = BlockText()
@@ -284,15 +284,15 @@ def load_block(
     def load_span_data(span_data: dict) -> Span:
         """Load a span from storage data into shared BlockText."""
         prefix_chunks = [
-            Chunk(content=c["content"], logprob=c.get("logprob"))
+            BlockChunk(content=c["content"], logprob=c.get("logprob"))
             for c in span_data.get("prefix_chunks", [])
         ]
         content_chunks = [
-            Chunk(content=c["content"], logprob=c.get("logprob"))
+            BlockChunk(content=c["content"], logprob=c.get("logprob"))
             for c in span_data.get("content_chunks", [])
         ]
         postfix_chunks = [
-            Chunk(content=c["content"], logprob=c.get("logprob"))
+            BlockChunk(content=c["content"], logprob=c.get("logprob"))
             for c in span_data.get("postfix_chunks", [])
         ]
 

@@ -1,6 +1,6 @@
 """Tests for BlockText class."""
 import pytest
-from promptview.block.block11 import Chunk, Span, BlockText
+from promptview.block.block11 import BlockChunk, Span, BlockText
 
 
 class TestBlockTextCreation:
@@ -45,7 +45,7 @@ class TestBlockTextCreateSpan:
 
     def test_create_span_with_chunks(self):
         bt = BlockText()
-        chunks = [Chunk("Hello"), Chunk(" World")]
+        chunks = [BlockChunk("Hello"), BlockChunk(" World")]
         span = bt.create_span(chunks)
 
         assert span.content_text == "Hello World"
@@ -66,8 +66,8 @@ class TestBlockTextInsertion:
 
     def test_append(self):
         bt = BlockText()
-        span1 = Span(content=[Chunk("First")])
-        span2 = Span(content=[Chunk("Second")])
+        span1 = Span(content=[BlockChunk("First")])
+        span2 = Span(content=[BlockChunk("Second")])
 
         bt.append(span1)
         bt.append(span2)
@@ -79,8 +79,8 @@ class TestBlockTextInsertion:
 
     def test_prepend(self):
         bt = BlockText()
-        span1 = Span(content=[Chunk("First")])
-        span2 = Span(content=[Chunk("Second")])
+        span1 = Span(content=[BlockChunk("First")])
+        span2 = Span(content=[BlockChunk("Second")])
 
         bt.append(span1)
         bt.prepend(span2)
@@ -93,7 +93,7 @@ class TestBlockTextInsertion:
         span1 = bt.create_span("A")
         span3 = bt.create_span("C")
 
-        span2 = Span(content=[Chunk("B")])
+        span2 = Span(content=[BlockChunk("B")])
         bt.insert_after(span1, span2)
 
         assert list(bt) == [span1, span2, span3]
@@ -104,7 +104,7 @@ class TestBlockTextInsertion:
         span1 = bt.create_span("A")
         span3 = bt.create_span("C")
 
-        span2 = Span(content=[Chunk("B")])
+        span2 = Span(content=[BlockChunk("B")])
         bt.insert_before(span3, span2)
 
         assert list(bt) == [span1, span2, span3]
@@ -166,7 +166,7 @@ class TestBlockTextQuery:
     def test_contains(self):
         bt = BlockText()
         span1 = bt.create_span("Test")
-        span2 = Span(content=[Chunk("Other")])
+        span2 = Span(content=[BlockChunk("Other")])
 
         assert bt.contains(span1) is True
         assert bt.contains(span2) is False
@@ -219,7 +219,7 @@ class TestBlockTextCopyFork:
         bt.create_span("Original")
 
         forked = bt.fork()
-        list(forked)[0].content = [Chunk("Modified")]
+        list(forked)[0].content = [BlockChunk("Modified")]
 
         assert bt.text() == "Original"
         assert forked.text() == "Modified"
@@ -242,8 +242,8 @@ class TestBlockTextExtend:
         bt.create_span("First")
 
         spans = [
-            Span(content=[Chunk("Second")]),
-            Span(content=[Chunk("Third")]),
+            Span(content=[BlockChunk("Second")]),
+            Span(content=[BlockChunk("Third")]),
         ]
         bt.extend(spans)
 

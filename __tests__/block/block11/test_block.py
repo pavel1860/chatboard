@@ -1,6 +1,6 @@
 """Tests for Block class."""
 import pytest
-from promptview.block.block11 import Block, Chunk, Span, BlockText
+from promptview.block.block11 import Block, BlockChunk, Span, BlockText
 
 
 class TestBlockCreation:
@@ -57,7 +57,7 @@ class TestBlockFactoryMethods:
         assert block.span is not None
 
     def test_from_span(self):
-        span = Span(content=[Chunk("Test")])
+        span = Span(content=[BlockChunk("Test")])
         block = Block.from_span(span)
         assert block.span is span
         assert block.content == "Test"

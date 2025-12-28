@@ -125,7 +125,7 @@ class BlockSchema(Block):
         attrs: dict[str, Any] | None | UnsetType = UNSET,
     ) -> Block:        
         from .mutator_meta import MutatorMeta
-        from .span import Chunk
+        from .span import BlockChunk
         
         role = UnsetType.get_value(role, self.role)
         tags = UnsetType.get_value(tags, self.tags)        
@@ -156,7 +156,7 @@ class BlockSchema(Block):
         
     def inst_content(self, content: ContentType | None = None, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:
         from .mutator_meta import MutatorMeta
-        from .span import Chunk
+        from .span import BlockChunk
         
         role = UnsetType.get_value(role, self.role)
         tags = UnsetType.get_value(tags, self.tags)        
@@ -165,7 +165,7 @@ class BlockSchema(Block):
         
         config = MutatorMeta.resolve()
         mutator = config.mutator()            
-        name_chunks = [Chunk(self.name)] if self.name else []
+        name_chunks = [BlockChunk(self.name)] if self.name else []
         block = mutator.call_init(name_chunks, tags=tags, role=role, style=style, attrs=attrs)
         if content is not None:
             chunks = mutator.promote(content)
@@ -385,6 +385,118 @@ class BlockSchema(Block):
         if not self.is_required:
             parts.append("optional")
         return f"BlockSchema({', '.join(parts)})"
+
+    # -------------------------------------------------------------------------
+    # Serialization (model_dump / model_validate)
+    # -------------------------------------------------------------------------
+
+    def model_dump(
+        self,
+        *,
+        include_chunks: bool = False,
+        include_span: bool = False,
+        exclude_none: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Serialize BlockSchema to a JSON-compatible dict.
+
+        Includes schema-specific fields: name, type, is_required.
+        """
+        # Get base block fields
+        result = super().model_dump(
+            include_chunks=include_chunks,
+            include_span=include_span,
+            exclude_none=exclude_none,
+        )
+
+        # Add schema-specific fields
+        if self.name is not None or not exclude_none:
+            result["name"] = self.name
+        if self.type is not None:
+            result["type"] = self.type.__name__ if self.type else None
+        if not self.is_required or not exclude_none:
+            result["is_required"] = self.is_required
+
+        return result
+
+    @classmethod
+    def model_validate(
+        cls,
+        data: dict[str, Any],
+        *,
+        block_text: "BlockText | None" = None,
+    ) -> "BlockSchema":
+        """
+        Deserialize a dict to a BlockSchema.
+
+        Args:
+            data: Dict from model_dump() or JSON
+            block_text: Shared BlockText for all blocks
+
+        Returns:
+            Reconstructed BlockSchema
+        """
+        from .block_text import BlockText
+        from .span import Span, BlockChunk
+
+        # Create shared BlockText if not provided
+        if block_text is None:
+            block_text = BlockText()
+
+        # Extract schema-specific fields
+        name = data.get("name")
+        type_name = data.get("type")
+        is_required = data.get("is_required", True)
+
+        # Extract common fields
+        role = data.get("role")
+        tags = data.get("tags")
+        style = data.get("style")
+        attrs = data.get("attrs")
+
+        # Handle span with chunks if present
+        span = None
+        span_data = data.get("span")
+        if span_data and (span_data.get("content_chunks") or span_data.get("prefix_chunks")):
+            prefix_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("prefix_chunks", [])
+            ]
+            content_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("content_chunks", [])
+            ]
+            postfix_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("postfix_chunks", [])
+            ]
+            span = Span(prefix=prefix_chunks, content=content_chunks, postfix=postfix_chunks)
+            block_text.append(span)
+
+        # Create BlockSchema
+        schema = cls(
+            name=name,
+            type=None,  # Type reconstruction would need a type registry
+            style=style,
+            tags=tags,
+            role=role,
+            is_required=is_required,
+            attrs=attrs,
+            block_text=block_text,
+            _span=span,
+        )
+
+        # Recursively load children
+        for child_data in data.get("children", []):
+            # Check if child is a schema or regular block
+            if child_data.get("name") is not None:
+                child = BlockSchema.model_validate(child_data, block_text=block_text)
+            else:
+                child = Block.model_validate(child_data, block_text=block_text)
+            child.parent = schema
+            schema.children.append(child)
+
+        return schema
 
 
 class BlockList(Block):

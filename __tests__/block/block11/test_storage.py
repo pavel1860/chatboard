@@ -1,7 +1,7 @@
 """Tests for Block11 Merkle tree storage."""
 
 import pytest
-from promptview.block.block11 import Block, BlockSchema, Chunk, Span
+from promptview.block.block11 import Block, BlockSchema, BlockChunk, Span
 from promptview.model.block_models.block11_storage import (
     compute_span_hash,
     compute_block_hash,
@@ -80,15 +80,15 @@ class TestDumpChunks:
 
     def test_dump_single_chunk(self):
         """Single chunk is serialized correctly."""
-        chunk = Chunk(content="hello", logprob=-0.5)
+        chunk = BlockChunk(content="hello", logprob=-0.5)
         result = dump_chunks([chunk])
         assert result == [{"content": "hello", "logprob": -0.5}]
 
     def test_dump_multiple_chunks(self):
         """Multiple chunks are serialized in order."""
         chunks = [
-            Chunk(content="hello", logprob=-0.1),
-            Chunk(content=" world", logprob=-0.2),
+            BlockChunk(content="hello", logprob=-0.1),
+            BlockChunk(content=" world", logprob=-0.2),
         ]
         result = dump_chunks(chunks)
         assert result == [
@@ -98,7 +98,7 @@ class TestDumpChunks:
 
     def test_dump_chunk_none_logprob(self):
         """Chunk with None logprob is handled."""
-        chunk = Chunk(content="test")
+        chunk = BlockChunk(content="test")
         result = dump_chunks([chunk])
         assert result == [{"content": "test", "logprob": None}]
 
@@ -119,7 +119,7 @@ class TestDumpSpan:
     def test_dump_span_with_content(self):
         """Span with content is serialized correctly."""
         span = Span(
-            content=[Chunk(content="hello"), Chunk(content=" world")]
+            content=[BlockChunk(content="hello"), BlockChunk(content=" world")]
         )
         result = dump_span(span)
 
@@ -129,9 +129,9 @@ class TestDumpSpan:
     def test_dump_span_with_prefix_postfix(self):
         """Span with prefix/postfix is serialized correctly."""
         span = Span(
-            prefix=[Chunk(content="<tag>")],
-            content=[Chunk(content="content")],
-            postfix=[Chunk(content="</tag>")],
+            prefix=[BlockChunk(content="<tag>")],
+            content=[BlockChunk(content="content")],
+            postfix=[BlockChunk(content="</tag>")],
         )
         result = dump_span(span)
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generator
 
-from .span import Span, Chunk, chunks_contain, split_chunks
+from .span import Span, BlockChunk, chunks_contain, split_chunks
 from .block import Block, Mutator, ContentType
 from .path import Path
 
@@ -39,7 +39,7 @@ class XmlMutator(Mutator):
         return self.block.children[1].span
     
     
-    def is_head_open(self, chunks: list[Chunk]) -> bool:
+    def is_head_open(self, chunks: list[BlockChunk]) -> bool:
         if self.block.children[0].children:
             return False
         if chunks_contain(self.block.children[0].span.postfix, ">"):
@@ -90,7 +90,7 @@ class XmlMutator(Mutator):
         return block
     
     
-    def init(self, chunks: list[Chunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
+    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "<")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
         with Block(_auto_handle=_auto_handle) as xml_blk:
@@ -99,7 +99,7 @@ class XmlMutator(Mutator):
                 content.append_postfix(end_chunk + post_chunks)
         return xml_blk
     
-    def commit(self, chunks: list[Chunk]) -> Block:
+    def commit(self, chunks: list[BlockChunk]) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "</")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
         if self.is_last_block_open(chunks):

@@ -12,7 +12,7 @@ def _generate_id() -> str:
     return uuid4().hex[:8]
 
 
-def chunks_contain(chunks: list[Chunk], s: str) -> bool:
+def chunks_contain(chunks: list[BlockChunk], s: str) -> bool:
     """
     Check if a string is present in the chunks (may span multiple chunks).
 
@@ -29,7 +29,7 @@ def chunks_contain(chunks: list[Chunk], s: str) -> bool:
     return s in full_text
 
 
-def split_chunks(chunks: list[Chunk], sep: str) -> tuple[list[Chunk], list[Chunk], list[Chunk]]:
+def split_chunks(chunks: list[BlockChunk], sep: str) -> tuple[list[BlockChunk], list[BlockChunk], list[BlockChunk]]:
     """
     Split chunks on a separator that may span multiple chunks.
 
@@ -59,9 +59,9 @@ def split_chunks(chunks: list[Chunk], sep: str) -> tuple[list[Chunk], list[Chunk
 
     # Track position as we iterate
     pos = 0
-    before: list[Chunk] = []
-    separator: list[Chunk] = []
-    after: list[Chunk] = []
+    before: list[BlockChunk] = []
+    separator: list[BlockChunk] = []
+    after: list[BlockChunk] = []
 
     for chunk in chunks:
         chunk_start = pos
@@ -112,7 +112,7 @@ def split_chunks(chunks: list[Chunk], sep: str) -> tuple[list[Chunk], list[Chunk
 
 
 @dataclass
-class Chunk:
+class BlockChunk:
     """
     Atomic text unit with optional metadata.
 
@@ -155,23 +155,38 @@ class Chunk:
         """Length of content."""
         return len(self.content)
 
-    def copy(self) -> Chunk:
+    def copy(self) -> BlockChunk:
         """Create a copy of this chunk."""
-        return Chunk(
+        return BlockChunk(
             content=self.content,
             logprob=self.logprob,
         )
         
-    def split(self, offset: int) -> tuple[Chunk, Chunk]:
+    def split(self, offset: int) -> tuple[BlockChunk, BlockChunk]:
         """Split a chunk into two chunks at the given start and end positions."""
         left = self.content[:offset]
         right = self.content[offset:]        
-        lchunk = Chunk(content=left, logprob=self.logprob)
-        rchunk = Chunk(content=right, logprob=self.logprob)
+        lchunk = BlockChunk(content=left, logprob=self.logprob)
+        rchunk = BlockChunk(content=right, logprob=self.logprob)
         return lchunk, rchunk
 
     def __repr__(self) -> str:
         return f"Chunk({self.content!r})"
+
+    def model_dump(self, *, exclude_none: bool = True) -> dict:
+        """Serialize chunk to JSON-compatible dict."""
+        result = {"content": self.content}
+        if self.logprob is not None or not exclude_none:
+            result["logprob"] = self.logprob
+        return result
+
+    @classmethod
+    def model_validate(cls, data: dict) -> "BlockChunk":
+        """Deserialize dict to BlockChunk."""
+        return cls(
+            content=data["content"],
+            logprob=data.get("logprob"),
+        )
 
 
 @dataclass
@@ -185,9 +200,9 @@ class Span:
     Ownership: BlockText owns Spans (Span.owner = BlockText).
     Blocks reference Spans but don't own them.
     """
-    prefix: list[Chunk] = field(default_factory=list)
-    content: list[Chunk] = field(default_factory=list)
-    postfix: list[Chunk] = field(default_factory=list)
+    prefix: list[BlockChunk] = field(default_factory=list)
+    content: list[BlockChunk] = field(default_factory=list)
+    postfix: list[BlockChunk] = field(default_factory=list)
 
     # Linked list pointers (managed by BlockText)
     prev: Span | None = field(default=None, repr=False)
@@ -239,12 +254,12 @@ class Span:
     
     def add_newline(self) -> Span:
         """Add newline to postfix."""
-        self.postfix.append(Chunk(content="\n"))
+        self.postfix.append(BlockChunk(content="\n"))
         return self
 
     # --- Chunk Iteration ---
 
-    def chunks(self) -> Iterator[Chunk]:
+    def chunks(self) -> Iterator[BlockChunk]:
         """Iterate over all chunks in order: prefix, content, postfix."""
         yield from self.prefix
         yield from self.content
@@ -256,36 +271,36 @@ class Span:
 
     # --- Mutation: Content ---
 
-    def append_content(self, chunks: list[Chunk]) -> Span:
+    def append_content(self, chunks: list[BlockChunk]) -> Span:
         """Append chunks to content."""
         self.content.extend(chunks)
         return self
 
-    def prepend_content(self, chunks: list[Chunk]) -> Span:
+    def prepend_content(self, chunks: list[BlockChunk]) -> Span:
         """Prepend chunks to content."""
         self.content = chunks + self.content
         return self
 
     # --- Mutation: Prefix ---
 
-    def append_prefix(self, chunks: list[Chunk]) -> Span:
+    def append_prefix(self, chunks: list[BlockChunk]) -> Span:
         """Append chunks to prefix."""
         self.prefix.extend(chunks)
         return self
 
-    def prepend_prefix(self, chunks: list[Chunk]) -> Span:
+    def prepend_prefix(self, chunks: list[BlockChunk]) -> Span:
         """Prepend chunks to prefix."""
         self.prefix = chunks + self.prefix
         return self
 
     # --- Mutation: Postfix ---
 
-    def append_postfix(self, chunks: list[Chunk]) -> Span:
+    def append_postfix(self, chunks: list[BlockChunk]) -> Span:
         """Append chunks to postfix."""
         self.postfix.extend(chunks)
         return self
 
-    def prepend_postfix(self, chunks: list[Chunk]) -> Span:
+    def prepend_postfix(self, chunks: list[BlockChunk]) -> Span:
         """Prepend chunks to postfix."""
         self.postfix = chunks + self.postfix
         return self
@@ -310,3 +325,61 @@ class Span:
         prefix_str = f"prefix={self.prefix_text!r}, " if self.prefix else ""
         postfix_str = f", postfix={self.postfix_text!r}" if self.postfix else ""
         return f"Span({prefix_str}content={self.content_text!r}{postfix_str})"
+
+    # --- Serialization ---
+
+    def model_dump(
+        self,
+        *,
+        include_chunks: bool = False,
+        exclude_none: bool = True,
+    ) -> dict:
+        """
+        Serialize span to JSON-compatible dict.
+
+        Args:
+            include_chunks: Include chunk-level detail with logprobs
+            exclude_none: Exclude None/empty values
+
+        Returns:
+            Dict with prefix, content, postfix (as text or chunks)
+        """
+        result: dict = {
+            "prefix": self.prefix_text,
+            "content": self.content_text,
+            "postfix": self.postfix_text,
+        }
+
+        if include_chunks:
+            result["prefix_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.prefix]
+            result["content_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.content]
+            result["postfix_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.postfix]
+
+        return result
+
+    @classmethod
+    def model_validate(cls, data: dict) -> "Span":
+        """
+        Deserialize dict to Span.
+
+        If chunks are present, uses them (preserving logprobs).
+        Otherwise creates chunks from text.
+
+        Args:
+            data: Dict from model_dump() or JSON
+
+        Returns:
+            Reconstructed Span
+        """
+        # Check if we have chunk-level data
+        if data.get("prefix_chunks") or data.get("content_chunks") or data.get("postfix_chunks"):
+            prefix = [BlockChunk.model_validate(c) for c in data.get("prefix_chunks", [])]
+            content = [BlockChunk.model_validate(c) for c in data.get("content_chunks", [])]
+            postfix = [BlockChunk.model_validate(c) for c in data.get("postfix_chunks", [])]
+        else:
+            # Create simple chunks from text
+            prefix = [BlockChunk(content=data["prefix"])] if data.get("prefix") else []
+            content = [BlockChunk(content=data["content"])] if data.get("content") else []
+            postfix = [BlockChunk(content=data["postfix"])] if data.get("postfix") else []
+
+        return cls(prefix=prefix, content=content, postfix=postfix)
