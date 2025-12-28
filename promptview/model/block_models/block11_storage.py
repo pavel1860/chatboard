@@ -153,40 +153,39 @@ def compute_block_hash(
 # =============================================================================
 
 def dump_chunks(chunks: list["BlockChunk"]) -> list[dict]:
-    """Serialize chunks to list of dicts."""
-    return [
-        {"content": c.content, "logprob": c.logprob}
-        for c in chunks
-    ]
+    """Serialize chunks to list of dicts using BlockChunk.model_dump()."""
+    return [c.model_dump() for c in chunks]
 
 
 def dump_span(span: "Span") -> dict:
     """
     Serialize a Span to storage format.
 
+    Uses Span.model_dump() internally and adds Merkle hash ID.
     Returns dict with text fields and chunk arrays.
     """
-    prefix_chunks = dump_chunks(span.prefix)
-    content_chunks = dump_chunks(span.content)
-    postfix_chunks = dump_chunks(span.postfix)
+    # Use Span's model_dump for serialization
+    data = span.model_dump(include_chunks=True)
 
+    # Compute content-addressed hash
     span_id = compute_span_hash(
-        span.prefix_text,
-        span.content_text,
-        span.postfix_text,
-        prefix_chunks,
-        content_chunks,
-        postfix_chunks,
+        data["prefix"],
+        data["content"],
+        data["postfix"],
+        data["prefix_chunks"],
+        data["content_chunks"],
+        data["postfix_chunks"],
     )
 
+    # Return storage format (rename keys to match DB schema)
     return {
         "id": span_id,
-        "prefix_text": span.prefix_text,
-        "content_text": span.content_text,
-        "postfix_text": span.postfix_text,
-        "prefix_chunks": prefix_chunks,
-        "content_chunks": content_chunks,
-        "postfix_chunks": postfix_chunks,
+        "prefix_text": data["prefix"],
+        "content_text": data["content"],
+        "postfix_text": data["postfix"],
+        "prefix_chunks": data["prefix_chunks"],
+        "content_chunks": data["content_chunks"],
+        "postfix_chunks": data["postfix_chunks"],
     }
 
 
@@ -275,32 +274,25 @@ def load_block(
     Reconstruct a Block tree from storage format.
 
     Creates a shared BlockText for all blocks in the tree.
+    Uses Span.model_validate() for span reconstruction.
     """
-    from ...block.block11 import Block, BlockSchema, BlockChunk, Span, BlockText
+    from ...block.block11 import Block, BlockSchema, Span, BlockText
 
     # Single shared BlockText for the entire tree
     shared_block_text = BlockText()
 
     def load_span_data(span_data: dict) -> Span:
-        """Load a span from storage data into shared BlockText."""
-        prefix_chunks = [
-            BlockChunk(content=c["content"], logprob=c.get("logprob"))
-            for c in span_data.get("prefix_chunks", [])
-        ]
-        content_chunks = [
-            BlockChunk(content=c["content"], logprob=c.get("logprob"))
-            for c in span_data.get("content_chunks", [])
-        ]
-        postfix_chunks = [
-            BlockChunk(content=c["content"], logprob=c.get("logprob"))
-            for c in span_data.get("postfix_chunks", [])
-        ]
-
-        span = Span(
-            prefix=prefix_chunks,
-            content=content_chunks,
-            postfix=postfix_chunks,
-        )
+        """Load a span from storage data using Span.model_validate()."""
+        # Convert storage format keys to model_dump format
+        model_data = {
+            "prefix": span_data.get("prefix_text", ""),
+            "content": span_data.get("content_text", ""),
+            "postfix": span_data.get("postfix_text", ""),
+            "prefix_chunks": span_data.get("prefix_chunks", []),
+            "content_chunks": span_data.get("content_chunks", []),
+            "postfix_chunks": span_data.get("postfix_chunks", []),
+        }
+        span = Span.model_validate(model_data)
         shared_block_text.append(span)
         return span
 

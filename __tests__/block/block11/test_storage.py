@@ -97,10 +97,10 @@ class TestDumpChunks:
         ]
 
     def test_dump_chunk_none_logprob(self):
-        """Chunk with None logprob is handled."""
+        """Chunk with None logprob excludes the field (cleaner JSON)."""
         chunk = BlockChunk(content="test")
         result = dump_chunks([chunk])
-        assert result == [{"content": "test", "logprob": None}]
+        assert result == [{"content": "test"}]  # logprob excluded when None
 
 
 class TestDumpSpan:
