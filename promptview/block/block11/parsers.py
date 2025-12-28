@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 from xml.parsers import expat
 
 
@@ -16,6 +16,9 @@ class ParserError(Exception):
     """Error during parsing."""
     pass
 
+class ParserEvent(TypedDict):
+    type: Literal["init", "commit", "delta"]
+    value: Block | BlockChunk
 
 class XmlParser(Process):
     """
@@ -69,11 +72,13 @@ class XmlParser(Process):
         self._pending: tuple[str, Any, int] | None = None
 
         # Output queue for blocks
-        self._output_queue: list[Block] = []
+        self._output_queue: list[ParserEvent] = []
 
         # Synthetic root tag handling - always use synthetic root for consistent parsing
         self._root_tag = "_root_tag_"
         self._has_synthetic_root = True
+        
+        self._is_stream_exhausted = False
 
         # Create wrapper schema that contains the real schema as child
         # But if schema is already a wrapper (no name), use it directly
@@ -129,9 +134,13 @@ class XmlParser(Process):
         # Return queued output if available
         if self._output_queue:
             return self._output_queue.pop(0)
+        elif self._is_stream_exhausted:
+            raise StopAsyncIteration()
+            
+        
 
         # Consume upstream chunks until we have output
-        while not self._output_queue:
+        while not self._output_queue and not self._is_stream_exhausted:
             try:
                 chunk = await super().__anext__()
                 # Feed the chunk (may produce output)
@@ -141,9 +150,9 @@ class XmlParser(Process):
                     self.feed(BlockChunk(content=str(chunk)))
             except StopAsyncIteration:
                 # Upstream exhausted
+                self._is_stream_exhausted = True
                 if self._output_queue:
                     return self._output_queue.pop(0)
-                raise
 
         return self._output_queue.pop(0)
 
@@ -311,7 +320,7 @@ class XmlParser(Process):
             self._root = self._wrapper_schema.instantiate_partial()
             self._stack.append((self._wrapper_schema, self._root))
             return
-        
+
         if self._is_top_list_schema():
             name = attrs["name"]
 
@@ -319,18 +328,20 @@ class XmlParser(Process):
         child_schema = self._get_child_schema(name)
         if child_schema is None:
             raise ParserError(f"Unknown tag '{name}' - no matching schema found")
-        
-        
+
+
         if isinstance(child_schema, BlockListSchema):
             if self._stack[-1][0] != child_schema:
                 child_block = child_schema.instantiate(chunks)
                 self._push_block(child_schema, child_block)
+                # Queue init event for list schema block
+                self._output_queue.append({"type": "init", "value": child_block})
             name = attrs["name"]
             child_schema = self._get_child_schema(name)
             if child_schema is None:
                 raise ParserError(f"Unknown tag '{name}' - no matching schema found")
-            
-        
+
+
         # Instantiate block from schema
         child_block = child_schema.instantiate_partial(chunks)
 
@@ -340,6 +351,9 @@ class XmlParser(Process):
 
         # Append to current block
         self._push_block(child_schema, child_block)
+
+        # Queue init event for FBP streaming
+        self._output_queue.append({"type": "init", "value": child_block})
 
     def _handle_end(self, name: str, chunks: list[BlockChunk]):
         """Handle closing tag - commit and pop stack."""
@@ -358,17 +372,17 @@ class XmlParser(Process):
             raise ParserError(f"Mismatched closing tag: expected '{schema.name}', got '{name}'")
 
         # Commit could be called here for validation
-        block.commit(chunks)
+        end_block = block.commit(chunks)
+
+        # Queue commit event for FBP streaming
+        self._output_queue.append({"type": "commit", "value": end_block})
 
     def _handle_chardata(self, chunks: list[BlockChunk]):
-        """Handle character data - append to current block."""
+        """Handle character data - append to current block and queue for streaming."""
         if self.current_block is None:
             return
 
         self.current_block.append(chunks)
-        # Append content from chunks
-        # for chunk in chunks:
-        #     # Skip whitespace-only content between tags
-        #     self.current_block.append(chunk)
-            # if chunk.content.strip():
-                # self.current_block.append_content(chunk.content)
+
+        # Queue delta event for FBP streaming
+        self._output_queue.append({"type": "delta", "value": chunks})

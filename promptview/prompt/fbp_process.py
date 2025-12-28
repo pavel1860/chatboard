@@ -1032,11 +1032,11 @@ class Process:
 
             return ip
 
-        except StopAsyncIteration:
+        except StopAsyncIteration as e:
             # Upstream exhausted - cleanup and propagate
             await self.on_stop()
             self._did_end = True
-            raise StopAsyncIteration
+            raise e
 
         except Exception as e:
             # Error occurred - handle and propagate
