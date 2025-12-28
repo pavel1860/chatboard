@@ -1739,11 +1739,22 @@ class StreamController(ObservableProcess):
         self._temp_data_flow: DataFlowNode | None = None
 
 
-    def get_output(self, idx: int | None = None) -> Any:
+    def get_output(self, idx: int | None = None, include_fence: bool = False) -> Any:
+        """
+        Get the output from this stream controller.
+
+        Args:
+            idx: Not used, kept for interface compatibility.
+            include_fence: If True, include markdown code fences in result.
+                          If False (default), return just the XML content.
+
+        Returns:
+            The parsed result or accumulated result.
+        """
         if self._parser is not None:
-            return self._parser.result
+            return self._parser.get_result(include_fence=include_fence)
         if self._accumulator is not None:
-            return self._accumulator.result        
+            return self._accumulator.result
         return None
     
     async def on_start(self):

@@ -7,6 +7,7 @@ from .mutator_meta import MutatorMeta
 from .path import Path, compute_path
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import core_schema
+from promptview.utils.type_utils import UnsetType, UNSET
 if TYPE_CHECKING:
     from .block_text import BlockText
     from .schema import BlockSchema, BlockListSchema

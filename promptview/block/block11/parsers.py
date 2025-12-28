@@ -97,8 +97,8 @@ class XmlParser(Process):
             # Schema is already a wrapper - use it as the root schema
             self._wrapper_schema = self.schema
         else:
-            # Schema has content - wrap it
-            self._wrapper_schema = BlockSchema(name=self._root_tag, style=[])
+            # Schema has content - wrap it with RootMutator
+            self._wrapper_schema = BlockSchema(name=self._root_tag, style="root")
             self._wrapper_schema.children.append(self.schema)
 
         self.feed_str(f"<{self._root_tag}>")

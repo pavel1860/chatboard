@@ -101,7 +101,7 @@ class XmlMutator(Mutator):
     def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "<")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-        with Block(_auto_handle=_auto_handle) as xml_blk:
+        with Block(tags=tags, role=role, attrs=attrs, _auto_handle=_auto_handle) as xml_blk:
             with xml_blk(content_chunks, tags=["opening-tag"]) as content:
                 content.append_prefix(prev_chunks + start_chunk)
                 content.append_postfix(end_chunk + post_chunks)
@@ -123,10 +123,74 @@ class XmlMutator(Mutator):
 
 
 
+class RootMutator(Mutator):
+    """
+    Mutator for parser root blocks.
+
+    Structures markdown code fence blocks similar to XmlMutator:
+    - head: The opening fence (```xml)
+    - body: The actual XML content inside the wrapper
+    - block_postfix: The closing fence (```)
+
+    Structure:
+        RootBlock(span='```xml', children=[wrapper, closing_fence])
+          wrapper (is_wrapper=True, children=[xml_content...])
+          closing_fence (span='```')
+    """
+    styles = ["root"]
+
+    @property
+    def head(self) -> Span:
+        """The opening markdown fence (```xml)."""
+        return self.block.span
+
+    @property
+    def body(self) -> list[Block]:
+        """The actual content inside the wrapper."""
+        
+        return self.block.children
+        
+        # First child is the wrapper containing actual content
+        # first_child = self.block.children[0]
+        # if first_child.is_wrapper:
+        #     return first_child.body        
+
+    @property
+    def content(self) -> str:
+        """Content of the head span."""
+        return self.block.span.content_text
+
+    @property
+    def block_end(self) -> Span:
+        """The closing fence span."""
+        if len(self.block.children) >= 2:
+            return self.block.children[-1].span
+        if self.block.children:
+            return self.block.children[-1].mutator.block_end
+        return self.block.span
+
+    @property
+    def block_postfix(self) -> Span | None:
+        """The closing fence block's span."""
+        if len(self.block.children) >= 2:
+            return self.block.children[-1].span
+        return None
+    
+    
+    # def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
+    #     with Block(content, role=role, tags=tags, attrs=attrs) as block:
+    #         with block(content) as head:
+    #             pass
+    #         # with block() as body:
+    #         #     pass
+    #     return block
+
+
+
 class MarkdownMutator(Mutator):
     styles = ["markdown", "md"]
-    
-    
+
+
     def render(self, block: Block, path: Path) -> Block:
         block.prepend_prefix("#" * (path.depth + 1) + " ")
         return block

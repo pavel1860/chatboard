@@ -2,7 +2,7 @@ from .span import BlockChunk, Span
 from .block_text import BlockText
 from .block import Block, Mutator, ContentType, BaseContentTypes
 from .schema import BlockSchema, BlockList, BlockListSchema
-from .mutators import XmlMutator
+from .mutators import XmlMutator, RootMutator
 from .parsers import XmlParser, ParserError
 from .path import Path, compute_path
 
@@ -18,6 +18,7 @@ __all__ = [
     "BlockList",
     "BlockListSchema",
     "XmlMutator",
+    "RootMutator",
     "XmlParser",
     "ParserError",
     "Path",
