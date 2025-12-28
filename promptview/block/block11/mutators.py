@@ -39,6 +39,13 @@ class XmlMutator(Mutator):
         return self.block.children[1].span
     
     
+    @property
+    def block_postfix(self) -> Span | None:
+        if len(self.block.children) == 2:
+            return self.block.children[1].span
+        return None
+    
+    
     def is_head_open(self, chunks: list[BlockChunk]) -> bool:
         if self.block.children[0].children:
             return False
@@ -56,7 +63,7 @@ class XmlMutator(Mutator):
                 return False
         else:
             return True
-        
+                
         
     def render_attrs(self, block: Block) -> str:
         attrs = ""

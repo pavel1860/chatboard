@@ -87,6 +87,11 @@ class Mutator(metaclass=MutatorMeta):
         return self.body[-1].mutator.block_end
     
     
+    @property
+    def block_postfix(self) -> Span | None:
+        return None
+    
+    
 
     def is_head_closed(self) -> bool:
         return self.head.has_newline()

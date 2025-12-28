@@ -77,8 +77,13 @@ class XmlParser(Process):
         # Synthetic root tag handling - always use synthetic root for consistent parsing
         self._root_tag = "_root_tag_"
         self._has_synthetic_root = True
+        self._index = 0
         
         self._is_stream_exhausted = False
+        self._last_data_type = None
+
+        # Buffer for incomplete escape sequences (e.g., '\' at end of chunk)
+        self._escape_buffer: BlockChunk | None = None
 
         # Create wrapper schema that contains the real schema as child
         # But if schema is already a wrapper (no name), use it directly
@@ -116,6 +121,33 @@ class XmlParser(Process):
         if not self._stack:
             return None
         return self._stack[-1][0]
+    
+    # -------------------------------------------------------------------------
+    # stack management
+    # -------------------------------------------------------------------------
+    
+    def _pop(self) -> tuple["BlockSchema", Block]:
+        return self._stack.pop()
+    
+    def _push(self, schema: "BlockSchema", block: Block):
+        self._stack.append((schema, block))
+    
+    def _top(self) -> tuple["BlockSchema", Block]:
+        return self._stack[-1]
+    
+    def _top_or_none(self) -> tuple["BlockSchema", Block] | None:
+        if not self._stack:
+            return None
+        return self._stack[-1]
+    
+    
+    def _should_pop(self, chunks: list[BlockChunk]) -> bool:
+        if not self._stack:
+            return False
+        schema, block = self._top()
+        return block.mutator.is_last_block_open(chunks)
+        
+        
 
     # -------------------------------------------------------------------------
     # Process interface
@@ -168,6 +200,19 @@ class XmlParser(Process):
             chunk: Chunk with content (and optional logprob)
             is_final: Whether this is the last chunk
         """
+        # Handle escape sequence buffering
+        if self._escape_buffer is not None:
+            # Merge buffered content with current chunk
+            merged_content = self._escape_buffer.content + chunk.content
+            # Use the logprob from the current chunk (or could average them)
+            chunk = BlockChunk(content=merged_content, logprob=chunk.logprob)
+            self._escape_buffer = None
+
+        # Check if chunk ends with backslash (incomplete escape sequence)
+        if not is_final and chunk.content.endswith("\\"):
+            self._escape_buffer = chunk
+            return
+
         data = chunk.content.encode("utf-8")
         start = self._total_bytes
         end = start + len(data)
@@ -186,6 +231,17 @@ class XmlParser(Process):
 
     def close(self):
         """Close the parser and finalize the block tree."""
+        # Flush any buffered escape sequence before closing
+        if self._escape_buffer is not None:
+            buffered = self._escape_buffer
+            self._escape_buffer = None
+            data = buffered.content.encode("utf-8")
+            start = self._total_bytes
+            end = start + len(data)
+            self._chunks.append((start, end, buffered))
+            self._total_bytes = end
+            self._parser.Parse(data, False)
+
         if self._has_synthetic_root:
             self.feed_str(f"</{self._root_tag}>")
         self._parser.Parse(b"", True)
@@ -257,21 +313,40 @@ class XmlParser(Process):
         """Process any pending event."""
         if self._pending is None:
             return
-
+        self._index += 1
+        # print(self._index, self._pending)
         event_type, event_data, start_byte = self._pending
         chunks = self._get_chunks_in_range(start_byte, end_byte)
         self._pending = None
 
         if not chunks:
             return
-        print(event_type, repr(event_data), chunks)
+        
+        print(self._index, event_type, repr(event_data), chunks)
         if event_type == "start":
+            if self._last_data_type == "end":
+                self._pop()
             name, attrs = event_data
             self._handle_start(name, attrs, chunks)
+            self._last_data_type = "start"
         elif event_type == "end":
+            if self._last_data_type == "end":
+                self._pop()
             name = event_data
             self._handle_end(name, chunks)
+            self._last_data_type = "end"
         elif event_type == "chardata":
+            if self._last_data_type == "end":
+                if self._try_append_to_block_postfix(chunks):
+                    return
+                else:
+                    self._pop()
+                    self._last_data_type = "start"
+                    self._output_queue.append({"type": "delta", "value": chunks})
+                    return
+                # if self._should_pop(chunks):
+                #     self._pop()
+                #     self._last_data_type = "start"
             self._handle_chardata(chunks)
 
     def _on_start(self, name: str, attrs: dict):
@@ -288,9 +363,22 @@ class XmlParser(Process):
 
     def _on_chardata(self, data: str):
         """Handle character data event from expat."""
+        print(f"{repr(data)}")
         current_pos = self._parser.CurrentByteIndex
         self._flush_pending(current_pos)
         self._pending = ("chardata", data, current_pos)
+        
+    def _try_append_to_block_postfix(self, chunks: list[BlockChunk]):
+        schema, block = self._top()
+        postfix = block.mutator.block_postfix
+        if postfix is None:
+            return False
+        if all(chunk.is_line_end for chunk in chunks):
+            postfix.append_postfix(chunks)
+            return True
+        return False
+        
+        
 
     # -------------------------------------------------------------------------
     # Block building
@@ -313,6 +401,8 @@ class XmlParser(Process):
 
     def _handle_start(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         """Handle opening tag - instantiate block from schema."""
+        
+        
 
         # Handle synthetic root
         if name == self._root_tag:
@@ -365,7 +455,8 @@ class XmlParser(Process):
             raise ParserError(f"Unexpected closing tag '{name}' - stack is empty")
 
         # Pop from stack
-        schema, block = self._stack.pop()
+        # schema, block = self._stack.pop()
+        schema, block = self._top()
 
         # Validate name matches
         if name != schema.name and name not in schema.tags:
