@@ -235,13 +235,13 @@ class XmlParser(Process):
             split_end = "split end" if chunk_end > end else ""
             split_start = "split start" if chunk_start < start else ""
                 
-            print(chunk_start,"<", f"'{end}'", start_cond, "&",  chunk_end, ">", f"'{start}'", end_cond, "|", chunk, cond, split_start, split_end)         
+            # print(chunk_start,"<", f"'{end}'", start_cond, "&",  chunk_end, ">", f"'{start}'", end_cond, "|", chunk, cond, split_start, split_end)         
         for chunk_start, chunk_end, chunk in self._chunks:
-            # print_chunks(chunk, chunk_start, chunk_end)
+            print_chunks(chunk, chunk_start, chunk_end)
             if chunk_start < end and chunk_end > start:
                 if chunk_end > end:
                     # chunk, _ = chunk.split(chunk_end - end)
-                    chunk, _ = chunk.split(end - start)
+                    chunk, _ = chunk.split(end - chunk_start)
                 if chunk_start < start:
                     # _, chunk = chunk.split(start - chunk_start)
                     _, chunk = chunk.split(start - chunk_start)

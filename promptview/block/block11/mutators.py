@@ -45,12 +45,13 @@ class XmlMutator(Mutator):
         if chunks_contain(self.block.children[0].span.postfix, ">"):
             # if all(chunk.isspace() or chunk.is_line_end for chunk in chunks):
             #     return True
+            if all(chunk.is_line_end for chunk in chunks):
+                return True
             if all(chunk.isspace() for chunk in chunks):
                 if self.block.children[0].has_newline():
                     return False                
                 return True
-            if all(chunk.is_line_end for chunk in chunks):
-                return True
+            
             else:
                 return False
         else:
