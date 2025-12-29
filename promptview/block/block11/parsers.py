@@ -19,6 +19,10 @@ class ParserError(Exception):
 class ParserEvent(TypedDict):
     type: Literal["init", "commit", "delta"]
     value: Block | BlockChunk
+    
+    
+# ParserState = Literal["start_tag_prefix", "start_tag_content", "start_tag_postfix", "tag_body", "end_tag_prefix", "end_tag_content", "end_tag_postfix"]
+ParserState = Literal["start", "body", "end"]
 
 class XmlParser(Process):
     """
@@ -82,6 +86,7 @@ class XmlParser(Process):
         # Synthetic root tag handling - always use synthetic root for consistent parsing
         self._root_tag = "_root_tag_"
         self._has_synthetic_root = True
+        self._state: ParserState | None = None
         self._index = 0
         
         self._is_stream_exhausted = False
@@ -314,64 +319,72 @@ class XmlParser(Process):
     # Event handling
     # -------------------------------------------------------------------------
     
-    def _stage_event(self, event_type: Literal["start", "end", "chardata"], event_data: tuple[str, dict | None] | str, chunks: list[BlockChunk]) -> list[tuple[Literal["start", "end", "chardata"], Any, list[BlockChunk]]]:
-        
-        def get_chunk_kind(chunks: list[BlockChunk]) -> Literal["text", "space", "newline"]:
-            if all(chunk.is_line_end for chunk in chunks):
-                return "newline"
-            elif all(chunk.isspace() for chunk in chunks):
-                return "space"
-            else:
-                return "text"
             
+    def _stage_event(self, event_type: Literal["start", "end", "chardata"], event_data: tuple[str, dict | None] | str, chunks: list[BlockChunk]) -> tuple[Literal["start", "end", "chardata", "start_postfix", "end_postfix", "root_text", "body"] | None, Any, list[BlockChunk]]:
+        
+        # def get_chunk_kind(chunks: list[BlockChunk]) -> Literal["text", "space", "newline"]:
+        chunk_kind=None
         if event_type == "chardata":
-            if self._pending_event is None:
-                chunk_kind = get_chunk_kind(chunks)
-                if not self._in_text_chunks:
-                    if chunk_kind == "space":
-                        self._pending_prefix.extend(chunks)
-                        return []
-                    else:
-                        self._in_text_chunks = True
-                return [("chardata", None, chunks)]
+            if all(chunk.is_line_end for chunk in chunks):
+                chunk_kind = "newline"
+            elif all(chunk.isspace() for chunk in chunks):
+                chunk_kind = "space"
             else:
-                chunk_kind = get_chunk_kind(chunks)
-                if chunk_kind == "newline":
-                    self._pending_event[2].extend(chunks)
-                    self._in_text_chunks = False
-                    self._pending_has_ending = True
-                    return []
-                elif chunk_kind == "space":
-                    self._pending_prefix.extend(chunks)
-                    if self._pending_has_ending:
-                        pending_event = self._pending_event
-                        self._pending_event = None
-                        self._pending_has_ending = False
-                        return [pending_event]                    
-                    return []
-                else:
-                    self._in_text_chunks = True
-                    _event_type, _event_data, _chunks = self._pending_event
-                    _chunks = self._pending_prefix + _chunks
-                    self._pending_prefix = []
-                    self._pending_event = None
-                    return [
-                        (_event_type, _event_data, _chunks),
-                        ("chardata", None, chunks)
-                    ]
-        else:    # start or end event  
-            self._in_text_chunks = False      
-            if self._pending_event is None:
-                self._pending_event = (event_type, event_data, chunks)
-                return []
-            else:
-                pending_event = self._pending_event
-                self._pending_event = (event_type, event_data, chunks)
-                return [pending_event]
-        
+                chunk_kind = "text"
+                
+        def add_prefix(chunks: list[BlockChunk]):
+            chunks = self._pending_prefix + chunks
+            self._pending_prefix = []
+            return chunks
+         
+        if chunk_kind == "space":
+            self._pending_prefix.extend(chunks)
+            return None, None, []
             
-        
-        
+        if self._state is None:
+            if event_type == "start":
+                self._state = "start"
+                return "start", event_data, add_prefix(chunks)
+            elif event_type == "end":
+                self._state = "end"
+                raise ParserError(f"Unexpected end event at root level")
+            else:
+                return "root_text", None, add_prefix(chunks)
+        elif self._state == "start":
+            if event_type == "start":
+                return "start", event_data, add_prefix(chunks)
+            elif event_type == "end":
+                return "end", event_data, add_prefix(chunks)
+            else:
+                if chunk_kind == "newline":
+                    return "start_postfix", event_data, add_prefix(chunks)
+                else:
+                    self._state = "body"
+                    return "body", event_data, add_prefix(chunks)
+                
+        elif self._state == "body":
+            if event_type == "start":
+                self._state = "start"
+                return "start", event_data, add_prefix(chunks)
+            elif event_type == "end":
+                self._state = "end"
+                return "end", event_data, add_prefix(chunks)
+            else:
+                return "body", event_data, add_prefix(chunks)
+        elif self._state == "end":
+            if event_type == "start":
+                self._state = "start"
+                self._pop()
+                return "start", event_data, add_prefix(chunks)
+            elif event_type == "end":
+                self._state = "end"
+                self._pop()
+                return "end", event_data, add_prefix(chunks)
+            else:
+                if chunk_kind == "newline":
+                    return "end_postfix", event_data, add_prefix(chunks)
+                else:
+                    raise ParserError(f"Unexpected character data at end level")
 
     def _flush_pending(self, end_byte: int):
         """Process any pending event."""
@@ -388,26 +401,31 @@ class XmlParser(Process):
         
         if event_type != "chardata":
             print(f"############# {event_type} - {repr(event_data)} ############")
-        print(self._index, event_type, repr(event_data), chunks)
-        
-        for event_type, event_data, chunks in self._stage_event(event_type, event_data, chunks):
+        # print(self._index, event_type, repr(event_data), chunks)
+        event_type, event_data, chunks = self._stage_event(event_type, event_data, chunks)
+        if event_type is None:
+            return
+        print(self._index,self._state,")", event_type, repr(event_data), chunks)
             # print("Handling event:", event_type, event_data, chunks)
-            if event_type == "start":
-                name, attrs = event_data
-                self._handle_start(name, attrs, chunks)
-            elif event_type == "end":
-                name = event_data
-                self._handle_end(name, chunks)
-            elif event_type == "chardata":
-                self._handle_chardata(chunks)
-        # if event_type == "start":
-        #     name, attrs = event_data
-        #     self._handle_start(name, attrs, chunks)
-        # elif event_type == "end":
-        #     name = event_data
-        #     self._handle_end(name, chunks)
-        # elif event_type == "chardata":
-        #     self._handle_chardata(chunks)
+        if self.current_block is not None:
+            # print("---------------------------------")
+            # self.current_block.print_debug()
+            print("---------------------------------")
+        if event_type == "start":
+            name, attrs = event_data
+            self._handle_start(name, attrs, chunks)
+        elif event_type == "end":
+            name = event_data
+            self._handle_end(name, chunks)
+        elif event_type == "body":
+            self._handle_chardata(chunks)
+        elif event_type == "start_postfix":
+            self._handle_start_postfix(chunks)
+        elif event_type == "end_postfix":
+            self._handle_end_postfix(chunks)
+        elif event_type == "root_text":
+            self._handle_root_text(chunks)
+
 
     def _on_start(self, name: str, attrs: dict):
         """Handle start tag event from expat."""
@@ -515,8 +533,8 @@ class XmlParser(Process):
             raise ParserError(f"Unexpected closing tag '{name}' - stack is empty")
 
         # Pop from stack
-        schema, block = self._stack.pop()
-        # schema, block = self._top()
+        # schema, block = self._stack.pop()
+        schema, block = self._top()
 
         # Validate name matches
         if name != schema.name and name not in schema.tags:
@@ -537,3 +555,27 @@ class XmlParser(Process):
 
         # Queue delta event for FBP streaming
         self._output_queue.append({"type": "delta", "value": chunks})
+        
+        
+    def _handle_start_postfix(self, chunks: list[BlockChunk]):
+        """Handle postfix - append to current block and queue for streaming."""
+        if self.current_block is None:
+            return
+
+        self.current_block.head.append_postfix(chunks)
+
+        # Queue delta event for FBP streaming
+        self._output_queue.append({"type": "delta", "value": chunks})
+        
+    def _handle_end_postfix(self, chunks: list[BlockChunk]):
+        if self.current_block is None:
+            return
+
+        self.current_block.mutator.block_postfix.append_postfix(chunks)
+
+        # Queue delta event for FBP streaming
+        self._output_queue.append({"type": "delta", "value": chunks})
+        
+    def _handle_root_text(self, chunks: list[BlockChunk]):
+        pass
+    
