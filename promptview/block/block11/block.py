@@ -1132,6 +1132,19 @@ class Block:
         if not result:
             raise ValueError(f'Tag path "{tags}" does not exist')
         return result[0]
+    
+    
+    def get_one_schema(self, tags: str | list[str]) -> "BlockSchema | None":
+        """
+        Get the first schema block matching a tag path.
+        """
+        from .schema import BlockSchema
+        result = self.get_all(tags, children_only=True)
+        if not result:
+            raise ValueError(f'Tag path "{tags}" does not exist')
+        if not isinstance(result[0], BlockSchema):
+            raise ValueError(f"Block {result[0]} is not a BlockSchema")
+        return result[0]
 
     def get_one_or_none(self, tags: str | list[str]) -> "Block | None":
         """
@@ -1145,6 +1158,19 @@ class Block:
         """
         result = self.get_all(tags, children_only=True)
         return result[0] if result else None
+    
+    
+    def get_one_schema_or_none(self, tags: str | list[str]) -> "BlockSchema | None":
+        """
+        Get the first schema block matching a tag path, or None if not found.
+        """
+        from .schema import BlockSchema
+        result = self.get_all(tags, children_only=True)
+        if not result:
+            return None
+        if not isinstance(result[0], BlockSchema):
+            return None
+        return result[0]
     
     
     def __getitem__(self, index: int) -> Block:

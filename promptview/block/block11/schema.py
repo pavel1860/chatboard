@@ -1,8 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Type, Any
-
+from ...utils.string_utils import camel_to_snake
 from .block import Block, Mutator, ContentType, parse_style
-from promptview.utils.type_utils import UnsetType, UNSET
+from ...utils.type_utils import UnsetType, UNSET
 from pydantic import BaseModel
 if TYPE_CHECKING:
     from .block_text import BlockText
@@ -727,18 +727,28 @@ class BlockListSchema(BlockSchema):
         self.append_child(block)
         return block
 
-    def get_item_schema(self, key_value: str | None = None) -> BlockSchema | None:
+    def get_item_schema(self, key_value: str | None = None, model_cls: Type[BaseModel] | None = None) -> BlockSchema | None:
         """
         Get an item schema, optionally by key value.
 
         If key_value is provided and key is set, looks up by key.
         Otherwise returns the first registered schema.
         """
+        if model_cls is None and key_value is None:
+            raise ValueError("Either key_value or model must be provided")
+        if model_cls is not None:
+            key_value = camel_to_snake(model_cls.__name__)
         if key_value is not None and self.key is not None:
-            for schema in self.list_schemas:
-                if schema.attrs.get(self.key) == key_value:
-                    return schema
+            schema = self.get_one_schema(key_value)
+            if schema is None:
+                raise ValueError(f"Schema for {key_value} not found")
+            return schema
+                
+            # for schema in self.list_schemas:
+            #     if schema.attrs.get(self.key) == key_value:
+            #         return schema
         return self.list_schemas[0] if self.list_schemas else None
+    
 
     # -------------------------------------------------------------------------
     # Instantiation
@@ -828,10 +838,13 @@ class BlockListSchema(BlockSchema):
         )
 
         # Get item schema for instantiation
-        item_schema = self.get_item_schema()
+        # item_schema = self.get_item_schema()
+        # print(id(self))
 
         for item in data:
             if isinstance(item, dict):
+                raise ValueError("Not implemented")
+                item_schema = self.get_item_schema()
                 if item_schema is not None and item_schema.children:
                     # Dict with nested schema
                     item_block = item_schema.inst_from_dict(item)
@@ -850,15 +863,13 @@ class BlockListSchema(BlockSchema):
                         child = Block(content=v, tags=[k])
                         item_block.append_child(child)
             elif isinstance(item, BaseModel):
-                if item_schema is not None:
-                    item_block = item_schema.inst_from_dict(item.model_dump())
-                else:
-                    item_block = Block(
-                        content=None,
-                        tags=[self.item_name],
-                        style=self._style,
-                    )
+                item_schema = self.get_item_schema(model_cls=item.__class__)
+                if item_schema is None:
+                    raise ValueError(f"Could not find item schema for model: {item.__class__.__name__}")                
+                attrs = {self.key: camel_to_snake(item.__class__.__name__)} if self.key is not None else None
+                item_block = item_schema.inst_from_dict(item.model_dump(), style=style, attrs=attrs)                
             else:
+                raise ValueError(f"Invalid item type: {type(item)}")
                 # Scalar value
                 if item_schema is not None:
                     item_block = item_schema.instantiate(item)
@@ -886,7 +897,7 @@ class BlockListSchema(BlockSchema):
         if new_span:
             new_block_text.append(new_span)
 
-        return BlockListSchema(
+        list_schema = BlockListSchema(
             item_name=self.item_name,
             name=self.name,
             key=self.key,
@@ -900,6 +911,9 @@ class BlockListSchema(BlockSchema):
             _span=new_span,
             _children=[],
         )
+        # list_schema.list_schemas = [schema.copy() for schema in self.list_schemas]
+        # list_schema.list_models = self.list_models.copy()
+        return list_schema
 
     def copy(self, deep: bool = True) -> "BlockListSchema":
         """Copy this list schema."""

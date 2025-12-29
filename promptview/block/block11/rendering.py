@@ -8,7 +8,8 @@ from .mutator_meta import MutatorMeta, MutatorConfig, TargetType, style_registry
 def render(block: Block, depth: int = 0) -> Block:
     if block.mutator._is_rendered:
         return block
-    config = MutatorMeta.resolve(block.style)
+        
+    config = MutatorMeta.resolve(block.style if not block.is_wrapper else [])
     
     new_block = block.copy_head()
     path = block.path

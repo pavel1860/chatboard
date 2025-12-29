@@ -1920,6 +1920,8 @@ class StreamController(ObservableProcess):
         #     return self._stream_value.value
         if self._parser:
             return self._parser.result
+        if self._accumulator:
+            return self._accumulator.result
         # return self.acc
         return None
     
