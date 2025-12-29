@@ -10,7 +10,7 @@ from .versioning.models import (
     VersionedModel, 
     ArtifactModel, 
     BlockModel, 
-    BlockNode, 
+    BlockSpan, 
     BlockTree, 
     ExecutionSpan, 
     Log, 
@@ -32,7 +32,8 @@ from .vectors import Vector, transformer
 from .relation_model import RelationModel
 # from .block_models.block_models import BlockModel
 from .sql.expressions import RawValue
-from .block_models.block_log import BlockLog
+# from .block_models.block_log import BlockLog
+from .block_models.block11_storage import BlockLog, BlockLogQuery
 
 __all__ = [
     "Model", 
@@ -52,7 +53,7 @@ __all__ = [
     "transformer",
     "RelationModel",
     "BlockModel",
-    "BlockNode",
+    "BlockSpan",
     "BlockTree",
     "ExecutionSpan",
     "Log",
@@ -60,6 +61,7 @@ __all__ = [
     "DataArtifact",
     "RawValue",
     "BlockLog",
+    "BlockLogQuery",
     "Artifact",
     "Parameter",
     "TestTurn",

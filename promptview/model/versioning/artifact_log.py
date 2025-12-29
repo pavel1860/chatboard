@@ -95,7 +95,7 @@ class ArtifactLog:
     async def populate_turns(cls, turns: List[Turn]):
         from collections import defaultdict
         from ..namespace_manager2 import NamespaceManager
-        from ..block_models.block_log import get_blocks
+        from ..block_models.block11_storage import get_blocks
         from .models import BlockTree, Artifact
         def kind2table(k: str):
             if k == "parameter":

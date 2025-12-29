@@ -1832,7 +1832,7 @@ class StreamController(ObservableProcess):
             raise FlowException("Parser already initialized")
         if self._gen_func is None:
             raise FlowException("StreamController is not initialized")
-        self._parser = XmlParser(block_schema)      
+        self._parser = XmlParser(block_schema, verbose=True)      
         return self
     
     def name(self, name: str):

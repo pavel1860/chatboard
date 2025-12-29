@@ -355,7 +355,7 @@ class XmlParser(Process):
                 return "start", event_data, add_prefix(chunks)
             elif event_type == "end":
                 return "end", event_data, add_prefix(chunks)
-            else:
+            else: # chardata
                 if chunk_kind == "newline":
                     return "start_postfix", event_data, add_prefix(chunks)
                 else:
@@ -369,7 +369,7 @@ class XmlParser(Process):
             elif event_type == "end":
                 self._state = "end"
                 return "end", event_data, add_prefix(chunks)
-            else:
+            else: # chardata
                 return "body", event_data, add_prefix(chunks)
         elif self._state == "end":
             if event_type == "start":
@@ -380,11 +380,15 @@ class XmlParser(Process):
                 self._state = "end"
                 self._pop()
                 return "end", event_data, add_prefix(chunks)
-            else:
+            else: # chardata
                 if chunk_kind == "newline":
                     return "end_postfix", event_data, add_prefix(chunks)
                 else:
-                    raise ParserError(f"Unexpected character data at end level")
+                    if len(self._stack) <= 2:
+                        self._pop()
+                        return "body", event_data, add_prefix(chunks)
+                    else:
+                        raise ParserError(f"Unexpected character data at end level: {event_data}")
 
     def _flush_pending(self, end_byte: int):
         """Process any pending event."""

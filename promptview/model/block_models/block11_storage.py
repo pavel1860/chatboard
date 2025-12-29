@@ -20,7 +20,7 @@ import json
 import datetime as dt
 from typing import TYPE_CHECKING, Any, List, Literal
 
-from ..versioning.models import Artifact, Branch, Turn, VersionedModel, TurnStatus, ExecutionSpan
+from ..versioning.models import Artifact, Branch, Turn, VersionedModel, TurnStatus, ExecutionSpan, BlockTree, BlockModel, BlockSpan
 from ..model3 import Model
 from ..fields import KeyField, ModelField, RelationField
 from ...utils.db_connections import PGConnectionManager
@@ -33,61 +33,61 @@ if TYPE_CHECKING:
 # Database Models
 # =============================================================================
 
-class Block11Span(Model):
-    """
-    Content-addressed span storage.
+# class BlockSpan(Model):
+#     """
+#     Content-addressed span storage.
 
-    Deduplicated by hash of (prefix + content + postfix + chunks).
-    Stores both text (for queries) and structured chunks (for reconstruction).
-    """
-    _namespace_name: str = "block11_spans"
+#     Deduplicated by hash of (prefix + content + postfix + chunks).
+#     Stores both text (for queries) and structured chunks (for reconstruction).
+#     """
+#     _namespace_name: str = "block11_spans"
 
-    id: str = KeyField(primary_key=True)  # SHA256 hash
-    prefix_text: str = ModelField(default="")
-    content_text: str = ModelField(default="")
-    postfix_text: str = ModelField(default="")
-    prefix_chunks: dict = ModelField(default_factory=list)  # [{content, logprob}, ...]
-    content_chunks: dict = ModelField(default_factory=list)
-    postfix_chunks: dict = ModelField(default_factory=list)
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-
-
-class Block11Block(Model):
-    """
-    Merkle tree node - content-addressed by span + metadata + children.
-
-    The id is a hash that includes children's IDs, so identical subtrees
-    automatically have identical hashes and share storage.
-    """
-    _namespace_name: str = "block11_blocks"
-
-    id: str = KeyField(primary_key=True)  # Merkle hash
-    span_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=Block11Span)  # FK to spans
-    role: str | None = ModelField(default=None)
-    tags: list[str] = ModelField(default_factory=list)
-    styles: list[str] = ModelField(default_factory=list)
-    name: str | None = ModelField(default=None)  # For BlockSchema
-    type_name: str | None = ModelField(default=None)  # For BlockSchema
-    attrs: dict = ModelField(default_factory=dict)
-    children: list[str] = ModelField(default_factory=list)  # Ordered block IDs
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-
-    span: Block11Span | None = RelationField(primary_key="span_id", foreign_key="id")
+#     id: str = KeyField(primary_key=True)  # SHA256 hash
+#     prefix_text: str = ModelField(default="")
+#     content_text: str = ModelField(default="")
+#     postfix_text: str = ModelField(default="")
+#     prefix_chunks: dict = ModelField(default_factory=list)  # [{content, logprob}, ...]
+#     content_chunks: dict = ModelField(default_factory=list)
+#     postfix_chunks: dict = ModelField(default_factory=list)
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
 
-class Block11Tree(VersionedModel):
-    """
-    Root reference for a block tree, linked to versioning system.
-    """
-    _namespace_name: str = "block11_trees"
-    _artifact_kind = "block"
+# class BlockModel(Model):
+#     """
+#     Merkle tree node - content-addressed by span + metadata + children.
 
-    id: int = KeyField(primary_key=True)
-    root_id: str = ModelField(foreign_key=True, foreign_cls=Block11Block)  # FK to blocks
-    span_id: int | None = ModelField(default=None, foreign_key=True, foreign_cls=ExecutionSpan)  # Execution span
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+#     The id is a hash that includes children's IDs, so identical subtrees
+#     automatically have identical hashes and share storage.
+#     """
+#     _namespace_name: str = "block11_blocks"
 
-    root: Block11Block | None = RelationField(primary_key="root_id", foreign_key="id")
+#     id: str = KeyField(primary_key=True)  # Merkle hash
+#     span_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=BlockSpan)  # FK to spans
+#     role: str | None = ModelField(default=None)
+#     tags: list[str] = ModelField(default_factory=list)
+#     styles: list[str] = ModelField(default_factory=list)
+#     name: str | None = ModelField(default=None)  # For BlockSchema
+#     type_name: str | None = ModelField(default=None)  # For BlockSchema
+#     attrs: dict = ModelField(default_factory=dict)
+#     children: list[str] = ModelField(default_factory=list)  # Ordered block IDs
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
+#     span: BlockSpan | None = RelationField(primary_key="span_id", foreign_key="id")
+
+
+# class BlockTree(VersionedModel):
+#     """
+#     Root reference for a block tree, linked to versioning system.
+#     """
+#     _namespace_name: str = "block11_trees"
+#     _artifact_kind = "block"
+
+#     id: int = KeyField(primary_key=True)
+#     root_id: str = ModelField(foreign_key=True, foreign_cls=BlockModel)  # FK to blocks
+#     span_id: int | None = ModelField(default=None, foreign_key=True, foreign_cls=ExecutionSpan)  # Execution span
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
+#     root: BlockModel | None = RelationField(primary_key="root_id", foreign_key="id")
 
 
 # =============================================================================
@@ -349,7 +349,7 @@ async def insert_block(
     branch_id: int,
     turn_id: int,
     span_id: int | None = None,
-) -> Block11Tree:
+) -> BlockTree:
     """
     Insert Block11 tree into database with Merkle deduplication.
 
@@ -385,7 +385,7 @@ async def insert_block(
                 for span in all_spans.values()
             ]
             await tx.executemany(
-                """INSERT INTO block11_spans
+                """INSERT INTO block_spans
                    (id, prefix_text, content_text, postfix_text,
                     prefix_chunks, content_chunks, postfix_chunks, created_at)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -411,7 +411,7 @@ async def insert_block(
                 for blk in all_blocks.values()
             ]
             await tx.executemany(
-                """INSERT INTO block11_blocks
+                """INSERT INTO blocks
                    (id, span_id, role, tags, styles, name, type_name, attrs, children, created_at)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                    ON CONFLICT (id) DO NOTHING""",
@@ -427,7 +427,7 @@ async def insert_block(
     await PGConnectionManager.run_in_transaction(tx_wrapper)
 
     # Now create tree record (blocks exist, FK will pass)
-    tree = await Block11Tree(root_id=root_id, span_id=span_id).save(
+    tree = await BlockTree(root_id=root_id, span_id=span_id).save(
         branch=branch_id,
         turn=turn_id,
     )
@@ -441,7 +441,7 @@ async def get_block_tree(tree_id: int) -> "Block | None":
 
     Fetches the tree, then recursively loads all blocks and spans.
     """
-    tree = await Block11Tree.get_or_none(tree_id)
+    tree = await BlockTree.get_or_none(tree_id)
     if tree is None:
         return None
 
@@ -468,7 +468,7 @@ async def load_block_from_db(root_id: str) -> "Block":
 
         rows = await PGConnectionManager.fetch(
             """SELECT id, span_id, role, tags, styles, name, type_name, attrs, children
-               FROM block11_blocks WHERE id = ANY($1)""",
+               FROM blocks WHERE id = ANY($1)""",
             block_ids
         )
 
@@ -500,7 +500,7 @@ async def load_block_from_db(root_id: str) -> "Block":
             span_rows = await PGConnectionManager.fetch(
                 """SELECT id, prefix_text, content_text, postfix_text,
                           prefix_chunks, content_chunks, postfix_chunks
-                   FROM block11_spans WHERE id = ANY($1)""",
+                   FROM block_spans WHERE id = ANY($1)""",
                 list(span_ids_to_fetch)
             )
             for row in span_rows:
@@ -526,8 +526,8 @@ async def get_blocks_by_artifact_ids(artifact_ids: list[int]) -> dict[int, "Bloc
     if not artifact_ids:
         return {}
 
-    trees = await Block11Tree.query().where(
-        Block11Tree.artifact_id.isin(artifact_ids)
+    trees = await BlockTree.query().where(
+        BlockTree.artifact_id.isin(artifact_ids)
     )
 
     result = {}
@@ -538,11 +538,47 @@ async def get_blocks_by_artifact_ids(artifact_ids: list[int]) -> dict[int, "Bloc
     return result
 
 
+async def get_blocks(
+    artifact_ids: list[int],
+    dump_models: bool = False,
+    include_branch_turn: bool = False,
+) -> dict[int, "Block"]:
+    """
+    Retrieve Block11 trees by artifact IDs.
+
+    Compatible interface with old block_log.get_blocks.
+
+    Args:
+        artifact_ids: List of artifact IDs to fetch
+        dump_models: If True, return model_dump() instead of Block
+        include_branch_turn: Ignored (for compatibility)
+
+    Returns:
+        Dict mapping artifact_id -> Block (or dict if dump_models=True)
+    """
+    if not artifact_ids:
+        return {}
+
+    trees = await BlockTree.query().where(
+        BlockTree.artifact_id.isin(artifact_ids)
+    )
+
+    result = {}
+    for tree in trees:
+        block = await load_block_from_db(tree.root_id)
+        if dump_models:
+            result[tree.artifact_id] = block.model_dump()
+        else:
+            result[tree.artifact_id] = block
+
+    return result
+
+
 # =============================================================================
 # Query Interface
 # =============================================================================
 
-class Block11LogQuery:
+class BlockLogQuery:
     """Query interface for Block11 trees."""
 
     def __init__(
@@ -566,7 +602,7 @@ class Block11LogQuery:
 
     async def execute(self) -> list["Block"]:
         """Execute query and return Block instances."""
-        query = Block11Tree.query(
+        query = BlockTree.query(
             limit=self.limit,
             offset=self._offset,
             direction=self.direction,
@@ -579,7 +615,7 @@ class Block11LogQuery:
             span_ids = [s.id for s in spans]
             if not span_ids:
                 return []
-            query = query.where(Block11Tree.span_id.isin(span_ids))
+            query = query.where(BlockTree.span_id.isin(span_ids))
 
         trees = await query
 
@@ -624,18 +660,18 @@ class Block11LogQuery:
         return self
 
 
-class Block11Log:
+class BlockLog:
     """High-level API for Block11 storage operations."""
 
     @classmethod
-    def last(cls, limit: int) -> Block11LogQuery:
+    def last(cls, limit: int) -> BlockLogQuery:
         """Get last N block trees."""
-        return Block11LogQuery(limit=limit)
+        return BlockLogQuery(limit=limit)
 
     @classmethod
-    def span(cls, span_name: str) -> Block11LogQuery:
+    def span(cls, span_name: str) -> BlockLogQuery:
         """Get block trees by execution span."""
-        return Block11LogQuery(span_name=span_name)
+        return BlockLogQuery(span_name=span_name)
 
     @classmethod
     async def add(
@@ -644,7 +680,7 @@ class Block11Log:
         branch_id: int | None = None,
         turn_id: int | None = None,
         span_id: int | None = None,
-    ) -> Block11Tree:
+    ) -> BlockTree:
         """
         Add a block tree to storage.
 

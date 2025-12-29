@@ -39,7 +39,7 @@ class AuthModel(Model):
     #     junction_model=AuthBranch,        
     # )
 
-    def create_context(self, branch_id: int = 1) -> "Context":
+    def create_context(self, branch_id: int | None = None) -> "Context":
         from ..prompt import Context
         return Context(auth=self, branch_id=branch_id)
     
