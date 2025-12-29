@@ -104,25 +104,25 @@ Here is a pirate poem for you.
 </answer>
 <tool name="edit_block">
   <block_path>
-        0.0
+    0.0
   </block_path>
   <content>
-       Upon the restless ocean's crest,\n
-       A pirate's life, they say, is best.\n
-       With sails unfurled and flags of black,\n
-       They roam the seas, no turning back.\n\n
-       Their eyes as sharp as the cutlass blade,\n
-       Their spirits fierce, never to fade.\n
-       The salty breeze their lullaby,\n
-       As they chase the treasure that's ne'er dry.\n\n
-       Under the moon's silvery light,\n
-       They sing their shanties in the night.\n
-       With rum in hand and tales to spin,\n
-       The pirate's heart, a world within.\n\n
-       So here's to the rogues who sail the seas,\n
-       With daring hearts and lives of ease.\n
-       For in their world of salt and spray,\n
-       A pirate's life is a grand array.
+    Upon the restless ocean's crest,\n
+    A pirate's life, they say, is best.\n
+    With sails unfurled and flags of black,\n
+    They roam the seas, no turning back.\n\n
+    Their eyes as sharp as the cutlass blade,\n
+    Their spirits fierce, never to fade.\n
+    The salty breeze their lullaby,\n
+    As they chase the treasure that's ne'er dry.\n\n
+    Under the moon's silvery light,\n
+    They sing their shanties in the night.\n
+    With rum in hand and tales to spin,\n
+    The pirate's heart, a world within.\n\n
+    So here's to the rogues who sail the seas,\n
+    With daring hearts and lives of ease.\n
+    For in their world of salt and spray,\n
+    A pirate's life is a grand array.
   </content>
 </tool>
 """

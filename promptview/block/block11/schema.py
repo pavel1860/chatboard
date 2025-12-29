@@ -33,7 +33,7 @@ class BlockSchema(Block):
         # <response>Hello</response>
     """
 
-    __slots__ = ["name", "type", "is_required", "attrs"]
+    __slots__ = ["name", "_type", "is_required", "attrs"]
 
     def __init__(
         self,
@@ -83,7 +83,7 @@ class BlockSchema(Block):
 
         # Schema-specific attributes
         self.name = name
-        self.type = type
+        self._type = type
         self.is_required = is_required
 
     # -------------------------------------------------------------------------
@@ -93,6 +93,9 @@ class BlockSchema(Block):
     def is_wrapper(self) -> bool:
         return self.name is None
     
+    @property
+    def type(self) -> Type | None:
+        return self._type
     
     
     def instantiate_partial(
@@ -112,6 +115,7 @@ class BlockSchema(Block):
         mutator = config.mutator()            
         chunks = mutator.promote(content) if content is not None else []
         block = mutator.call_init(chunks, tags=tags, role=role, style=style, _auto_handle=False)
+        block._schema = self
         return block
 
 
@@ -167,6 +171,7 @@ class BlockSchema(Block):
         mutator = config.mutator()            
         name_chunks = [BlockChunk(self.name)] if self.name else []
         block = mutator.call_init(name_chunks, tags=tags, role=role, style=style, attrs=attrs)
+        block._schema = self
         if content is not None:
             chunks = mutator.promote(content)
             # block.append(chunks)
@@ -174,55 +179,6 @@ class BlockSchema(Block):
         return block
         
         
-        
-    def instantiate2(
-        self,
-        content: ContentType | dict | BaseModel | None = None,
-        name: ContentType | None = None,
-        style: str | list[str] | None | UnsetType = UNSET,
-        role: str | None | UnsetType = UNSET,
-        tags: list[str] | None | UnsetType = UNSET,
-        extract_schema: bool = True,
-    ) -> Block:
-        """
-        Create a Block instance from this schema.
-
-        Delegates to mutator.instantiate() for style-specific behavior.
-
-        Args:
-            content: Content for the new block (default: schema name)
-            style: Override style for the block
-            role: Override role for the block
-            tags: Override tags for the block
-
-        Returns:
-            A new Block instance
-        """
-        from .mutator_meta import MutatorMeta
-        if extract_schema:
-            schema = self.extract_schema()
-            if schema is None:
-                raise ValueError("No schema found")
-            return schema.instantiate(content, name=name, style=style, role=role, tags=tags, extract_schema=False)
-        
-        role = UnsetType.get_value(role, self.role)
-        tags = UnsetType.get_value(tags, self.tags)        
-        style = UnsetType.get_value(style, self.style)
-
-        if isinstance(content, dict):
-            return self.inst_from_dict(content, style=style, role=role, tags=tags)
-        elif isinstance(content, BaseModel):
-            return self.inst_from_dict(content.model_dump(), style=style, role=role, tags=tags)
-        else:
-            config = MutatorMeta.resolve(self.style)
-            if config.mutator is None:
-                raise ValueError(f"No mutator found for style {style}")
-            mutator = config.mutator()
-            block = mutator.call_instantiate(name or self.name, role=role, tags=tags, style=style)
-            if content is not None:
-                block.add_newline()
-                block.append(content)
-            return block
 
     def inst_from_dict(
         self,

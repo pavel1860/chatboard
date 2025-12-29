@@ -55,12 +55,12 @@ class XmlParser(Process):
             print(block)
     """
 
-    def __init__(self, schema: "BlockSchema", upstream: Process | None = None):
+    def __init__(self, schema: "BlockSchema", upstream: Process | None = None, verbose: bool = False):
         super().__init__(upstream)
         self.schema = schema.extract_schema(style="xml")
         self._root: Block | None = None
         self._stack: list[tuple["BlockSchema", Block]] = []
-
+        self._verbose = verbose
         # Expat parser setup
         self._parser = expat.ParserCreate()
         self._parser.buffer_text = False
@@ -399,18 +399,20 @@ class XmlParser(Process):
         if not chunks:
             return
         
-        if event_type != "chardata":
+        if self._verbose and event_type != "chardata":
             print(f"############# {event_type} - {repr(event_data)} ############")
         # print(self._index, event_type, repr(event_data), chunks)
         event_type, event_data, chunks = self._stage_event(event_type, event_data, chunks)
         if event_type is None:
             return
-        print(self._index,self._state,")", event_type, repr(event_data), chunks)
+        if self._verbose:
+            print(self._index,self._state,")", event_type, repr(event_data), chunks)
             # print("Handling event:", event_type, event_data, chunks)
-        if self.current_block is not None:
-            # print("---------------------------------")
-            # self.current_block.print_debug()
-            print("---------------------------------")
+            
+        # if self._verbose and self.current_block is not None:
+        #     print("---------------------------------")
+        #     self.current_block.print_debug()
+        #     print("---------------------------------")
         if event_type == "start":
             name, attrs = event_data
             self._handle_start(name, attrs, chunks)

@@ -10,7 +10,7 @@ from pydantic_core import core_schema
 from promptview.utils.type_utils import UnsetType, UNSET
 if TYPE_CHECKING:
     from .block_text import BlockText
-    from .schema import BlockSchema, BlockListSchema
+    from .schema import BlockSchema, BlockListSchema, BlockList
 
 
 
@@ -161,6 +161,8 @@ class Mutator(metaclass=MutatorMeta):
             self.append_child(block)
     
     def on_space(self, chunk: BlockChunk):
+        if not self.head.content:
+            return self.head.append_prefix([chunk])
         return self.on_text([chunk])
     
     def on_symbol(self, chunk: BlockChunk):
@@ -553,7 +555,7 @@ class Block:
     The Mutator provides indirection for accessing/mutating fields.
     """
 
-    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style", "_auto_handle", "attrs"]
+    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style", "_auto_handle", "attrs", "_schema"]
 
     def __init__(
         self,
@@ -569,6 +571,7 @@ class Block:
         _span: Span | None = None,
         _children: list["Block"] | None = None,
         _auto_handle: bool = True,
+        _schema: "BlockSchema | None" = None,
     ):
         """
         Create a block.
@@ -592,6 +595,7 @@ class Block:
         self._style = parse_style(style)
         self._auto_handle = _auto_handle
         self.attrs = attrs or {}
+        self._schema = _schema
         # Set up mutator first (needed for promote)
         if mutator is None:
             self.mutator = Mutator(self)
@@ -611,9 +615,10 @@ class Block:
         else:
             # Create span via BlockText so it's properly owned
             if content is not None:
-                chunks = self.mutator.promote(content)
+                # chunks = self.mutator.promote(content)
                 self.span = self.block_text.create_span()
-                self.span.content = chunks
+                self.append(content)
+                # self.span.content = chunks
             else:
                 self.span = self.block_text.create_span()
 
@@ -696,6 +701,32 @@ class Block:
         """Get content text via mutator."""
         return self.mutator.content
     
+    
+    @property
+    def type(self) -> Type | None:
+        """Get type of the block."""
+        return self._schema._type if self._schema is not None else str
+    
+    
+    @property
+    def value(self) -> Any:
+        """Get value of the block."""
+        return self.get_value()
+    
+    
+        
+    def get_value(self):
+        from .object_helpers import block_to_object, parse_content
+        if self._schema is not None:
+            _type = self._schema._type
+        else:
+            _type = str
+        if _type == str:
+            return "".join([b.content for b in self.body])
+        elif issubclass(_type, BaseModel):
+            return block_to_object(self, _type)
+        else:
+            return parse_content("".join([b.content for b in self.body]), _type)
     
     # -------------------------------------------------------------------------
     # context building
@@ -808,33 +839,31 @@ class Block:
     # -------------------------------------------------------------------------
     
     def append(self, content: ContentType) -> Block:
-        """Append content to the last block"""        
+        """Append content to the last block"""
         chunks = self.mutator.promote(content)
-        
-        # prefix, item, postfix = next(((chunks[:i], chunks[i], chunks[i+1:]) for i in range(len(chunks)) if not chunks[i].is_text))
-        text_chunks = []
-        # last_idx = 0
-        last_idx = -1
+
+        last_idx = 0  # Start at 0, tracks position after last processed separator
         for i in range(len(chunks)):
             if not chunks[i].is_text:
+                # Get text chunks before this separator
                 text_chunks = chunks[last_idx:i]
                 sep = chunks[i]
-                last_idx = i
+                last_idx = i + 1  # Move past the separator
+
                 if text_chunks:
                     self.mutator.on_text(text_chunks)
-                    
+
                 if sep.is_line_end:
                     self.mutator.on_newline(sep)
                 elif sep.isspace():
                     self.mutator.on_space(sep)
                 else:
                     self.mutator.on_symbol(sep)
-        else:
-            # if last_idx < len(chunks):
-            if last_idx < len(chunks) - 1:
-                last_idx = max(last_idx, 0)
-                text_chunks = chunks[last_idx:]
-                self.mutator.on_text(text_chunks)
+
+        # Handle remaining text chunks after the last separator
+        if last_idx < len(chunks):
+            text_chunks = chunks[last_idx:]
+            self.mutator.on_text(text_chunks)
 
 
 
@@ -1173,6 +1202,21 @@ class Block:
         return result[0]
     
     
+    
+    def get_list(self, tags: str | list[str]) -> "BlockList":
+        """
+        Get a list of blocks matching a tag path.
+        """
+        from .schema import BlockList
+        result = self.get_all(tags, children_only=True)                
+        if not result:
+            return BlockList()
+        target = result[0]
+        if not isinstance(target, BlockList):
+            raise ValueError(f"Block {target} is not a BlockList")
+        return target
+    
+    
     def __getitem__(self, index: int) -> Block:
         return self.body[index]
 
@@ -1243,7 +1287,7 @@ class Block:
         return render(self)
     
     
-    def render(self) -> Block:
+    def render(self) -> str:
         """Render the block."""
         output = self.transform()
         return output.block_text.text()
