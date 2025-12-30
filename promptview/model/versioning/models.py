@@ -942,7 +942,7 @@ class BlockTree(VersionedModel):
 
 
     @classmethod
-    def query(
+    def query2(
         cls: Type[Self], 
         include_branch_turn: bool = False,
         alias: str | None = None, 
@@ -1220,9 +1220,18 @@ class DataFlowNode(Model):
     
     @property
     def list_kind(self) -> list[str] | None:
+        from ...block import Block
         if self.kind != "list" or self._value is None:
             return None
-        return [v.kind for v in self._value]
+        result = []
+        for v in self._value:
+            if isinstance(v, Block):
+                result.append("block")
+            elif hasattr(v, "kind"):
+                result.append(v.kind)
+            else:
+                result.append(type(v).__name__)
+        return result
 
     @property
     def value_or_none(self) -> Any | None:
@@ -1234,6 +1243,20 @@ class DataFlowNode(Model):
         return int(self.path.split('.')[-1])
     
     
+    def extract(self) -> Any:
+        """ turns blocks into simplified blocks """
+        from ...block import Block
+        if self.kind == "block":
+            self._value = self._value.extract()
+        elif self.kind == "list":
+            new_list = []
+            for t, v in zip(self.list_kind, self._value):
+                if t == "block":
+                    new_list.append(v.extract())
+                else:
+                    new_list.append(v)
+            self._value = new_list
+        return self._value
     
     def model_dump(self, *args, **kwargs) -> dict:
         dump = super().model_dump(*args, **kwargs)

@@ -465,6 +465,17 @@ class Mutator(metaclass=MutatorMeta):
         # if not block.head.has_newline():
             # block.head.append_postfix([Chunk(content="\n")])
         return block
+    
+    def call_extract(self) -> Block:
+        ex_block = self.extract()
+        ex_block.style = self.styles[0] if self.styles else []
+        for child in self.body:
+            ex_child = child.mutator.call_extract()
+            ex_block.append_child(ex_child)
+        return ex_block
+    
+    def extract(self) -> Block:
+        return Block(self.head.content, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
 
     # -------------------------------------------------------------------------
     # Schema Operations (for BlockSchema support)
@@ -1286,6 +1297,9 @@ class Block:
         from .rendering import render
         return render(self)
     
+    def extract(self) -> Block:
+        """Extract the block."""
+        return self.mutator.call_extract()
     
     def render(self) -> str:
         """Render the block."""
@@ -1574,8 +1588,8 @@ class Block:
     def model_dump(
         self,
         *,
-        include_chunks: bool = False,
-        include_span: bool = False,
+        include_chunks: bool = True,
+        include_span: bool = True,
         exclude_none: bool = True,
     ) -> dict[str, Any]:
         """

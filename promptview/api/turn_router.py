@@ -42,7 +42,6 @@ def create_turn_router(context_cls: Type[Context] | None = None):
         - Instantiating actual model instances for values
         - Building the complete tree structure
         """
-        from ..prompt.span_tree import SpanTree
 
         async with ctx:
             turns = await (
@@ -126,6 +125,9 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                 result.append(turn_data)
 
             return result
+        
+        
+    return turn_router
 
 
 

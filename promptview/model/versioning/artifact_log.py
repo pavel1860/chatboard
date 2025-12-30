@@ -112,7 +112,7 @@ class ArtifactLog:
             for value in turn.data:        
                 # print(value.path, value.kind, value.artifact_id)
                 for da in value.artifact_data:
-                    models_to_load[da.kind].append(da.artifact_id)  
+                    models_to_load[kind2table(da.kind)].append(da.artifact_id)  
                 # else:
                 #     value._value = span_lookup[value.artifact_id]
                 #     span._parent_value = value
@@ -131,7 +131,8 @@ class ArtifactLog:
             # elif k == "execution_spans":
             #     value_dict[k] = {s.artifact_id: s for s in spans}
             else:
-                ns = NamespaceManager.get_namespace(kind2table(k))
+                # ns = NamespaceManager.get_namespace(kind2table(k))
+                ns = NamespaceManager.get_namespace(k)
                 models = await ns._model_cls.query(include_branch_turn=True).where(ns._model_cls.artifact_id.isin(models_to_load[k]))
                 model_lookup[k] = {m.artifact_id: m for m in models}
 
@@ -141,11 +142,11 @@ class ArtifactLog:
                     value._value = []
                     for da in value.artifact_data:
                         if da.kind == "list":
-                            value._container_value = model_lookup[da.kind][da.artifact_id]
+                            value._container_value = model_lookup[kind2table(da.kind)][da.artifact_id]
                         else:
-                            value._value.append(model_lookup[da.kind][da.artifact_id])
+                            value._value.append(model_lookup[kind2table(da.kind)][da.artifact_id])
                 else:
-                    value._value = model_lookup[value.kind][value.artifact_id]
+                    value._value = model_lookup[kind2table(value.kind)][value.artifact_id]
         return turns    
     
     

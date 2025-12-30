@@ -88,6 +88,9 @@ class XmlMutator(Mutator):
                 postfix.prepend_postfix(">")
         return xml_blk
     
+    # def extract(self) -> Block:
+        # return Block(self.head)
+        
     
     def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
         with Block(role=role, tags=tags, attrs=attrs) as block:
