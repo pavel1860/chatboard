@@ -128,6 +128,7 @@ def compute_block_hash(
     type_name: str | None,
     attrs: dict,
     children: list[str],  # Child block IDs (already hashed)
+    is_rendered: bool = False,
 ) -> str:
     """
     Compute Merkle hash for a block.
@@ -143,6 +144,7 @@ def compute_block_hash(
         "type_name": type_name,
         "attrs": attrs,
         "children": children,  # Order matters!
+        "is_rendered": is_rendered,
     }
     encoded = json.dumps(data, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -228,6 +230,9 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             type_name = str(blk.type) if blk.type else None
             attrs = blk.attrs or {}
 
+        # Get mutator state
+        is_rendered = blk.mutator.is_rendered if blk.mutator else False
+
         # Compute Merkle hash
         block_id = compute_block_hash(
             span_id=span_id,
@@ -238,6 +243,7 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             type_name=type_name,
             attrs=attrs,
             children=child_ids,
+            is_rendered=is_rendered,
         )
 
         # Store block data
@@ -251,6 +257,7 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             "type_name": type_name,
             "attrs": attrs,
             "children": child_ids,
+            "is_rendered": is_rendered,
         }
 
         return block_id
@@ -275,8 +282,10 @@ def load_block(
 
     Creates a shared BlockText for all blocks in the tree.
     Uses Span.model_validate() for span reconstruction.
+    Restores the correct Mutator based on stored styles.
     """
     from ...block.block11 import Block, BlockSchema, Span, BlockText
+    from ...block.block11.mutator_meta import MutatorMeta
 
     # Single shared BlockText for the entire tree
     shared_block_text = BlockText()
@@ -307,22 +316,30 @@ def load_block(
             if span_data:
                 span = load_span_data(span_data)
 
+        # Resolve mutator from styles
+        styles = block_data.get("styles") or []
+        mutator_config = MutatorMeta.resolve(styles)
+        mutator = mutator_config.mutator(None)  # Create mutator, will attach to block
+
+
         # Create block (schema or regular)
         if block_data.get("name") is not None:
             # It's a BlockSchema
             blk = BlockSchema(
                 name=block_data["name"],
                 tags=block_data.get("tags"),
-                style=block_data.get("styles"),
+                style=styles,
                 attrs=block_data.get("attrs"),
                 block_text=shared_block_text,
+                mutator=mutator,
             )
         else:
             blk = Block(
                 role=block_data.get("role"),
                 tags=block_data.get("tags"),
-                style=block_data.get("styles"),
+                style=styles,
                 block_text=shared_block_text,
+                mutator=mutator,
             )
 
         # Set span if we loaded one
@@ -406,14 +423,15 @@ async def insert_block(
                     blk.get("type_name"),
                     json.dumps(blk.get("attrs") or {}),
                     blk.get("children") or [],
+                    blk.get("is_rendered", False),
                     dt.datetime.now(),
                 )
                 for blk in all_blocks.values()
             ]
             await tx.executemany(
                 """INSERT INTO blocks
-                   (id, span_id, role, tags, styles, name, type_name, attrs, children, created_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                   (id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                    ON CONFLICT (id) DO NOTHING""",
                 block_rows
             )
@@ -467,7 +485,7 @@ async def load_block_from_db(root_id: str) -> "Block":
             break
 
         rows = await PGConnectionManager.fetch(
-            """SELECT id, span_id, role, tags, styles, name, type_name, attrs, children
+            """SELECT id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered
                FROM blocks WHERE id = ANY($1)""",
             block_ids
         )
