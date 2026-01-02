@@ -93,7 +93,7 @@ class XmlMutator(Mutator):
         
     
     def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
-        with Block(role=role, tags=tags, attrs=attrs) as block:
+        with Block(role=role, tags=tags, style=style, attrs=attrs) as block:
             with block(content) as head:
                 pass
             # with block() as body:
@@ -104,7 +104,7 @@ class XmlMutator(Mutator):
     def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "<")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-        with Block(tags=tags, role=role, attrs=attrs, _auto_handle=_auto_handle) as xml_blk:
+        with Block(tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as xml_blk:
             with xml_blk(content_chunks, tags=["opening-tag"]) as content:
                 content.append_prefix(prev_chunks + start_chunk)
                 content.append_postfix(end_chunk + post_chunks)
@@ -179,6 +179,7 @@ class RootMutator(Mutator):
             return self.block.children[-1].span
         return None
     
+
     
     # def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
     #     with Block(content, role=role, tags=tags, attrs=attrs) as block:

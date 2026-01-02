@@ -1800,22 +1800,35 @@ class StreamController(ObservableProcess):
         """
         from .events import StreamEvent
         from ..model.versioning.artifact_log import ArtifactLog
-               
-        if self._temp_data_flow is None:
-            if self._parser is None:
-                if self._accumulator is None:
-                    raise FlowException("Accumulator is not initialized")
-                payload = self._accumulator.result
- 
-            data_flow = ArtifactLog.build_data_flow_node(self.span, payload, io_kind="output")
-            self._temp_data_flow = data_flow
+        from ..block.block11.parsers import ParserEvent
+         
+        if type(payload) == ParserEvent:     
+            # if payload.type == "block_stream":
+            # if payload.type == "block_init":
+            #     print(payload.type, payload.value.path)
+            if self._temp_data_flow is None:                    
+                if self._parser is None:
+                    if self._accumulator is None:
+                        raise FlowException("Accumulator is not initialized")
+                    payload = self._accumulator.result
+
+                data_flow = ArtifactLog.build_data_flow_node(self.span, payload.value, io_kind="output")
+                self._temp_data_flow = data_flow
+                return self.ctx.build_event(
+                    path=self._temp_data_flow.path,
+                    kind=f"{self._span_type}_stream",
+                    payload=data_flow,
+                    name=self._name,
+                    
+                )            
+        
             return self.ctx.build_event(
                 path=self._temp_data_flow.path,
-                kind=f"{self._span_type}_value",
-                payload=data_flow,
-                name=self._name,
-                
+                kind=self._value_event_type,
+                payload=payload,
+                name=self._name
             )
+
 
         
         return self.ctx.build_event(
@@ -1828,11 +1841,16 @@ class StreamController(ObservableProcess):
         
     def parse(self, block_schema: "Block"):
         from ..block import XmlParser
+        from .context import Context
         if self._parser is not None:
             raise FlowException("Parser already initialized")
         if self._gen_func is None:
             raise FlowException("StreamController is not initialized")
-        self._parser = XmlParser(block_schema, verbose=True)      
+        ctx = Context.current_or_none()
+        verbose = False
+        if ctx is not None:
+            verbose = ctx.get_verbosity("parser")
+        self._parser = XmlParser(block_schema, verbose=verbose)      
         return self
     
     def name(self, name: str):
@@ -1847,9 +1865,11 @@ class StreamController(ObservableProcess):
         In replay mode, yields saved outputs from the span instead of executing
         the generator function.
         """
+        from ..block.block11.parsers import ParserEvent
         if not self._did_start:
             await self.on_start()
             self._did_start = True
+            return ParserEvent(path="0", type="block_stream", value=[])
 
         try:
             # Check if we're in replay mode

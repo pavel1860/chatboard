@@ -47,13 +47,17 @@ class Mutator(metaclass=MutatorMeta):
         self._block: Block | None = block
         self._did_instantiate: bool = did_instantiate
         self._did_commit: bool = False
-        self._is_rendered: bool = False
+        # self.is_rendered: bool = False
 
     @property
     def block(self) -> Block:
         if self._block is None:
             raise ValueError("Block is not set")
         return self._block
+    
+    @property
+    def is_rendered(self) -> bool:
+        return not self.__class__ is Mutator
 
     @block.setter
     def block(self, value: Block | None) -> None:
@@ -444,13 +448,15 @@ class Mutator(metaclass=MutatorMeta):
             block_copy.style.extend(styles)
         return block_copy
     
-    def render_and_set(self, block: Block, path: Path) -> Block:
+    def call_render(self, block: Block, path: Path) -> Block:
         """Render the block and set the mutator."""
-        self._is_rendered = True
-        block = self.render(block, path)
-        self.block = block
-        block.mutator = self
-        return block
+        
+        new_block = self.render(block, path)
+        block, new_block = self._transfer_metadata(block, new_block)
+        self.block = new_block
+        new_block.mutator = self
+        
+        return new_block
 
     def render(self, block: Block, path: Path) -> Block:
         """
@@ -467,8 +473,14 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     def call_extract(self) -> Block:
+        from .mutators import RootMutator
+        if isinstance(self, RootMutator):
+            return self.block[0].extract()
+        # if not self.is_rendered:
+            # raise ValueError(f"Block is not rendered. can't extract: {self.block}")
         ex_block = self.extract()
-        ex_block.style = self.styles[0] if self.styles else []
+        
+        block, ex_block = self._transfer_metadata(self.block, ex_block)
         for child in self.body:
             ex_child = child.mutator.call_extract()
             ex_block.append_child(ex_child)
@@ -481,16 +493,32 @@ class Mutator(metaclass=MutatorMeta):
     # Schema Operations (for BlockSchema support)
     # -------------------------------------------------------------------------
     
+    def _transfer_metadata(self, from_block: Block, to_block: Block):
+        # ms = set(self.styles)
+        # bs = set(self.block.style)
+        # if not ms & bs and self.styles:
+        #     self.block.style.append(self.styles[0])
+        to_block.tags = from_block.tags.copy()
+        to_block.role = from_block.role
+        to_block.style = from_block.style.copy()
+        to_block.attrs = from_block.attrs.copy()
+        return from_block, to_block
+            
+        
+            
+    
     def call_instantiate(self, content: "ContentType | None" = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None) -> Block:
         """
         Call the instantiate method of the block.
         """
         block = self.instantiate(content, role, tags, style)
         # block.mutator = self.__class__(block, did_instantiate=True, did_commit=False)
+        # self._transfer_metadata()
         block.mutator = self
         self.block = block
         self._did_instantiate = True
         self._did_commit = False
+        
         return block
 
     def instantiate(self, content: "ContentType | None" = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
@@ -662,9 +690,9 @@ class Block:
         Commit the block.
         """        
         chunks = self.mutator.promote(content) if content is not None else []
-        self.mutator.commit(chunks)
+        block = self.mutator.commit(chunks)
         self.mutator._did_commit = True
-        return self
+        return block
 
     # -------------------------------------------------------------------------
     # Properties (only where logic is needed)
@@ -1304,7 +1332,8 @@ class Block:
     def render(self) -> str:
         """Render the block."""
         output = self.transform()
-        return output.block_text.text()
+        return output.block_text.text_between(output.mutator.head, output.mutator.block_end)
+        # return output.block_text.text()
     
     def print(self):
         """Print the transformed block."""
@@ -1490,8 +1519,9 @@ class Block:
         if isinstance(v, Block):
             return v
         elif isinstance(v, dict):
-            if "_type" in v and v["_type"] == "Block":
-                return Block.model_validate(v)
+            # if "_type" in v and v["_type"] == "Block":
+            #     return Block.model_validate(v)
+            return Block.model_validate(v)
         else:
             raise ValueError(f"Invalid block: {v}")
 
@@ -1527,17 +1557,71 @@ class Block:
                 prefix_text += "..."
             if prefix_text:
                 parts.append(f"prefix={prefix_text!r}")
+            if self.tags:
+                parts.append(f"tags={self.tags!r}")
+            if self.style:
+                parts.append(f"style={self.style!r}")
         if self.children:
             parts.append(f"children={len(self.children)}")
         return f"Block({', '.join(parts)})"
 
+    # def debug(self, indent: int = 0) -> str:
+    #     """Debug tree representation showing prefix, content, postfix."""
+    #     ind = "  " * indent
+    #     parts = []  
+        
+    #     parts.append(f"path={self.path.indices_str()}")      
+
+    #     if self.role:
+    #         parts.append(f"role={self.role!r}")
+            
+
+
+    #     if self.span:
+    #         prefix_text = self.span.prefix_text
+    #         content_text = self.span.content_text
+    #         postfix_text = self.span.postfix_text
+
+    #         if prefix_text:
+    #             parts.append(f"prefix={prefix_text!r}")
+    #         if content_text:
+    #             # Truncate long content
+    #             if len(content_text) > 30:
+    #                 content_text = content_text[:30] + "..."
+    #             parts.append(f"content={content_text!r}")
+    #         if postfix_text:
+    #             parts.append(f"postfix={postfix_text!r}")
+        
+        
+                
+    #     if self.tags:
+    #         parts.append(f"tags={self.tags!r}")
+                
+    #     if self.style:
+    #         parts.append(f"style={self.style!r}")
+
+    #     if self.children:
+    #         parts.append(f"children={len(self.children)}")
+            
+    #     if self.mutator.is_rendered:
+    #         parts.append(f"rendered")
+            
+    #     cls_name = self.__class__.__name__
+    #     lines = [f"{ind}{cls_name}({', '.join(parts)})"]
+    #     for child in self.children:
+    #         lines.append(child.debug(indent + 1))
+    #     return "\n".join(lines)
     def debug(self, indent: int = 0) -> str:
         """Debug tree representation showing prefix, content, postfix."""
         ind = "  " * indent
-        parts = []
+        parts = []  
+        
+        parts.append(f"{self.path.indices_str()}")      
 
         if self.role:
             parts.append(f"role={self.role!r}")
+            
+
 
         if self.span:
             prefix_text = self.span.prefix_text
@@ -1545,20 +1629,30 @@ class Block:
             postfix_text = self.span.postfix_text
 
             if prefix_text:
-                parts.append(f"prefix={prefix_text!r}")
+                parts.append(f"{prefix_text!r} | ")
             if content_text:
                 # Truncate long content
                 if len(content_text) > 30:
                     content_text = content_text[:30] + "..."
-                parts.append(f"content={content_text!r}")
+                parts.append(f"{content_text!r}")
             if postfix_text:
-                parts.append(f"postfix={postfix_text!r}")
+                parts.append(f" | {postfix_text!r}")
+        
+        
+        
+                
+        if self.tags:
+            parts.append(f"{self.tags!r}")
                 
         if self.style:
-            parts.append(f"style={self.style!r}")
+            parts.append(f"{self.style!r}")
 
         if self.children:
             parts.append(f"children={len(self.children)}")
+            
+        if self.mutator.is_rendered:
+            parts.append(f"rendered")
+            
         cls_name = self.__class__.__name__
         lines = [f"{ind}{cls_name}({', '.join(parts)})"]
         for child in self.children:
@@ -1628,24 +1722,24 @@ class Block:
         # Span detail (optional)
         if include_span or include_chunks:
             span_data: dict[str, Any] = {}
-            if self.span:
-                span_data["prefix"] = self.span.prefix_text
-                span_data["content"] = self.span.content_text
-                span_data["postfix"] = self.span.postfix_text
+            # if self.span:
+            span_data["prefix"] = self.span.prefix_text
+            span_data["content"] = self.span.content_text
+            span_data["postfix"] = self.span.postfix_text
 
-                if include_chunks:
-                    span_data["prefix_chunks"] = [
-                        {"content": c.content, "logprob": c.logprob}
-                        for c in self.span.prefix
-                    ]
-                    span_data["content_chunks"] = [
-                        {"content": c.content, "logprob": c.logprob}
-                        for c in self.span.content
-                    ]
-                    span_data["postfix_chunks"] = [
-                        {"content": c.content, "logprob": c.logprob}
-                        for c in self.span.postfix
-                    ]
+            if include_chunks:
+                span_data["prefix_chunks"] = [
+                    {"content": c.content, "logprob": c.logprob}
+                    for c in self.span.prefix
+                ]
+                span_data["content_chunks"] = [
+                    {"content": c.content, "logprob": c.logprob}
+                    for c in self.span.content
+                ]
+                span_data["postfix_chunks"] = [
+                    {"content": c.content, "logprob": c.logprob}
+                    for c in self.span.postfix
+                ]
             result["span"] = span_data
 
         # Children (recursive)

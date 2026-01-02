@@ -129,6 +129,8 @@ def compute_block_hash(
     attrs: dict,
     children: list[str],  # Child block IDs (already hashed)
     is_rendered: bool = False,
+    block_type: str = "block",  # "block", "schema", "list", "list_schema"
+    path: str = "",  # e.g., "0.1.2"
 ) -> str:
     """
     Compute Merkle hash for a block.
@@ -145,6 +147,8 @@ def compute_block_hash(
         "attrs": attrs,
         "children": children,  # Order matters!
         "is_rendered": is_rendered,
+        "block_type": block_type,
+        "path": path,
     }
     encoded = json.dumps(data, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -201,17 +205,29 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
     The blocks dict is keyed by Merkle hash, spans dict by content hash.
     Duplicate subtrees will naturally have same hash and overwrite.
     """
-    from ...block.block11 import BlockSchema
+    from ...block.block11 import BlockSchema, BlockList, BlockListSchema
 
     all_spans: dict[str, dict] = {}
     all_blocks: dict[str, dict] = {}
 
-    def process_block(blk: "Block") -> str:
+    def get_block_type(blk: "Block") -> str:
+        """Determine the block type string."""
+        if isinstance(blk, BlockListSchema):
+            return "list_schema"
+        elif isinstance(blk, BlockList):
+            return "list"
+        elif isinstance(blk, BlockSchema):
+            return "schema"
+        else:
+            return "block"
+
+    def process_block(blk: "Block", path: str = "") -> str:
         """Process a block and return its Merkle hash."""
         # Process children first (post-order for Merkle)
         child_ids = []
-        for child in blk.children:
-            child_id = process_block(child)
+        for i, child in enumerate(blk.children):
+            child_path = f"{path}.{i}" if path else str(i)
+            child_id = process_block(child, child_path)
             child_ids.append(child_id)
 
         # Process span
@@ -221,11 +237,20 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             span_id = span_data["id"]
             all_spans[span_id] = span_data
 
+        # Determine block type
+        block_type = get_block_type(blk)
+
         # Get schema-specific fields
         name = None
         type_name = None
         attrs = {}
-        if isinstance(blk, BlockSchema):
+        item_name = None
+        if isinstance(blk, BlockListSchema):
+            name = blk.name
+            type_name = str(blk.type) if blk.type else None
+            attrs = blk.attrs or {}
+            item_name = blk.item_name
+        elif isinstance(blk, BlockSchema):
             name = blk.name
             type_name = str(blk.type) if blk.type else None
             attrs = blk.attrs or {}
@@ -244,6 +269,8 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             attrs=attrs,
             children=child_ids,
             is_rendered=is_rendered,
+            block_type=block_type,
+            path=path,
         )
 
         # Store block data
@@ -258,11 +285,14 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             "attrs": attrs,
             "children": child_ids,
             "is_rendered": is_rendered,
+            "block_type": block_type,
+            "item_name": item_name,  # For BlockListSchema
+            "path": path,
         }
 
         return block_id
 
-    root_id = process_block(block)
+    root_id = process_block(block, "")
     root_data = all_blocks[root_id]
 
     return root_data, all_blocks, all_spans
@@ -283,8 +313,9 @@ def load_block(
     Creates a shared BlockText for all blocks in the tree.
     Uses Span.model_validate() for span reconstruction.
     Restores the correct Mutator based on stored styles.
+    Restores the correct block class based on block_type.
     """
-    from ...block.block11 import Block, BlockSchema, Span, BlockText
+    from ...block.block11 import Block, BlockSchema, BlockList, BlockListSchema, Span, BlockText
     from ...block.block11.mutator_meta import MutatorMeta
 
     # Single shared BlockText for the entire tree
@@ -321,19 +352,38 @@ def load_block(
         mutator_config = MutatorMeta.resolve(styles)
         mutator = mutator_config.mutator(None)  # Create mutator, will attach to block
 
+        # Determine block type
+        block_type = block_data.get("block_type", "block")
 
-        # Create block (schema or regular)
-        if block_data.get("name") is not None:
-            # It's a BlockSchema
-            blk = BlockSchema(
-                name=block_data["name"],
+        # Create appropriate block class based on block_type
+        if block_type == "list_schema":
+            blk = BlockListSchema(
+                name=block_data.get("name"),
+                item_name=block_data.get("item_name"),
                 tags=block_data.get("tags"),
                 style=styles,
                 attrs=block_data.get("attrs"),
                 block_text=shared_block_text,
                 mutator=mutator,
             )
-        else:
+        elif block_type == "list":
+            blk = BlockList(
+                role=block_data.get("role"),
+                tags=block_data.get("tags"),
+                style=styles,
+                block_text=shared_block_text,
+                mutator=mutator,
+            )
+        elif block_type == "schema":
+            blk = BlockSchema(
+                name=block_data.get("name"),
+                tags=block_data.get("tags"),
+                style=styles,
+                attrs=block_data.get("attrs"),
+                block_text=shared_block_text,
+                mutator=mutator,
+            )
+        else:  # "block"
             blk = Block(
                 role=block_data.get("role"),
                 tags=block_data.get("tags"),
@@ -424,14 +474,17 @@ async def insert_block(
                     json.dumps(blk.get("attrs") or {}),
                     blk.get("children") or [],
                     blk.get("is_rendered", False),
+                    blk.get("block_type", "block"),
+                    blk.get("item_name"),
+                    blk.get("path", ""),
                     dt.datetime.now(),
                 )
                 for blk in all_blocks.values()
             ]
             await tx.executemany(
                 """INSERT INTO blocks
-                   (id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, created_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                   (id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, block_type, item_name, path, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
                    ON CONFLICT (id) DO NOTHING""",
                 block_rows
             )
@@ -485,7 +538,7 @@ async def load_block_from_db(root_id: str) -> "Block":
             break
 
         rows = await PGConnectionManager.fetch(
-            """SELECT id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered
+            """SELECT id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, block_type, item_name, path
                FROM blocks WHERE id = ANY($1)""",
             block_ids
         )

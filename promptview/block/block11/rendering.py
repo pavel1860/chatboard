@@ -6,7 +6,7 @@ from .mutator_meta import MutatorMeta, MutatorConfig, TargetType, style_registry
 
 
 def render(block: Block, depth: int = 0) -> Block:
-    if block.mutator._is_rendered:
+    if block.mutator.is_rendered:
         return block
         
     config = MutatorMeta.resolve(block.style if not block.is_wrapper else [])
@@ -19,5 +19,5 @@ def render(block: Block, depth: int = 0) -> Block:
         # new_block.mutator.append_child(child)
         # new_block /= child
     mutator = config.mutator()
-    tran_block = mutator.render_and_set(new_block, path)
+    tran_block = mutator.call_render(new_block, path)
     return tran_block

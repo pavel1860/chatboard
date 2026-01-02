@@ -312,7 +312,9 @@ class Turn(Model):
             self.message = reason
         return await self.save()
     
-    
+    def extract_blocks(self):
+        for data in self.data:
+            data.extract()
     
     async def __aenter__(self):
         if self.status != TurnStatus.STAGED:
@@ -921,6 +923,10 @@ class BlockModel(Model):
     type_name: str | None = ModelField(default=None)  # For BlockSchema
     attrs: dict = ModelField(default_factory=dict)
     children: list[str] = ModelField(default_factory=list)  # Ordered block IDs
+    is_rendered: bool = ModelField(default=False)  # Mutator render state
+    block_type: str = ModelField(default="block")  # "block", "schema", "list", "list_schema"
+    item_name: str | None = ModelField(default=None)  # For BlockListSchema
+    path: str = ModelField(default="")  # Index path e.g., "0.1.2"
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
     span: BlockSpan | None = RelationField(primary_key="span_id", foreign_key="id")

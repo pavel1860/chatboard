@@ -53,6 +53,8 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                 .offset(0)
                 .order_by("-created_at")
             )
+            for turn in turns:
+                turn.extract_blocks()
             return turns
     
     @turn_router.get("/spans3")

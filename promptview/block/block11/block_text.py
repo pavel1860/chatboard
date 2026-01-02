@@ -209,6 +209,15 @@ class BlockText:
             Concatenated text of all spans
         """
         return "".join(span.text for span in self)
+    
+    
+    def text_between(self, start: Span, end: Span) -> str:
+        """
+        Get text between start and end.
+        """
+        return "".join(span.text for span in self.spans_between(start, end))
+    
+
 
     # -------------------------------------------------------------------------
     # Query

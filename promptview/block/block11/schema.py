@@ -158,7 +158,14 @@ class BlockSchema(Block):
             # return block
             
         
-    def inst_content(self, content: ContentType | None = None, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:
+    def inst_content(
+        self, 
+        content: ContentType | None = None, 
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
+    ) -> Block:
         from .mutator_meta import MutatorMeta
         from .span import BlockChunk
         
@@ -183,10 +190,10 @@ class BlockSchema(Block):
     def inst_from_dict(
         self,
         data: dict,
-        style: str | list[str] | None = None,
-        role: str | None = None,
-        tags: list[str] | None = None,
-        attrs: dict[str, Any] | None = None,
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
     ) -> Block:
         """
         Create a Block instance from a dictionary.
@@ -656,6 +663,10 @@ class BlockListSchema(BlockSchema):
             _span=_span,
             _children=_children,
         )
+        
+        if name is None:
+            list_name = f"{item_name}_list"
+        self.tags.append(list_name)
 
         # List-specific attributes
         self.item_name = item_name
@@ -729,7 +740,7 @@ class BlockListSchema(BlockSchema):
             item_schema=item_schema,
             role=UnsetType.get_value(role, self.role),
             tags=UnsetType.get_value(tags, self.tags),
-            style=UnsetType.get_value(style, self._style),
+            # style=UnsetType.get_value(style, self._style),
         )
 
     def instantiate_item(
@@ -788,7 +799,7 @@ class BlockListSchema(BlockSchema):
         """
         # Create the list container
         block_list = self.instantiate(
-            style=style if style is not None else UNSET,
+            # style=style if style is not None else UNSET,
             role=role if role is not None else UNSET,
             tags=tags if tags is not None else UNSET,
         )

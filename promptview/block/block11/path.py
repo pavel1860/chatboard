@@ -252,6 +252,10 @@ class Path:
         """String representation using tags: 'response.thinking'"""
         return separator.join(self.tags)
 
+
+    def indices_str(self, separator: str = ".") -> str:
+        """String representation using indices: '0.2.1'"""
+        return separator.join(str(i) for i in self.indices)
     # -------------------------------------------------------------------------
     # Parsing
     # -------------------------------------------------------------------------
