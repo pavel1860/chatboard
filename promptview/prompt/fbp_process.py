@@ -877,9 +877,92 @@ from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
 
 import json
 import asyncio
+import hashlib
+import os
 
 
 from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
+
+
+def _serialize_for_hash(value: Any) -> Any:
+    """
+    Serialize a value for hashing. Handles Pydantic models, dicts, lists, and primitives.
+
+    For Block objects, uses the text content for deterministic hashing.
+    """
+    from ..block import Block
+
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    # Handle Block specially - use Merkle hash from dump_block for deterministic hashing
+    if isinstance(value, Block):
+        from ..model.block_models.block11_storage import dump_block
+        root_data, _, _ = dump_block(value)
+        return root_data["id"]  # Merkle hash of entire block tree
+    if hasattr(value, 'model_dump'):
+        # Pydantic model - try with mode='json', fall back to without
+        try:
+            return value.model_dump(mode='json')
+        except TypeError:
+            try:
+                return value.model_dump()
+            except Exception:
+                return str(value)
+    if isinstance(value, dict):
+        return {k: _serialize_for_hash(v) for k, v in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_serialize_for_hash(v) for v in value]
+    # For other types, use string representation
+    return str(value)
+
+
+def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
+    """
+    Compute a cache key hash from stream name and bound arguments.
+
+    Args:
+        name: The stream name (used as prefix)
+        bound_args: Dictionary of bound arguments from inspect.signature.bind()
+
+    Returns:
+        A hash string suitable for use in filenames
+    """
+    # Filter out non-serializable types (Context, LLM instances, etc.)
+    from .context import Context
+    from ..llms import LLM, LlmConfig
+    from ..evaluation.decorators import EvalCtx
+
+    filtered_args = {}
+    for key, value in bound_args.items():
+        if value is None:
+            continue
+        # Skip 'self' argument (method bound to instance)
+        if key == 'self':
+            continue
+        if isinstance(value, (Context, LLM, LlmConfig, EvalCtx)):
+            continue
+        # Skip private arguments
+        if key.startswith('_'):
+            continue
+        # Skip objects that look like LLM instances (have 'stream' method)
+        if hasattr(value, 'stream') and hasattr(value, 'complete'):
+            continue
+        filtered_args[key] = _serialize_for_hash(value)
+
+    # Create deterministic JSON string
+    json_str = json.dumps(filtered_args, sort_keys=True, default=str)
+
+    # Debug: print what's being hashed
+    print(f"[CACHE DEBUG] name={name}, json_str={json_str[:500]}")
+
+    # Compute hash
+    hash_value = hashlib.sha256(json_str.encode('utf-8')).hexdigest()[:16]
+
+    return f"{name}_{hash_value}.json"
+
+
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
     from ..block import Block, BlockChunk, BlockSchema, BaseBlock
@@ -1163,25 +1246,27 @@ class Stream(Process):
 
             async def __anext__(self):
                 return await self._gen.__anext__()
-            
+
             async def athrow(self, typ, val=None, tb=None):
                 return await self._gen.athrow(typ, val, tb)
-            
+
             async def aclose(self):
                 return await self._gen.aclose()
 
         super().__init__(upstream=GeneratorWrapper(gen))
         self._name = name
-        self._save_stream_dir: str | None = None
+        self._save_stream_path: str | None = None
+        self._collected_chunks: list[Any] = []  # Collect chunks for JSONL save
 
     def save_stream(self, filepath: str):
         """
-        Enable stream persistence - saves each IP to a JSONL file.
+        Enable stream persistence - saves all IPs to a JSONL file on successful completion.
 
         Args:
             filepath: Path to JSONL file to save stream to
         """
-        self._save_stream_dir = filepath
+        self._save_stream_path = filepath
+        self._collected_chunks = []
 
     @classmethod
     def load(cls, filepath: str, delay: float = 0.0):
@@ -1190,7 +1275,6 @@ class Stream(Process):
 
         Args:
             filepath: Path to JSONL file to load stream from
-            model: Optional Pydantic model to deserialize IPs into
             delay: Optional delay between IPs (for simulating streaming)
 
         Returns:
@@ -1200,14 +1284,15 @@ class Stream(Process):
             from ..block import BlockChunk
             with open(filepath, "r") as f:
                 for line in f:
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-                    data = json.loads(line)
-                    block = BlockChunk.model_validate(data)
-                    yield block
+                    if line.strip():
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        data = json.loads(line)
+                        block = BlockChunk.model_validate(data)
+                        yield block
 
         return cls(load_stream(), name=f"stream_from_{filepath}")
-    
+
     @classmethod
     def from_list(cls, chunks: list[str], name: str = "stream_from_list"):
         async def gen():
@@ -1220,22 +1305,28 @@ class Stream(Process):
         """
         Receive next IP from wrapped generator.
 
-        If persistence is enabled, writes IP to file before returning.
+        If persistence is enabled, collects IP for later save.
+        Only saves to JSONL on successful stream completion (not on errors).
         """
         ip = await super().__anext__()
 
-        # Save to file if persistence enabled
-        if self._save_stream_dir:
-            with open(self._save_stream_dir, "a") as f:
-                # Handle Pydantic models
-                if hasattr(ip, "model_dump"):
-                    data = ip.model_dump()
-                else:
-                    data = ip
-
-                f.write(json.dumps(data) + "\n")
+        # Collect for save if persistence enabled
+        if self._save_stream_path is not None:
+            if hasattr(ip, "model_dump"):
+                data = ip.model_dump()
+            else:
+                data = ip
+            self._collected_chunks.append(data)
 
         return ip
+
+    async def on_stop(self):
+        """Save collected chunks to JSONL file on successful completion."""
+        if self._save_stream_path is not None and self._collected_chunks:
+            with open(self._save_stream_path, "w") as f:
+                for data in self._collected_chunks:
+                    f.write(json.dumps(data) + "\n")
+        await super().on_stop()
     
 
 
@@ -1736,7 +1827,7 @@ class StreamController(ObservableProcess):
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
-        self._temp_data_flow: DataFlowNode | None = None
+        self._temp_data_flow: DataFlowNode | None = None        
 
 
     def get_output(self, idx: int | None = None, include_fence: bool = False) -> Any:
@@ -1766,22 +1857,46 @@ class StreamController(ObservableProcess):
 
         In replay mode (when span has saved outputs), sets up replay buffer instead of
         executing the generator function.
+
+        Auto-cache behavior:
+        - If ctx.cache_dir is set and no explicit load/save path is configured:
+          - Computes cache key from stream name + bound arguments
+          - If cache file exists: loads from cache (no re-execution)
+          - If cache file doesn't exist: executes and saves to cache
         """
         from ..block import Block
-        bound, kwargs =await self._resolve_dependencies()
-        gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+        bound, kwargs = await self._resolve_dependencies()
+
+        # Auto-cache: determine cache path from context if not explicitly set
+        cache_path = None
+        if self._load_filepath is None and self._save_filepath is None:
+            cache_dir = self.ctx.cache_dir
+            if cache_dir is not None:
+                # Compute cache key from bound arguments
+                cache_filename = compute_stream_cache_key(self._name, dict(bound.arguments))
+                cache_path = os.path.join(cache_dir, cache_filename)
+
+                # Check if cache exists
+                if os.path.exists(cache_path):
+                    # Load from cache
+                    self._load_filepath = cache_path
+                else:
+                    # Save to cache
+                    self._save_filepath = cache_path
 
         # Wrap in Stream process and pipe through Accumulator
         if self._load_filepath is not None:
-            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.0)        
+            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.0)
         else:
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
             stream = Stream(gen_instance, name=f"{self._name}_stream")
+
         if self._save_filepath is not None:
-            import os
             os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
             if os.path.exists(self._save_filepath):
                 os.remove(self._save_filepath)
             stream.save_stream(self._save_filepath)
+
         self._stream = stream
         self._gen = stream
         if self._parser is not None:
@@ -1801,6 +1916,7 @@ class StreamController(ObservableProcess):
         from .events import StreamEvent
         from ..model.versioning.artifact_log import ArtifactLog
         from ..block.block11.parsers import ParserEvent
+
          
         if type(payload) == ParserEvent:     
             # if payload.type == "block_stream":
@@ -1827,6 +1943,22 @@ class StreamController(ObservableProcess):
                 kind=self._value_event_type,
                 payload=payload,
                 name=self._name
+            )
+            
+        elif self._temp_data_flow is None:
+            if self._parser is None:
+                if self._accumulator is None:
+                    raise FlowException("Accumulator is not initialized")
+                payload = self._accumulator.result
+
+            data_flow = ArtifactLog.build_data_flow_node(self.span, payload, io_kind="output")
+            self._temp_data_flow = data_flow
+            return self.ctx.build_event(
+                path=self._temp_data_flow.path,
+                kind=f"{self._span_type}_value",
+                payload=data_flow,
+                name=self._name,
+                
             )
 
 

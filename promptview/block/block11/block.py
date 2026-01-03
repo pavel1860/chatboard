@@ -473,9 +473,9 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     def call_extract(self) -> Block:
-        from .mutators import RootMutator
-        if isinstance(self, RootMutator):
-            return self.block[0].extract()
+        # from .mutators import RootMutator
+        # if isinstance(self, RootMutator):
+        #     return self.block[1].extract()
         # if not self.is_rendered:
             # raise ValueError(f"Block is not rendered. can't extract: {self.block}")
         ex_block = self.extract()
@@ -1716,6 +1716,7 @@ class Block:
     def model_dump(
         self,
         *,
+        mode: str | None = None,
         include_chunks: bool = True,
         include_span: bool = True,
         exclude_none: bool = True,

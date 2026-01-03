@@ -145,13 +145,13 @@ class RootMutator(Mutator):
     @property
     def head(self) -> Span:
         """The opening markdown fence (```xml)."""
-        return self.block.span
+        return self.block.children[0].span
 
     @property
     def body(self) -> list[Block]:
         """The actual content inside the wrapper."""
         
-        return self.block.children
+        return self.block.children[1].children
         
         # First child is the wrapper containing actual content
         # first_child = self.block.children[0]
@@ -161,7 +161,7 @@ class RootMutator(Mutator):
     @property
     def content(self) -> str:
         """Content of the head span."""
-        return self.block.span.content_text
+        return self.block.children[0].span.content_text
 
     @property
     def block_end(self) -> Span:
@@ -178,6 +178,21 @@ class RootMutator(Mutator):
         if len(self.block.children) >= 2:
             return self.block.children[-1].span
         return None
+    
+    
+    def extract(self) -> Block:
+        return self.block.children[1].extract()
+    
+    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
+        with Block(content=chunks, tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as root_blk:
+            with root_blk(tags=["prefix"]) as pre:
+                pass
+            with root_blk(tags=["content"]) as content:
+                pass   
+            with root_blk(tags=["postfix"]) as post:
+                pass          
+        return root_blk
+    
     
     
     
