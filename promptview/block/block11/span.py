@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Iterator, Literal
+from typing import TYPE_CHECKING, Iterator, Literal, TypedDict
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -110,6 +110,9 @@ def split_chunks(chunks: list[BlockChunk], sep: str) -> tuple[list[BlockChunk], 
 
     return before, separator, after
 
+class SpanEvent(TypedDict):
+    cmd: Literal["append_content", "prepend_content", "append_prefix", "prepend_prefix", "append_postfix", "prepend_postfix"]
+    chunks: list[BlockChunk]
 
 @dataclass
 class BlockChunk:
@@ -187,8 +190,66 @@ class BlockChunk:
             content=data["content"],
             logprob=data.get("logprob"),
         )
+        
+BlockSpanEvent = Literal["append_content", "prepend_content", "append_prefix", "prepend_prefix", "append_postfix", "prepend_postfix"]
 
+@dataclass
+class BlockChunkList:
+    chunks: list[BlockChunk]
+    event: BlockSpanEvent | None = None
+    
+    
+    def __getitem__(self, index: int) -> BlockChunk:
+        return self.chunks[index]
+    
+    def __len__(self) -> int:
+        return len(self.chunks)
+    
+    def __iter__(self) -> Iterator[BlockChunk]:
+        return iter(self.chunks)
+    
+    def __repr__(self) -> str:
+        return f"BlockChunkList({self.chunks})"
+    
+    def __str__(self) -> str:
+        return f"BlockChunkList({self.chunks})"
+    
+    def __hash__(self) -> int:
+        return hash(tuple(self.chunks))
+    
+    def append(self, chunk: BlockChunk) -> BlockChunkList:
+        self.chunks.append(chunk)
+        return self
+    
+    def prepend(self, chunk: BlockChunk) -> BlockChunkList:
+        self.chunks.insert(0, chunk)
+        return self
+    
+    def extend(self, chunks: list[BlockChunk]) -> BlockChunkList:
+        self.chunks.extend(chunks)
+        return self
+    
+    def extend_left(self, chunks: list[BlockChunk]) -> BlockChunkList:
+        self.chunks = chunks + self.chunks
+        return self
+    
+    def extend_right(self, chunks: list[BlockChunk]) -> BlockChunkList:
+        self.chunks = self.chunks + chunks
+        return self
+    
+    def contains(self, chunks: list[BlockChunk] | BlockChunkList | str) -> bool:
+        if isinstance(chunks, BlockChunkList):
+            return chunks_contain(self.chunks, chunks.chunks)
+        elif isinstance(chunks, list):
+            return chunks_contain(self.chunks, chunks)
+        elif isinstance(chunks, str):
+            return chunks_contain(self.chunks, chunks)
+        
 
+    def split(self, sep: str) -> tuple[BlockChunkList, BlockChunkList]:
+        return split_chunks(self.chunks, sep)
+    
+    
 @dataclass
 class Span:
     """
@@ -210,6 +271,8 @@ class Span:
 
     # Owner reference (BlockText that owns this span)
     owner: BlockText | None = field(default=None, repr=False)
+    
+    _last_event: SpanEvent | None = field(default=None, repr=False)
 
     # Unique identifier
     id: str = field(default_factory=_generate_id)
@@ -271,39 +334,78 @@ class Span:
 
     # --- Mutation: Content ---
 
-    def append_content(self, chunks: list[BlockChunk]) -> Span:
+    def append_content(self, chunks: list[BlockChunk]) -> BlockChunkList:
         """Append chunks to content."""
         self.content.extend(chunks)
-        return self
+        return BlockChunkList(chunks=chunks, event="append_content")
 
-    def prepend_content(self, chunks: list[BlockChunk]) -> Span:
+    def prepend_content(self, chunks: list[BlockChunk]) -> BlockChunkList:
         """Prepend chunks to content."""
         self.content = chunks + self.content
-        return self
+        return BlockChunkList(chunks=chunks, event="prepend_content")
 
     # --- Mutation: Prefix ---
 
-    def append_prefix(self, chunks: list[BlockChunk]) -> Span:
+    def append_prefix(self, chunks: list[BlockChunk]) -> BlockChunkList:
         """Append chunks to prefix."""
         self.prefix.extend(chunks)
-        return self
+        return BlockChunkList(chunks=chunks, event="append_prefix")
 
-    def prepend_prefix(self, chunks: list[BlockChunk]) -> Span:
+    def prepend_prefix(self, chunks: list[BlockChunk]) -> BlockChunkList:
         """Prepend chunks to prefix."""
         self.prefix = chunks + self.prefix
-        return self
+        return BlockChunkList(chunks=chunks, event="prepend_prefix")
 
     # --- Mutation: Postfix ---
 
-    def append_postfix(self, chunks: list[BlockChunk]) -> Span:
+    def append_postfix(self, chunks: list[BlockChunk]) -> BlockChunkList:
         """Append chunks to postfix."""
         self.postfix.extend(chunks)
-        return self
+        return BlockChunkList(chunks=chunks, event="append_postfix")
 
-    def prepend_postfix(self, chunks: list[BlockChunk]) -> Span:
+    def prepend_postfix(self, chunks: list[BlockChunk]) -> BlockChunkList:
         """Prepend chunks to postfix."""
         self.postfix = chunks + self.postfix
-        return self
+        return BlockChunkList(chunks=chunks, event="prepend_postfix")
+    # def append_content(self, chunks: list[BlockChunk]) -> Span:
+    #     """Append chunks to content."""
+    #     self.content.extend(chunks)
+    #     self._last_event = {"cmd": "append_content", "chunks": chunks}
+    #     return self
+
+    # def prepend_content(self, chunks: list[BlockChunk]) -> Span:
+    #     """Prepend chunks to content."""
+    #     self.content = chunks + self.content
+    #     self._last_event = {"cmd": "prepend_content", "chunks": chunks}
+    #     return self
+
+    # # --- Mutation: Prefix ---
+
+    # def append_prefix(self, chunks: list[BlockChunk]) -> Span:
+    #     """Append chunks to prefix."""
+    #     self.prefix.extend(chunks)
+    #     self._last_event = {"cmd": "append_prefix", "chunks": chunks}
+    #     return self
+
+    # def prepend_prefix(self, chunks: list[BlockChunk]) -> Span:
+    #     """Prepend chunks to prefix."""
+    #     self.prefix = chunks + self.prefix
+    #     self._last_event = {"cmd": "prepend_prefix", "chunks": chunks}
+    #     return self
+
+    # # --- Mutation: Postfix ---
+
+    # def append_postfix(self, chunks: list[BlockChunk]) -> Span:
+    #     """Append chunks to postfix."""
+    #     self.postfix.extend(chunks)
+    #     self._last_event = {"cmd": "append_postfix", "chunks": chunks}
+    #     return self
+
+    # def prepend_postfix(self, chunks: list[BlockChunk]) -> Span:
+    #     """Prepend chunks to postfix."""
+    #     self.postfix = chunks + self.postfix
+    #     self._last_event = {"cmd": "prepend_postfix", "chunks": chunks}
+    #     return self
 
     # --- Copy ---
 

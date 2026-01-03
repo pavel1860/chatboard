@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterator, Callable, Type
 
-from .span import Span, BlockChunk
+from .span import BlockChunkList, Span, BlockChunk, SpanEvent
 from .mutator_meta import MutatorMeta
 from .path import Path, compute_path
 from pydantic import BaseModel, GetCoreSchemaHandler
@@ -157,12 +157,12 @@ class Mutator(metaclass=MutatorMeta):
     
     def on_newline(self, chunk: BlockChunk):
         if self.is_head_open([chunk]):
-            self.head.append_postfix([chunk])
+            return self.head.append_postfix([chunk])
         elif self.is_last_block_open([chunk]):
-            self.body[-1].head.append_postfix([chunk])
+            return self.body[-1].head.append_postfix([chunk])
         else:
             block = self._spawn_block([chunk])
-            self.append_child(block)
+            return self.append_child(block)
     
     def on_space(self, chunk: BlockChunk):
         if not self.head.content:
@@ -193,12 +193,12 @@ class Mutator(metaclass=MutatorMeta):
             
     def on_text(self, chunks: list[BlockChunk]):
         if self.is_head_open(chunks):
-            self.head.append_content(chunks)
+            return self.head.append_content(chunks)
         elif self.is_last_block_open(chunks):
-            self.body[-1].head.append_content(chunks)
+            return self.body[-1].head.append_content(chunks)
         else:
             block = self._spawn_block(chunks)
-            self.append_child(block)
+            return self.append_child(block)
         
     
     
@@ -360,14 +360,14 @@ class Mutator(metaclass=MutatorMeta):
     #         target_block.mutator.append_content(target_chunks)
     #     return self
 
-    def append_child(self, child: Block, to_body: bool = True) -> Mutator:
+    def append_child(self, child: Block, to_body: bool = True) -> Block:
         """Append a child block to the body."""        
         self._attach_child(child)
         if to_body:
             self.body.append(child)
         else:
             self.block.children.append(child)
-        return self
+        return child
 
     def prepend_child(self, child: Block) -> Mutator:
         """Prepend a child block to the body."""
@@ -903,6 +903,40 @@ class Block:
         if last_idx < len(chunks):
             text_chunks = chunks[last_idx:]
             self.mutator.on_text(text_chunks)
+
+
+    def append_events(self, content: ContentType) -> list[BlockChunkList | Block]:
+        """Append content to the last block"""
+        chunks = self.mutator.promote(content)
+
+        last_idx = 0  # Start at 0, tracks position after last processed separator
+        events = []
+        for i in range(len(chunks)):
+            if not chunks[i].is_text:
+                # Get text chunks before this separator
+                text_chunks = chunks[last_idx:i]
+                sep = chunks[i]
+                last_idx = i + 1  # Move past the separator
+
+                if text_chunks:
+                    res = self.mutator.on_text(text_chunks)
+                    events.append(res)
+                if sep.is_line_end:
+                    res = self.mutator.on_newline(sep)
+                    events.append(res)
+                elif sep.isspace():
+                    res = self.mutator.on_space(sep)
+                    events.append(res)
+                else:
+                    res = self.mutator.on_symbol(sep)
+                    events.append(res)
+
+        # Handle remaining text chunks after the last separator
+        if last_idx < len(chunks):
+            text_chunks = chunks[last_idx:]
+            res = self.mutator.on_text(text_chunks)
+            events.append(res)
+        return events
 
 
 
@@ -1476,7 +1510,7 @@ class Block:
             else:
                 # Multiple schemas at root level - create a virtual wrapper
                 wrapper_schema = BlockSchema(
-                    style=[],  # No style - won't render tags
+                    style=["root"],  # No style - won't render tags
                 )
                 # Clear the span to make it a true wrapper (no content)
                 wrapper_schema.span = self.block_text.create_span()
@@ -1629,14 +1663,14 @@ class Block:
             postfix_text = self.span.postfix_text
 
             if prefix_text:
-                parts.append(f"{prefix_text!r} | ")
+                parts.append(f"{prefix_text!r} << ")
             if content_text:
                 # Truncate long content
                 if len(content_text) > 30:
                     content_text = content_text[:30] + "..."
                 parts.append(f"{content_text!r}")
             if postfix_text:
-                parts.append(f" | {postfix_text!r}")
+                parts.append(f" >> {postfix_text!r}")
         
         
         
@@ -1707,7 +1741,7 @@ class Block:
         result: dict[str, Any] = {}
 
         # Content (always include as simple string)
-        result["content"] = self.content
+        # result["content"] = self.content
 
         # Core fields
         if self.role is not None or not exclude_none:
@@ -1720,27 +1754,41 @@ class Block:
             result["attrs"] = self.attrs
 
         # Span detail (optional)
-        if include_span or include_chunks:
-            span_data: dict[str, Any] = {}
+        # if include_span or include_chunks:
+            # span_data: dict[str, Any] = {}
             # if self.span:
-            span_data["prefix"] = self.span.prefix_text
-            span_data["content"] = self.span.content_text
-            span_data["postfix"] = self.span.postfix_text
+            # span_data["prefix"] = self.span.prefix_text
+            # span_data["content"] = self.span.content_text
+            # span_data["postfix"] = self.span.postfix_text
 
-            if include_chunks:
-                span_data["prefix_chunks"] = [
-                    {"content": c.content, "logprob": c.logprob}
-                    for c in self.span.prefix
-                ]
-                span_data["content_chunks"] = [
-                    {"content": c.content, "logprob": c.logprob}
-                    for c in self.span.content
-                ]
-                span_data["postfix_chunks"] = [
-                    {"content": c.content, "logprob": c.logprob}
-                    for c in self.span.postfix
-                ]
-            result["span"] = span_data
+            # if include_chunks:
+            #     span_data["prefix_chunks"] = [
+            #         {"content": c.content, "logprob": c.logprob}
+            #         for c in self.span.prefix
+            #     ]
+            #     span_data["content_chunks"] = [
+            #         {"content": c.content, "logprob": c.logprob}
+            #         for c in self.span.content
+            #     ]
+            #     span_data["postfix_chunks"] = [
+            #         {"content": c.content, "logprob": c.logprob}
+            #         for c in self.span.postfix
+            #     ]
+            # result["span"] = span_data
+        result["span"] = {}
+        result["span"]["prefix"] = [
+            {"content": c.content, "logprob": c.logprob}
+            for c in self.span.prefix
+        ]
+        result["span"]["content"] = [
+            {"content": c.content, "logprob": c.logprob}
+            for c in self.span.content
+        ]
+        result["span"]["postfix"] = [
+            {"content": c.content, "logprob": c.logprob}
+            for c in self.span.postfix
+        ]
+
 
         # Children (recursive)
         if self.children:

@@ -179,6 +179,8 @@ class RootMutator(Mutator):
             return self.block.children[-1].span
         return None
     
+    
+    
 
     
     # def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:

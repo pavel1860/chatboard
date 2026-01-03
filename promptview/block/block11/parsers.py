@@ -6,7 +6,7 @@ from xml.parsers import expat
 
 from .block import Block
 from .schema import BlockListSchema, BlockList
-from .span import BlockChunk
+from .span import BlockChunk, BlockChunkList, BlockSpanEvent
 from ...prompt.fbp_process import Process
 
 if TYPE_CHECKING:
@@ -21,8 +21,8 @@ class ParserError(Exception):
 @dataclass
 class ParserEvent:
     path: str
-    type: Literal["block_stream", "block_init", "block_commit", "block_delta"]
-    value: Block | BlockChunk
+    type: Literal["block_stream", "block_init", "block_commit", "block_delta", "block"] | BlockSpanEvent
+    value: Block | BlockChunkList
     
     
 # ParserState = Literal["start_tag_prefix", "start_tag_content", "start_tag_postfix", "tag_body", "end_tag_prefix", "end_tag_content", "end_tag_postfix"]
@@ -83,6 +83,7 @@ class XmlParser(Process):
         self._pending_prefix: list[BlockChunk] = []
         self._pending_has_ending = False
         self._in_text_chunks = False
+        self._temp_block: Block | None = None
 
         # Output queue for blocks
         self._output_queue: list[ParserEvent] = []
@@ -109,6 +110,8 @@ class XmlParser(Process):
             # Schema has content - wrap it with RootMutator
             self._wrapper_schema = BlockSchema(name=self._root_tag, style="root")
             self._wrapper_schema.children.append(self.schema)
+        # self._wrapper_schema = BlockSchema(name=self._root_tag, style="root")
+        # self._wrapper_schema.children.append(self.schema)
 
         self.feed_str(f"<{self._root_tag}>")
 
@@ -155,7 +158,7 @@ class XmlParser(Process):
         return self._stack[-1]
     
     
-    def _push_event(self, path: str, type: Literal["block_init", "block_commit", "block_delta"], value: Block | BlockChunk):
+    def _push_event(self, path: str, type: Literal["block_init", "block_commit", "block_delta"], value: Block | BlockChunkList):
         self._output_queue.append(ParserEvent(path=path, type=type, value=value))
     
     
@@ -494,8 +497,6 @@ class XmlParser(Process):
 
     def _handle_start(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         """Handle opening tag - instantiate block from schema."""
-        
-        
 
         # Handle synthetic root
         if name == self._root_tag:
@@ -503,8 +504,8 @@ class XmlParser(Process):
             self._root = self._wrapper_schema.instantiate_partial()
             # self._stack.append((self._wrapper_schema, self._root))
             self._push_block(self._wrapper_schema, self._root)
-            # self._push_event(self._root.path.indices_str(),"block_init", self._root.extract())
-            self._push_event(self._root.path.indices_str(),"block_init", self._root.copy())
+            self._push_event(self._root.path.indices_str(),"block_init", self._root.extract())
+            # self._push_event(self._root.path.indices_str(),"block_init", self._root.copy(False))
             return
 
         if self._is_top_list_schema():
@@ -560,7 +561,7 @@ class XmlParser(Process):
 
         # Commit could be called here for validation
         end_block = block.commit(chunks)
-
+        self._temp_block = None
         # Queue commit event for FBP streaming
         self._push_event(block.path.indices_str(),"block_commit", end_block.copy_head())
 
@@ -569,30 +570,36 @@ class XmlParser(Process):
         if self.current_block is None:
             return
 
-        self.current_block.append(chunks)
+        events = self.current_block.append_events(chunks)
 
         # Queue delta event for FBP streaming
-        self._push_event(self.current_block.path.indices_str(),"block_delta", chunks)
+        for event in events:
+            if isinstance(event, Block):
+                self._temp_block = event
+                self._push_event(event.path.indices_str(), "block", event.copy())    
+            else:
+                path = self._temp_block.path if self._temp_block is not None else self.current_block.path
+                self._push_event(path.indices_str(), event.event, event)
+            # event_type = event.event if isinstance(event, BlockChunkList) else "block"
+            
         
         
     def _handle_start_postfix(self, chunks: list[BlockChunk]):
         """Handle postfix - append to current block and queue for streaming."""
         if self.current_block is None:
             return
-
-        self.current_block.head.append_postfix(chunks)
+        event = self.current_block.head.append_postfix(chunks)
 
         # Queue delta event for FBP streaming
-        self._push_event(self.current_block.path.indices_str(),"block_delta", chunks)
+        self._push_event(self.current_block.path.indices_str(),event.event, event)
         
     def _handle_end_postfix(self, chunks: list[BlockChunk]):
         if self.current_block is None:
             return
-
-        self.current_block.mutator.block_postfix.append_postfix(chunks)
+        event = self.current_block.mutator.block_postfix.append_postfix(chunks)
 
         # Queue delta event for FBP streaming
-        self._push_event(self.current_block.path.indices_str(),"block_delta", chunks)
+        self._push_event(self.current_block.path.indices_str(),event.event, event)
         
     def _handle_root_text(self, chunks: list[BlockChunk]):
         pass
