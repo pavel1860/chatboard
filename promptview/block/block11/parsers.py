@@ -108,8 +108,9 @@ class XmlParser(Process):
             self._wrapper_schema = self.schema
         else:
             # Schema has content - wrap it with RootMutator
-            self._wrapper_schema = BlockSchema(name=self._root_tag, style="root")
-            self._wrapper_schema.children.append(self.schema)
+            self._wrapper_schema = BlockSchema(name=self._root_tag, style="root", _auto_handle=False)
+            # self._wrapper_schema.children.append(self.schema)
+            self._wrapper_schema.append_child(self.schema)
         # self._wrapper_schema = BlockSchema(name=self._root_tag, style="root")
         # self._wrapper_schema.children.append(self.schema)
 
@@ -121,8 +122,8 @@ class XmlParser(Process):
         if self._root is None:
             return None
         # Unwrap synthetic root if it has exactly one child
-        if self._has_synthetic_root and len(self._root.body) == 1:
-            return self._root.body[0]
+        # if self._has_synthetic_root and len(self._root.body) == 1:
+        #     return self._root.children[1]
         return self._root
 
     @property
@@ -398,6 +399,9 @@ class XmlParser(Process):
                     if len(self._stack) <= 2:
                         self._pop()
                         return "body", event_data, add_prefix(chunks)
+                    # elif len(self._stack) == 1:
+                    #     self._pop()
+                    #     return "body", event_data, add_prefix(chunks)
                     else:
                         raise ParserError(f"Unexpected character data at end level: {event_data}")
 

@@ -303,8 +303,14 @@ class Mutator(metaclass=MutatorMeta):
                 return content
         return []
 
-    def _attach_child(self, child: Block) -> None:
-        """Attach a child to this block (set parent and inherit block_text)."""
+    def _attach_child(self, child: Block, insert_after_span: Span | None = None) -> None:
+        """Attach a child to this block (set parent and inherit block_text).
+
+        Args:
+            child: The child block to attach
+            insert_after_span: The span after which to insert the child's spans.
+                              If None, appends to the end of the BlockText.
+        """
         child.parent = self._block
         # Copy child's spans into parent's BlockText
         if self._block is not None:
@@ -312,11 +318,17 @@ class Mutator(metaclass=MutatorMeta):
             if child.block_text is not parent_bt:
                 # Copy spans from the child and its descendants to parent's BlockText
                 # and update the block's span reference to the new copy
+                # Insert after the specified span (or append if None)
+                current_insert_point = insert_after_span
                 for block in child.iter_depth_first(all_blocks=True):
                     if block.span is not None:
                         new_span = block.span.copy()
-                        parent_bt.append(new_span)
+                        if current_insert_point is not None:
+                            parent_bt.insert_after(current_insert_point, new_span)
+                        else:
+                            parent_bt.append(new_span)
                         block.span = new_span
+                        current_insert_point = new_span
                 # Recursively update block_text on child and all descendants
                 self._set_block_text_recursive(child, parent_bt)
             else:
@@ -361,8 +373,10 @@ class Mutator(metaclass=MutatorMeta):
     #     return self
 
     def append_child(self, child: Block, to_body: bool = True) -> Block:
-        """Append a child block to the body."""        
-        self._attach_child(child)
+        """Append a child block to the body."""
+        # Find the span to insert after: the last span in the current subtree
+        insert_after = self.get_last_span()
+        self._attach_child(child, insert_after_span=insert_after)
         if to_body:
             self.body.append(child)
         else:
@@ -371,13 +385,23 @@ class Mutator(metaclass=MutatorMeta):
 
     def prepend_child(self, child: Block) -> Mutator:
         """Prepend a child block to the body."""
-        self._attach_child(child)
+        # Insert after the parent's own span (before any existing children)
+        insert_after = self.block.span
+        self._attach_child(child, insert_after_span=insert_after)
         self.body.insert(0, child)
         return self
 
     def insert_child(self, index: int, child: Block) -> Mutator:
         """Insert a child block at the given index."""
-        self._attach_child(child)
+        # Find the span to insert after
+        if index == 0:
+            # Insert after the parent's own span
+            insert_after = self.block.span
+        else:
+            # Insert after the last span of the preceding sibling
+            preceding_sibling = self.body[index - 1]
+            insert_after = preceding_sibling.mutator.get_last_span()
+        self._attach_child(child, insert_after_span=insert_after)
         self.body.insert(index, child)
         return self
 
@@ -787,7 +811,7 @@ class Block:
         if isinstance(content, Block):
             block = content
         else:
-            block = Block(content, role=role, tags=tags, style=style, attrs=attrs, _auto_handle=self._auto_handle)        
+            block = Block(content, role=role, tags=tags, style=style, attrs=attrs, block_text=self.block_text, _auto_handle=self._auto_handle)
         # self.mutator.auto_handle_newline()
         if self._auto_handle:
             curr_head = self.mutator.current_head
@@ -832,6 +856,7 @@ class Block:
             # style="xml" if style is None and name is not None else style,
             style=style,
             is_required=is_required,
+            block_text=self.block_text,
         )
         if self._auto_handle:
             curr_head = self.mutator.current_head
@@ -861,6 +886,7 @@ class Block:
             attrs=attrs,
             # style=["xml-list"] if style is None else parse_style(style),
             style=style,
+            block_text=self.block_text,
             is_required=is_required,
         )
         # if not self.mutator.current_head.has_newline():
@@ -1705,8 +1731,8 @@ class Block:
             s.add(id(block.block_text))
         return s
 
-    def print_block_texts(self):
-        for block in self.iter_depth_first():
+    def print_block_texts_ids(self, all_blocks: bool = False):
+        for block in self.iter_depth_first(all_blocks):
             print(id(block.block_text))
 
     # -------------------------------------------------------------------------

@@ -113,8 +113,8 @@ class XmlMutator(Mutator):
     def commit(self, chunks: list[BlockChunk]) -> Block:
         prev_chunks, start_chunk, post = split_chunks(chunks, "</")
         content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-        if self.is_last_block_open(chunks):
-            self.body[-1].add_newline()
+        # if self.is_last_block_open(chunks):
+        #     self.body[-1].add_newline()
         
         with Block(content_chunks, tags=["closing-tag"]) as end_tag:
             end_tag.append_prefix(prev_chunks + start_chunk)
@@ -149,8 +149,7 @@ class RootMutator(Mutator):
 
     @property
     def body(self) -> list[Block]:
-        """The actual content inside the wrapper."""
-        
+        """The actual content inside the wrapper."""        
         return self.block.children[1].children
         
         # First child is the wrapper containing actual content
@@ -180,16 +179,38 @@ class RootMutator(Mutator):
         return None
     
     
+    def on_newline(self, chunk: BlockChunk):
+        return self.on_text([chunk])
+    
+    def on_text(self, chunks: list[BlockChunk]):
+        if not len(self.block.children[1]):
+            return self.block.children[0].span.append_content(chunks)
+        else:
+            return self.block.children[2].span.append_content(chunks)
+        
+    
+    
     def extract(self) -> Block:
         return self.block.children[1].extract()
     
-    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
-        with Block(content=chunks, tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as root_blk:
-            with root_blk(tags=["prefix"]) as pre:
+    
+    def render(self, block: Block, path: Path) -> Block:
+        with Block(style="root") as root:
+            with root("prefix", style="prefix") as prefix:
                 pass
-            with root_blk(tags=["content"]) as content:
+            with root("content", style="content") as content:
+                content /= block
+            with root("postfix", style="postfix") as postfix:
+                pass
+        return root
+    
+    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
+        with Block("root",tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as root_blk:
+            with root_blk("prefix", tags=["prefix"]) as pre:
+                pass
+            with root_blk("content", tags=["content"]) as content:
                 pass   
-            with root_blk(tags=["postfix"]) as post:
+            with root_blk("postfix", tags=["postfix"]) as post:
                 pass          
         return root_blk
     

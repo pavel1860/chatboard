@@ -353,7 +353,13 @@ class BlockText:
         """Debug representation showing all spans."""
         lines = [f"BlockText(spans={self._count}):"]
         for i, span in enumerate(self):
-            lines.append(f"  [{i}] {span}")
+            line = f"  [{id(span)}] {span}"
+            if span.prev:
+                line += f" prev={id(span.prev)}"
+            if span.next:
+                line += f" next={id(span.next)}"
+
+            lines.append(line)
         return "\n".join(lines)
 
     def print_debug(self):

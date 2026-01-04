@@ -49,6 +49,7 @@ class BlockSchema(Block):
         mutator: Mutator | None = None,
         block_text: "BlockText | None" = None,
         _span = None,
+        _auto_handle: bool = True,
         _children: list[Block] | None = None,
     ):
         """
@@ -79,6 +80,7 @@ class BlockSchema(Block):
             block_text=block_text,
             _span=_span,
             _children=_children,
+            _auto_handle=_auto_handle,
         )
 
         # Schema-specific attributes

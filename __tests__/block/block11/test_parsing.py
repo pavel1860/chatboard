@@ -51,7 +51,7 @@ class SchemaParsingEval:
     @pytest.mark.asyncio
     async def test_assert_parsing(self):
         block = await self.parse()
-        target = self.get_target()
+        target = self.get_source()
         rdr = block.render().replace("\\n", "\n")
         assert rdr == target
 
@@ -59,6 +59,33 @@ class SchemaParsingEval:
 
 
 
+
+class TestSimpleXmlParsing(SchemaParsingEval):
+    source = """
+    <item>hello</item>
+    """
+    def schema(self) -> BlockSchema:
+        with Block.schema_view("item") as schema:
+            schema /= 'the item you want you need to create'
+        return schema
+    
+    
+class TestTwoLayersXmlParsing(SchemaParsingEval):
+    
+    source = """
+    <root>
+        <item>hello to you my friend</item>
+    </root>
+    """
+    def schema(self) -> BlockSchema:
+        with Block(role="system") as schema:
+            schema /= 'you need to answer a question'
+            with schema.view("root", tags=["output-format"]) as schema:
+                schema /= 'the output of the application'
+                with schema.view("item", tags=["output-format"]) as items:
+                    items /= 'the item you want you need to create'
+                    
+        return schema
 
 
 
