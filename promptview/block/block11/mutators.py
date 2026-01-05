@@ -63,7 +63,12 @@ class XmlMutator(Mutator):
                 return False
         else:
             return True
-                
+    
+    
+    def on_newline(self, chunk: BlockChunk):
+        if self._did_commit:
+            return self.block_end.append_postfix([chunk])
+        return super().on_newline(chunk)           
         
     def render_attrs(self, block: Block) -> str:
         attrs = ""
@@ -162,14 +167,24 @@ class RootMutator(Mutator):
         """Content of the head span."""
         return self.block.children[0].span.content_text
 
+    # @property
+    # def block_end(self) -> Span:
+    #     """The closing fence span."""
+    #     if len(self.block.children) >= 2:
+    #         return self.block.children[-1].span
+    #     if self.block.children:
+    #         return self.block.children[-1].mutator.block_end
+    #     return self.block.span
     @property
     def block_end(self) -> Span:
         """The closing fence span."""
-        if len(self.block.children) >= 2:
-            return self.block.children[-1].span
-        if self.block.children:
-            return self.block.children[-1].mutator.block_end
-        return self.block.span
+        if not len(self.block.children[1]):
+            return self.block.children[0].span
+        elif not len(self.block.children[2]):
+            return self.block.children[1].mutator.block_end
+        else:
+            return self.block.children[2].span
+            
 
     @property
     def block_postfix(self) -> Span | None:
@@ -191,7 +206,7 @@ class RootMutator(Mutator):
     
     
     def extract(self) -> Block:
-        return self.block.children[1].extract()
+        return self.block.children[1].copy_head()
     
     
     def render(self, block: Block, path: Path) -> Block:
@@ -206,12 +221,16 @@ class RootMutator(Mutator):
     
     def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
         with Block("root",tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as root_blk:
-            with root_blk("prefix", tags=["prefix"]) as pre:
+            # root_blk.block_text.print_debug()
+            with root_blk(tags=["root_prefix"]) as pre:                
                 pass
-            with root_blk("content", tags=["content"]) as content:
+            # root_blk.block_text.print_debug()
+            with root_blk(tags=["root_content"]) as content:                
                 pass   
-            with root_blk("postfix", tags=["postfix"]) as post:
+            # root_blk.block_text.print_debug()
+            with root_blk(tags=["root_postfix"]) as post:
                 pass          
+            # root_blk.block_text.print_debug()
         return root_blk
     
     

@@ -425,7 +425,7 @@ class XmlParser(Process):
         if event_type is None:
             return
         if self._verbose:
-            print(self._index,self._state,")", event_type, repr(event_data), chunks)
+            print(self._index,self._state,")", event_type, repr(event_data), chunks)            
             # print("Handling event:", event_type, event_data, chunks)
             
         # if self._verbose and self.current_block is not None:
@@ -446,6 +446,11 @@ class XmlParser(Process):
             self._handle_end_postfix(chunks)
         elif event_type == "root_text":
             self._handle_root_text(chunks)
+            
+        if self._verbose and self._stack:
+            print("---------------------------------")
+            self._stack[0][1].print()
+            print("---------------------------------")
 
 
     def _on_start(self, name: str, attrs: dict):

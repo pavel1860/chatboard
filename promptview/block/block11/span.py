@@ -426,7 +426,9 @@ class Span:
     def __repr__(self) -> str:
         prefix_str = f"prefix={self.prefix_text!r}, " if self.prefix else ""
         postfix_str = f", postfix={self.postfix_text!r}" if self.postfix else ""
-        return f"Span({prefix_str}content={self.content_text!r}{postfix_str})"
+        prev_id = f"prev={self.prev.id}" if self.prev is not None else None
+        next_id = f"next={self.next.id}" if self.next is not None else None        
+        return f"Span({prefix_str}content={self.content_text!r}{postfix_str}) id={self.id} {prev_id} {next_id}"
 
     # --- Serialization ---
 
