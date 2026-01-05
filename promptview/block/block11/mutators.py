@@ -1,8 +1,8 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generator
 
-from .span import Span, BlockChunk, chunks_contain, split_chunks
-from .block import Block, Mutator, ContentType
+from .span import BlockChunkList, Span, BlockChunk, chunks_contain, split_chunks
+from .block import Block, Mutator, ContentType, BlockChildren
 from .path import Path
 
 if TYPE_CHECKING:
@@ -20,13 +20,23 @@ class XmlMutator(Mutator):
         return self.block.children[0].span
     
     @property
-    def body(self) -> list[Block]:        
+    def body(self) -> BlockChildren:        
         return self.block.children[0].children
     
     
     @property
     def content(self) -> str:
         return self.block.children[0].span.content_text
+    
+    
+    def current_span(self) -> Span:
+        if self.is_head_open([]):
+            return self.head
+        if self.body:
+            return self.body[-1].span
+        else:
+            return self._append_child_after(Block(), self.block.children[0].span).span
+
     
     @property
     def block_end(self) -> Span:
@@ -66,7 +76,7 @@ class XmlMutator(Mutator):
     
     
     def on_newline(self, chunk: BlockChunk):
-        if self._did_commit:
+        if self.did_commit:
             return self.block_end.append_postfix([chunk])
         return super().on_newline(chunk)           
         
@@ -79,53 +89,83 @@ class XmlMutator(Mutator):
             attrs = " " + attrs
         return attrs
     
-    def render(self, block: Block, path: Path) -> Block:
-        with Block() as xml_blk:
-            tag_name =block.content.lower().replace(" ", "_")
-            with xml_blk(tag_name + self.render_attrs(block), tags=["opening-tag"]) as content:
-                content.append_prefix("<")
-                content.prepend_postfix(">")    
-                for child in block.body:
-                    content.append_child(child)
-                content.indent_body()
-            with xml_blk(tag_name, tags=["closing-tag"]) as postfix:
-                postfix.append_prefix("</")
-                postfix.prepend_postfix(">")
-        return xml_blk
+    # def render(self, block: Block, path: Path) -> Block:
+    #     with Block() as xml_blk:
+    #         tag_name =block.content.lower().replace(" ", "_")
+    #         with xml_blk(tag_name + self.render_attrs(block), tags=["opening-tag"]) as content:
+    #             content.append_prefix("<")
+    #             content.prepend_postfix(">")    
+    #             for child in block.body:
+    #                 content.append_child(child)
+    #             content.indent_body()
+    #         with xml_blk(tag_name, tags=["closing-tag"]) as postfix:
+    #             postfix.append_prefix("</")
+    #             postfix.prepend_postfix(">")
+    #     return xml_blk
     
     # def extract(self) -> Block:
         # return Block(self.head)
         
     
-    def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
-        with Block(role=role, tags=tags, style=style, attrs=attrs) as block:
-            with block(content) as head:
-                pass
-            # with block() as body:
-            #     pass
-        return block
+    # def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
+    #     with Block(role=role, tags=tags, style=style, attrs=attrs) as block:
+    #         with block(content) as head:
+    #             pass
+    #         # with block() as body:
+    #         #     pass
+    #     return block
     
-    
-    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
-        prev_chunks, start_chunk, post = split_chunks(chunks, "<")
-        content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-        with Block(tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as xml_blk:
-            with xml_blk(content_chunks, tags=["opening-tag"]) as content:
-                content.append_prefix(prev_chunks + start_chunk)
-                content.append_postfix(end_chunk + post_chunks)
+    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
+        prefix, post = chunks.split_prefix("<")
+        content, postfix = post.split_postfix(">")
+
+        with Block(attrs=attrs) as xml_blk:
+            with xml_blk(content, tags=["opening-tag"]) as content:
+                content.append_prefix(prefix or "<")
+                content.append_postfix(postfix or ">")
         return xml_blk
     
-    def commit(self, chunks: list[BlockChunk]) -> Block:
-        prev_chunks, start_chunk, post = split_chunks(chunks, "</")
-        content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
+    def commit(self, chunks: BlockChunkList | None = None) -> Block | None:
+        if chunks is None:
+            prefix = []
+            postfix = []
+            content = self.block.head.content
+        else:
+            prefix, post = chunks.split_prefix("</")
+            content, postfix = post.split_postfix(">")
         # if self.is_last_block_open(chunks):
         #     self.body[-1].add_newline()
         
-        with Block(content_chunks, tags=["closing-tag"]) as end_tag:
-            end_tag.append_prefix(prev_chunks + start_chunk)
-            end_tag.append_postfix(end_chunk + post_chunks)
+        with Block(content, tags=["closing-tag"]) as end_tag:
+            end_tag.append_prefix(prefix or "</")
+            end_tag.append_postfix(postfix or ">")
         self.block.mutator.append_child(end_tag, to_body=False)
+        # with self.block(content, tags=["closing-tag"]) as end_tag:
+        #     end_tag.append_prefix(prefix or "</")
+        #     end_tag.append_postfix(postfix or ">")
+                
         return end_tag
+    
+    # def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
+    #     prev_chunks, start_chunk, post = split_chunks(chunks, "<")
+    #     content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
+    #     with Block(tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as xml_blk:
+    #         with xml_blk(content_chunks, tags=["opening-tag"]) as content:
+    #             content.append_prefix(prev_chunks + start_chunk)
+    #             content.append_postfix(end_chunk + post_chunks)
+    #     return xml_blk
+    
+    # def commit(self, chunks: list[BlockChunk]) -> Block:
+    #     prev_chunks, start_chunk, post = split_chunks(chunks, "</")
+    #     content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
+    #     # if self.is_last_block_open(chunks):
+    #     #     self.body[-1].add_newline()
+        
+    #     with Block(content_chunks, tags=["closing-tag"]) as end_tag:
+    #         end_tag.append_prefix(prev_chunks + start_chunk)
+    #         end_tag.append_postfix(end_chunk + post_chunks)
+    #     self.block.mutator.append_child(end_tag, to_body=False)
+    #     return end_tag
     
     
 
@@ -252,7 +292,12 @@ class MarkdownMutator(Mutator):
     styles = ["markdown", "md"]
 
 
-    def render(self, block: Block, path: Path) -> Block:
+    # def render(self, block: Block, path: Path) -> Block:
+    #     block.prepend_prefix("#" * (path.depth + 1) + " ")
+    #     return block
+    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
+        print(path.indices_str(), "chunks:",chunks)
+        block = Block(chunks)
         block.prepend_prefix("#" * (path.depth + 1) + " ")
         return block
         

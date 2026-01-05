@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections import UserList
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterator, Literal, TypedDict
 from uuid import uuid4
@@ -29,7 +30,7 @@ def chunks_contain(chunks: list[BlockChunk], s: str) -> bool:
     return s in full_text
 
 
-def split_chunks(chunks: list[BlockChunk], sep: str) -> tuple[list[BlockChunk], list[BlockChunk], list[BlockChunk]]:
+def split_chunks(chunks: BlockChunkList, sep: str) -> tuple[BlockChunkList, BlockChunkList, BlockChunkList]:
     """
     Split chunks on a separator that may span multiple chunks.
 
@@ -45,7 +46,7 @@ def split_chunks(chunks: list[BlockChunk], sep: str) -> tuple[list[BlockChunk], 
     Note: If separator falls mid-chunk, that chunk is split using Chunk.split()
     """
     if not chunks or not sep:
-        return list(chunks), [], []
+        return BlockChunkList(chunks=chunks), BlockChunkList(chunks=[]), BlockChunkList(chunks=[])
 
     # Build full text
     full_text = "".join(c.content for c in chunks)
@@ -53,15 +54,15 @@ def split_chunks(chunks: list[BlockChunk], sep: str) -> tuple[list[BlockChunk], 
     # Find separator
     sep_idx = full_text.find(sep)
     if sep_idx == -1:
-        return list(chunks), [], []
+        return BlockChunkList(chunks=chunks), BlockChunkList(chunks=[]), BlockChunkList(chunks=[])
 
     sep_end_idx = sep_idx + len(sep)
 
     # Track position as we iterate
     pos = 0
-    before: list[BlockChunk] = []
-    separator: list[BlockChunk] = []
-    after: list[BlockChunk] = []
+    before: BlockChunkList = BlockChunkList(chunks=[])
+    separator: BlockChunkList = BlockChunkList(chunks=[])
+    after: BlockChunkList = BlockChunkList(chunks=[])
 
     for chunk in chunks:
         chunk_start = pos
@@ -193,62 +194,85 @@ class BlockChunk:
         
 BlockSpanEvent = Literal["append_content", "prepend_content", "append_prefix", "prepend_prefix", "append_postfix", "prepend_postfix"]
 
-@dataclass
-class BlockChunkList:
-    chunks: list[BlockChunk]
-    event: BlockSpanEvent | None = None
+# @dataclass
+# class BlockChunkList:
+#     chunks: list[BlockChunk]
+#     event: BlockSpanEvent | None = None
     
     
-    def __getitem__(self, index: int) -> BlockChunk:
-        return self.chunks[index]
+#     def __getitem__(self, index: int) -> BlockChunk:
+#         return self.chunks[index]
     
-    def __len__(self) -> int:
-        return len(self.chunks)
+#     def __len__(self) -> int:
+#         return len(self.chunks)
     
-    def __iter__(self) -> Iterator[BlockChunk]:
-        return iter(self.chunks)
+#     def __iter__(self) -> Iterator[BlockChunk]:
+#         return iter(self.chunks)
     
-    def __repr__(self) -> str:
-        return f"BlockChunkList({self.chunks})"
+#     def __repr__(self) -> str:
+#         return f"BlockChunkList({self.chunks})"
     
-    def __str__(self) -> str:
-        return f"BlockChunkList({self.chunks})"
+#     def __str__(self) -> str:
+#         return f"BlockChunkList({self.chunks})"
     
-    def __hash__(self) -> int:
-        return hash(tuple(self.chunks))
+#     def __hash__(self) -> int:
+#         return hash(tuple(self.chunks))
     
-    def append(self, chunk: BlockChunk) -> BlockChunkList:
-        self.chunks.append(chunk)
-        return self
+#     def append(self, chunk: BlockChunk) -> BlockChunkList:
+#         self.chunks.append(chunk)
+#         return self
     
-    def prepend(self, chunk: BlockChunk) -> BlockChunkList:
-        self.chunks.insert(0, chunk)
-        return self
+#     def prepend(self, chunk: BlockChunk) -> BlockChunkList:
+#         self.chunks.insert(0, chunk)
+#         return self
     
-    def extend(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        self.chunks.extend(chunks)
-        return self
+#     def extend(self, chunks: list[BlockChunk]) -> BlockChunkList:
+#         self.chunks.extend(chunks)
+#         return self
     
-    def extend_left(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        self.chunks = chunks + self.chunks
-        return self
+#     def extend_left(self, chunks: list[BlockChunk]) -> BlockChunkList:
+#         self.chunks = chunks + self.chunks
+#         return self
     
-    def extend_right(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        self.chunks = self.chunks + chunks
-        return self
-    
+#     def extend_right(self, chunks: list[BlockChunk]) -> BlockChunkList:
+#         self.chunks = self.chunks + chunks
+#         return self
+class BlockChunkList(UserList[BlockChunk]):
+    def __init__(self, chunks: list[BlockChunk] | list[str] | BlockChunkList | None = None, event: BlockSpanEvent | None = None):
+        if chunks is None:
+            chunks = []
+        elif isinstance(chunks, list):
+            if not all(isinstance(c, str) or isinstance(c, BlockChunk) for c in chunks):
+                raise ValueError("chunks must be a list of strings")
+            chunks = [c if isinstance(c, BlockChunk) else BlockChunk(content=c) for c in chunks]
+        elif isinstance(chunks, BlockChunkList):
+            chunks = chunks.data
+        super().__init__(chunks)
+        self.event = event
+        
     def contains(self, chunks: list[BlockChunk] | BlockChunkList | str) -> bool:
         if isinstance(chunks, BlockChunkList):
-            return chunks_contain(self.chunks, chunks.chunks)
+            return chunks_contain(self.data, chunks.data)
         elif isinstance(chunks, list):
-            return chunks_contain(self.chunks, chunks)
+            return chunks_contain(self.data, chunks)
         elif isinstance(chunks, str):
-            return chunks_contain(self.chunks, chunks)
+            return chunks_contain(self.data, chunks)
         
 
-    def split(self, sep: str) -> tuple[BlockChunkList, BlockChunkList]:
-        return split_chunks(self.chunks, sep)
+    def split(self, sep: str) -> tuple[BlockChunkList, BlockChunkList, BlockChunkList]:
+        return split_chunks(self, sep)
     
+    def split_prefix(self, sep: str) -> tuple[BlockChunkList, BlockChunkList]:
+        before, separator, after = self.split(sep)
+        if not separator:
+            return BlockChunkList(chunks=[]), before
+        return before + separator, after
+    
+    def split_postfix(self, sep: str) -> tuple[BlockChunkList, BlockChunkList]:
+        before, separator, after = self.split(sep)
+        if not separator:
+            return before, BlockChunkList(chunks=[])
+        return before, separator + after
     
 @dataclass
 class Span:
@@ -261,9 +285,12 @@ class Span:
     Ownership: BlockText owns Spans (Span.owner = BlockText).
     Blocks reference Spans but don't own them.
     """
-    prefix: list[BlockChunk] = field(default_factory=list)
-    content: list[BlockChunk] = field(default_factory=list)
-    postfix: list[BlockChunk] = field(default_factory=list)
+    # prefix: list[BlockChunk] = field(default_factory=list)
+    # content: list[BlockChunk] = field(default_factory=list)
+    # postfix: list[BlockChunk] = field(default_factory=list)
+    prefix: BlockChunkList = field(default_factory=BlockChunkList)
+    content: BlockChunkList = field(default_factory=BlockChunkList)
+    postfix: BlockChunkList = field(default_factory=BlockChunkList)
 
     # Linked list pointers (managed by BlockText)
     prev: Span | None = field(default=None, repr=False)

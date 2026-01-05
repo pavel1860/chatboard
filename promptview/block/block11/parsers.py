@@ -579,7 +579,7 @@ class XmlParser(Process):
         if self.current_block is None:
             return
 
-        events = self.current_block.append_events(chunks)
+        events = self.current_block.append(chunks)
 
         # Queue delta event for FBP streaming
         for event in events:

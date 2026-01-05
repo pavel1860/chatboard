@@ -13,11 +13,15 @@ def render(block: Block, depth: int = 0) -> Block:
     
     new_block = block.copy_head()
     path = block.path
+    
     for child in block.children:
         child = render(child, depth + 1)
+        print(child.tags, "text:", child.span.text)
         new_block.append_child(child)
+        # new_block.mutator._append_child_after()
         # new_block.mutator.append_child(child)
         # new_block /= child
     mutator = config.mutator()
+    # print(block.tags, "text:", block.span.text)
     tran_block = mutator.call_render(new_block, path)
     return tran_block
