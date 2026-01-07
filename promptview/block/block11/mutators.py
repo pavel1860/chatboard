@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Generator, Iterator
+from typing import TYPE_CHECKING, Any, Generator, Iterator, Literal
 
 from .span import BlockChunkList, Span, BlockChunk, chunks_contain, split_chunks
 from .block import Block, Mutator, ContentType, BlockChildren
@@ -16,42 +16,42 @@ class XmlMutator(Mutator):
     
     
     @property
-    def head(self) -> Span:
-        return self.block.children[0].span
+    def head(self) -> Block:
+        return self.block.children[0]
     
     @property
     def body(self) -> BlockChildren:        
         return self.block.children[0].children
     
+    @property
+    def tail(self) -> Block:
+        if self.did_commit:
+            return self.block.children[1]
+        return super().tail
     
     @property
-    def content(self) -> str:
-        # return self.block.children[0].span.extract_content().text
+    def content(self) -> str:    
         return self.block.children[0].span.content.text
     
     
     # def current_span(self) -> Span:
-    #     if self.is_head_open([]):
-    #         return self.head
-    #     if self.body:
-    #         return self.body[-1].span
-    #     else:
-    #         return self._append_child_after(Block(), self.block.children[0].span).span
-    def current_span(self) -> Span:
-        if self.did_commit:
-            return self.block.children[1].span
-        return super().current_span()
+    #     if self.did_commit:
+    #         return self.block.children[1].span
+    #     return super().current_span()
     
     
-    def iter_delimiters(self) -> Iterator[Span]:
+    def iter_delimiters(self) -> Iterator[Block]:
         yield self.block.children[0].span
         length = len(self.body)
         for i in range(length):
-            yield self.body[i].mutator.current_span()
+            yield self.body[i].mutator.tail
         # if self.did_commit:
         #     yield self.block.children[1]
 
 
+    def join(self, sep: BlockChunk):
+        for span in self.iter_delimiters():            
+            span.append([sep])
     
     @property
     def block_end(self) -> Span:
@@ -104,31 +104,6 @@ class XmlMutator(Mutator):
             attrs = " " + attrs
         return attrs
     
-    # def render(self, block: Block, path: Path) -> Block:
-    #     with Block() as xml_blk:
-    #         tag_name =block.content.lower().replace(" ", "_")
-    #         with xml_blk(tag_name + self.render_attrs(block), tags=["opening-tag"]) as content:
-    #             content.append_prefix("<")
-    #             content.prepend_postfix(">")    
-    #             for child in block.body:
-    #                 content.append_child(child)
-    #             content.indent_body()
-    #         with xml_blk(tag_name, tags=["closing-tag"]) as postfix:
-    #             postfix.append_prefix("</")
-    #             postfix.prepend_postfix(">")
-    #     return xml_blk
-    
-    # def extract(self) -> Block:
-        # return Block(self.head)
-        
-    
-    # def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
-    #     with Block(role=role, tags=tags, style=style, attrs=attrs) as block:
-    #         with block(content) as head:
-    #             pass
-    #         # with block() as body:
-    #         #     pass
-    #     return block
     
     def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
         prefix, post = chunks.split_prefix("<")
@@ -138,6 +113,9 @@ class XmlMutator(Mutator):
             with xml_blk(content.snake_case(), tags=["opening-tag"]) as content:
                 content.prepend(prefix or "<", style="xml")
                 content.append(postfix or ">", style="xml")
+                with content() as body:
+                    pass
+            
         return xml_blk
     
     def commit(self, chunks: BlockChunkList | None = None) -> Block | None:
@@ -155,9 +133,6 @@ class XmlMutator(Mutator):
             end_tag.prepend(prefix or "</", style="xml")
             end_tag.append(postfix or ">", style="xml")
         self.block.mutator.append_child(end_tag, to_body=False)
-        # with self.block(content, tags=["closing-tag"]) as end_tag:
-        #     end_tag.append_prefix(prefix or "</")
-        #     end_tag.append_postfix(postfix or ">")
                 
         return end_tag
     
@@ -167,26 +142,6 @@ class XmlMutator(Mutator):
             return child
         return child.indent()
     
-    # def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
-    #     prev_chunks, start_chunk, post = split_chunks(chunks, "<")
-    #     content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-    #     with Block(tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as xml_blk:
-    #         with xml_blk(content_chunks, tags=["opening-tag"]) as content:
-    #             content.append_prefix(prev_chunks + start_chunk)
-    #             content.append_postfix(end_chunk + post_chunks)
-    #     return xml_blk
-    
-    # def commit(self, chunks: list[BlockChunk]) -> Block:
-    #     prev_chunks, start_chunk, post = split_chunks(chunks, "</")
-    #     content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
-    #     # if self.is_last_block_open(chunks):
-    #     #     self.body[-1].add_newline()
-        
-    #     with Block(content_chunks, tags=["closing-tag"]) as end_tag:
-    #         end_tag.append_prefix(prev_chunks + start_chunk)
-    #         end_tag.append_postfix(end_chunk + post_chunks)
-    #     self.block.mutator.append_child(end_tag, to_body=False)
-    #     return end_tag
     
     
 
@@ -207,15 +162,16 @@ class RootMutator(Mutator):
           closing_fence (span='```')
     """
     styles = ["root"]
+    state: Literal["prefix", "content", "postfix"] = "prefix"
 
     @property
-    def head(self) -> Span:
+    def head(self) -> Block:
         """The opening markdown fence (```xml)."""
-        return self.block.children[0].span
+        return self.block.children[0]
 
     @property
-    def body(self) -> list[Block]:
-        """The actual content inside the wrapper."""        
+    def body(self) -> BlockChildren:
+        """The actual content inside the wrapper."""
         return self.block.children[1].children
         
         # First child is the wrapper containing actual content
@@ -228,85 +184,82 @@ class RootMutator(Mutator):
         """Content of the head span."""
         return self.block.children[0].span.content_text
 
-    # @property
-    # def block_end(self) -> Span:
-    #     """The closing fence span."""
-    #     if len(self.block.children) >= 2:
-    #         return self.block.children[-1].span
-    #     if self.block.children:
-    #         return self.block.children[-1].mutator.block_end
-    #     return self.block.span
     @property
-    def block_end(self) -> Span:
+    def tail(self) -> Block:
         """The closing fence span."""
-        if not len(self.block.children[1]):
-            return self.block.children[0].span
-        elif not len(self.block.children[2]):
-            return self.block.children[1].mutator.block_end
+        
+        if len(self.block.children) == 1:
+            return self.block.children[0]
+        elif len(self.block.children) == 2:
+            return self.block.children[1].mutator.tail
         else:
-            return self.block.children[2].span
+            return self.block.children[2]
+        # if not len(self.block.children[1]):
+        #     return self.block.children[0]
+        # elif not len(self.block.children[2]):
+        #     return self.block.children[1].mutator.tail
+        # else:
+        #     return self.block.children[2]
             
 
-    @property
-    def block_postfix(self) -> Span | None:
-        """The closing fence block's span."""
-        if len(self.block.children) >= 2:
-            return self.block.children[-1].span
-        return None
+    # @property
+    # def block_postfix(self) -> Span | None:
+    #     """The closing fence block's span."""
+    #     if len(self.block.children) >= 2:
+    #         return self.block.children[-1].span
+    #     return None
     
     
     def on_newline(self, chunk: BlockChunk):
         return self.on_text([chunk])
     
-    def on_text(self, chunks: list[BlockChunk]):
-        if not len(self.block.children[1]):
-            return self.block.children[0].span.append_content(chunks)
-        else:
-            return self.block.children[2].span.append_content(chunks)
-        
+    # def on_text(self, chunks: list[BlockChunk]):
+    #     if self.state == "prefix":
+    #         return self.block.children[0].append(chunks)
+    #     elif self.state == "content":
+    #         return self.block.children[1].append(chunks)
+    #     elif self.state == "postfix":
+    #         if len(self.block.children) == 2:
+    #             return self.block.mutator.append_child(Block(chunks), to_body=False)
+    #         return self.block.children[2].append(chunks)
     
+    def on_text(self, chunks: list[BlockChunk]):
+        if self.state == "prefix":
+            return self.block.children[0].append(chunks)
+        elif self.state == "content":            
+            self.state = "postfix"
+            return self.block.mutator.append_child(Block(chunks), to_body=False)            
+        elif self.state == "postfix":            
+            return self.block.children[2].append(chunks)
+        
+    def on_child(self, child: Block):
+        self.state = "content"
+        return child
     
     def extract(self) -> Block:
         return self.block.children[1].copy_head()
     
     
-    def render(self, block: Block, path: Path) -> Block:
-        with Block(style="root") as root:
-            with root("prefix", style="prefix") as prefix:
-                pass
-            with root("content", style="content") as content:
-                content /= block
-            with root("postfix", style="postfix") as postfix:
-                pass
-        return root
+    # def render(self, block: Block, path: Path) -> Block:
+    #     with Block(style="root") as root:
+    #         with root("prefix", style="prefix") as prefix:
+    #             pass
+    #         with root("content", style="content") as content:
+    #             content /= block
+    #         with root("postfix", style="postfix") as postfix:
+    #             pass
+    #     return root
     
-    def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
-        with Block("root",tags=tags, role=role, style=style, attrs=attrs, _auto_handle=_auto_handle) as root_blk:
-            # root_blk.block_text.print_debug()
+    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
+        with Block("root", tags=["root"], attrs=attrs) as root_blk:            
             with root_blk(tags=["root_prefix"]) as pre:                
-                pass
-            # root_blk.block_text.print_debug()
+                pass            
             with root_blk(tags=["root_content"]) as content:                
                 pass   
-            # root_blk.block_text.print_debug()
-            with root_blk(tags=["root_postfix"]) as post:
-                pass          
-            # root_blk.block_text.print_debug()
+            # with root_blk(tags=["root_postfix"]) as post:
+            #     pass          
         return root_blk
     
-    
-    
-    
-
-    
-    # def instantiate(self, content: ContentType | None = None, role: str | None = None, tags: list[str] | None = None, style: str | None = None, attrs: dict[str, Any] | None = None) -> Block:
-    #     with Block(content, role=role, tags=tags, attrs=attrs) as block:
-    #         with block(content) as head:
-    #             pass
-    #         # with block() as body:
-    #         #     pass
-    #     return block
-
 
 
 class MarkdownMutator(Mutator):

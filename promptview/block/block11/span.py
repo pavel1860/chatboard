@@ -414,19 +414,36 @@ class Span:
     def prefix(self) -> BlockChunkList:
         chunks = []
         for c in self.chunks:
-            if c.style not in ContentStylesSet:
+            if c.style in ContentStylesSet:
                 break
             chunks.append(c.copy())
         return BlockChunkList(chunks=chunks)
     
     
+    # @property
+    # def postfix(self) -> BlockChunkList:
+    #     chunks = []
+    #     for c in reversed(self.chunks):
+    #         if c.style in ContentStylesSet:
+    #             break
+    #         chunks.append(c.copy())
+    #     return BlockChunkList(chunks=chunks)
     @property
     def postfix(self) -> BlockChunkList:
         chunks = []
-        for c in reversed(self.chunks):
-            if c.style not in ContentStylesSet:
-                break
-            chunks.append(c.copy())
+        found_content = False        
+        found_postfix = False
+        for c in self.chunks:
+            if not found_postfix:
+                if not found_content:
+                    if c.style in ContentStylesSet:
+                        found_content = True
+                else:
+                    if c.style not in ContentStylesSet:
+                        found_postfix = True                    
+            if found_postfix:
+                chunks.append(c.copy())
+                continue
         return BlockChunkList(chunks=chunks)
 
     # --- State ---
@@ -500,7 +517,7 @@ class Span:
     def __repr__(self) -> str:
         prev_id = f"prev={self.prev.id}" if self.prev is not None else None
         next_id = f"next={self.next.id}" if self.next is not None else None        
-        return f"Span({self.chunks.text!r}) id={self.id} {prev_id} {next_id}"
+        return f"Span({self.chunks.text!r}, id={self.id}, {prev_id}, {next_id})"
 
     # --- Serialization ---
 

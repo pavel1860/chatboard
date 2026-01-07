@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Type, Any
 from ...utils.string_utils import camel_to_snake
 from .block import Block, Mutator, ContentType, parse_style
 from ...utils.type_utils import UnsetType, UNSET
+from .span import BlockChunkList
 from pydantic import BaseModel
 if TYPE_CHECKING:
     from .block_text import BlockText
@@ -115,8 +116,8 @@ class BlockSchema(Block):
         
         config = MutatorMeta.resolve(style)
         mutator = config.mutator()            
-        chunks = mutator.promote(content) if content is not None else []
-        block = mutator.call_init(chunks, tags=tags, role=role, style=style, _auto_handle=False)
+        chunks = mutator.promote(content) if content is not None else BlockChunkList()
+        block = mutator.call_init(chunks, path=self.path, tags=tags, role=role, style=style, _auto_handle=False)
         block._schema = self
         return block
 
@@ -178,8 +179,8 @@ class BlockSchema(Block):
         
         config = MutatorMeta.resolve()
         mutator = config.mutator()            
-        name_chunks = [BlockChunk(self.name)] if self.name else []
-        block = mutator.call_init(name_chunks, tags=tags, role=role, style=style, attrs=attrs)
+        name_chunks = BlockChunkList([BlockChunk(self.name)]) if self.name else BlockChunkList()
+        block = mutator.call_init(name_chunks, path=self.path, tags=tags, role=role, style=style, attrs=attrs)
         block._schema = self
         if content is not None:
             chunks = mutator.promote(content)

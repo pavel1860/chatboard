@@ -74,11 +74,16 @@ class Mutator(metaclass=MutatorMeta):
     def block(self, value: Block | None) -> None:
         self._block = value
         
-    
+    @property
+    def head(self) -> Block:
+        return self.block
     
     @property
-    def head(self) -> Span:
-        return self.block.span
+    def tail(self) -> Block:
+        if not self.body:
+            return self.head
+        return self.body[-1].tail
+
     
     @property
     def body(self) -> BlockChildren:
@@ -89,18 +94,18 @@ class Mutator(metaclass=MutatorMeta):
         return self.block.span.extract_content().text
     
     
-    @property
-    def current_head(self) -> Span:
-        if not self.body:
-            return self.head
-        # return self.body[-1].mutator.current_head
-        return self.body[-1].mutator.block_end
+    # @property
+    # def current_head(self) -> Block:
+    #     if not self.body:
+    #         return self.head
+    #     # return self.body[-1].mutator.current_head
+    #     return self.body[-1].mutator.tail
     
-    @property
-    def block_end(self) -> Span:
-        if not self.body:
-            return self.head
-        return self.body[-1].mutator.block_end
+    # @property
+    # def block_end(self) -> Span:
+    #     if not self.body:
+    #         return self.head
+    #     return self.body[-1].mutator.block_end
     
     
     @property
@@ -143,7 +148,7 @@ class Mutator(metaclass=MutatorMeta):
             list[Chunk]
         """
         if isinstance(content, BlockChunkList):
-            return content
+            return content.apply_style(style)
         elif isinstance(content, str):
             return BlockChunkList(chunks=[BlockChunk(content=content, style=style)])
         elif isinstance(content, bool):
@@ -170,18 +175,8 @@ class Mutator(metaclass=MutatorMeta):
    
    
     # def current_span(self) -> Span:        
-    #     span = self.body[-1].head if self.body else self.head
-    #     if not span.has_newline():
-    #         return span
-    #     return self.append_child(Block()).span
-    def current_span(self) -> Span:        
-        return self.body[-1].mutator.current_span() if self.body else self.head
-        # return self.body[-1].head if self.body else self.head
-        # span = self.body[-1].head if self.body else self.head
-        # if not span.has_newline():
-        #     return span
-        # return self._append_child_after(Block(), span).span            
-    
+    #     return self.body[-1].mutator.current_span() if self.body else self.head.span
+        
 
         
             
@@ -202,6 +197,7 @@ class Mutator(metaclass=MutatorMeta):
         block._auto_handle = _auto_handle
         block.mutator = self
         self.block = block
+        self.did_init = True
         return block
     
     def commit(self, chunks: BlockChunkList | None = None)-> Block | None:
@@ -218,14 +214,14 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     def on_newline(self, chunk: BlockChunk):
-        span = self.current_span()
-        return span.append_postfix([chunk])
+        span = self.tail.span
+        return span.append([chunk])
 
 
     def on_space(self, chunk: BlockChunk):
-        span = self.current_span()
+        span = self.tail.span
         if not span.chunks:
-            return span.append_prefix([chunk])
+            return span.append([chunk])
         return span.append([chunk])        
     
     def on_symbol(self, chunk: BlockChunk):
@@ -233,7 +229,7 @@ class Mutator(metaclass=MutatorMeta):
     
     
     def on_text(self, chunks: list[BlockChunk]):
-        span = self.current_span()
+        span = self.tail.span
         return span.append(chunks)
         
         
@@ -287,7 +283,7 @@ class Mutator(metaclass=MutatorMeta):
         """Append a child block to the body."""
         # Find the span to insert after: the last span in the current subtree
         child = self.on_child(child)
-        insert_after = self.current_span()        
+        insert_after = self.tail.span
         child = self._append_child_after(child, insert_after, to_body)
         return child
     
@@ -377,13 +373,13 @@ class Mutator(metaclass=MutatorMeta):
     # -------------------------------------------------------------------------
 
     
-    def iter_delimiters(self) -> Iterator[Span]:
-        yield self.block.span
+    def iter_delimiters(self) -> Iterator[Block]:
+        yield self.block
         length = len(self.body)
         for i in range(length):
             if i == length - 1:
                 return
-            yield self.body[i].mutator.current_span()
+            yield self.body[i].mutator.tail
 
     # -------------------------------------------------------------------------
     # Traversal Operations
@@ -484,7 +480,7 @@ class Mutator(metaclass=MutatorMeta):
         return ex_block
     
     def extract(self) -> Block:
-        return Block(self.head.chunks, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
+        return Block(self.head.span.content, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
 
     # -------------------------------------------------------------------------
     # Schema Operations (for BlockSchema support)
@@ -558,21 +554,7 @@ class Mutator(metaclass=MutatorMeta):
 
         return block
 
-    # def commit(self, content: ContentType) -> Block:
-    #     """
-    #     Validate and finalize a block against a schema.
 
-    #     Base implementation returns the block unchanged.
-    #     Subclasses override for validation logic.
-
-    #     Args:
-    #         block: The block to validate
-    #         schema: The schema to validate against
-
-    #     Returns:
-    #         The validated block
-    #     """
-    #     return self.block
     
     
 
@@ -721,12 +703,17 @@ class Block:
     # -------------------------------------------------------------------------
 
     @property
-    def head(self) -> Span:
+    def head(self) -> Block:
         """Get head span via mutator."""
         return self.mutator.head
 
     @property
-    def body(self) -> list[Block]:
+    def tail(self) -> Block:
+        """Get tail block via mutator."""
+        return self.mutator.tail
+    
+    @property
+    def body(self) -> BlockChildren:
         """Get children via mutator."""
         return self.mutator.body
 
@@ -735,6 +722,9 @@ class Block:
         """Get content text via mutator."""
         return self.mutator.content
     
+    @property
+    def text(self) -> str:
+        return self.render()
     
     @property
     def type(self) -> Type | None:
@@ -861,10 +851,10 @@ class Block:
         )
         # if not self.mutator.current_head.has_newline():
             # self.mutator.current_head.add_newline()
-        if self._auto_handle:
-            curr_head = self.mutator.current_head
-            if not curr_head.has_newline() and not curr_head.is_empty:
-                self.mutator.current_head.add_newline()
+        # if self._auto_handle:
+        #     curr_head = self.mutator.tail
+        #     if not curr_head.has_newline() and not curr_head.is_empty():
+        #         self.mutator.tail.add_newline()
         self.mutator.append_child(schema_block)
         return schema_block
 
@@ -901,9 +891,9 @@ class Block:
     #         self.mutator.on_text(text_chunks)
 
 
-    def append(self, content: ContentType) -> list[BlockChunkList | Block]:
+    def append(self, content: ContentType, style: str | None = None) -> list[BlockChunkList | Block]:
         """Append content to the last block"""
-        chunks = self.mutator.promote(content)
+        chunks = self.mutator.promote(content, style=style)
 
         last_idx = 0  # Start at 0, tracks position after last processed separator
         events = []
@@ -936,33 +926,35 @@ class Block:
 
 
 
-    def append(self, content: ContentType, style: str | None = None) -> Block:
-        """Append to head content."""
-        chunks = self.mutator.promote(content, style=style)
-        self.mutator.head.append(chunks, style=style)
-        # self.mutator.append_content(self.mutator.promote(content))
-        return self
+    # def append(self, content: ContentType, style: str | None = None) -> Block:
+    #     """Append to head content."""
+    #     chunks = self.mutator.promote(content, style=style)
+    #     self.mutator.head.span.append(chunks, style=style)
+    #     # self.mutator.append_content(self.mutator.promote(content))
+    #     return self
 
     def prepend(self, content: ContentType, style: str | None = None) -> Block:
         """Prepend to head content."""
         chunks = self.mutator.promote(content, style=style)
-        self.mutator.head.prepend(chunks, style=style)
+        self.mutator.head.span.prepend(chunks, style=style)
         # self.mutator.prepend_content(self.mutator.promote(content))
         return self
 
 
     def add_newline(self) -> Block:
         """Add newline to head postfix."""
-        self.head.append([BlockChunk(content="\n", style="newline")])
+        self.mutator.head.span.append([BlockChunk(content="\n", style="newline")])
         return self
     
     def has_newline(self) -> bool:
         """Check if the block has end of line."""
         # if self.span is not None:
         #     return self.span.has_end_of_line()
-        return self.head.has_newline()
+        return self.mutator.head.span.has_newline()
     
-    
+    def is_empty(self) -> bool:
+        """Check if the block is empty."""
+        return self.mutator.head.span.is_empty
     
     def indent(self, spaces: int = 2):        
         if not self.is_wrapper:            
@@ -1355,7 +1347,7 @@ class Block:
     def render(self) -> str:
         """Render the block."""
         output = self.transform()
-        return output.block_text.text_between(output.mutator.head, output.mutator.block_end)
+        return output.block_text.text_between(output.mutator.head.span, output.mutator.tail.span)
         # return output.block_text.text()
     
     def print(self):
@@ -1638,8 +1630,9 @@ class Block:
         """Debug tree representation showing prefix, content, postfix."""
         ind = "  " * indent
         parts = []  
-        
-        parts.append(f"{self.path.indices_str()}")      
+        path = self.path.indices_str()
+        if path:
+            parts.append(f"{self.path.indices_str()}")      
 
         if self.role:
             parts.append(f"role={self.role!r}")
@@ -1650,17 +1643,19 @@ class Block:
             prefix_text = self.span.prefix.text
             content_text = self.span.content.text
             postfix_text = self.span.postfix.text
-            
+            span_parts = []
 
             if prefix_text:
-                parts.append(f"{prefix_text!r} << ")
+                span_parts.append(f"{prefix_text}|")
             if content_text:
                 # Truncate long content
                 if len(content_text) > 30:
                     content_text = content_text[:30] + "..."
-                parts.append(f"{content_text!r}")
+                span_parts.append(f"{content_text}")
             if postfix_text:
-                parts.append(f" >> {postfix_text!r}")
+                span_parts.append(f"|{postfix_text}")
+                
+            parts.append(f"{''.join(span_parts)!r}")
         
         
         
@@ -1677,10 +1672,10 @@ class Block:
         
         if spans:  
             parts.append(f"span={self.span!r}")
-            if self.span.prev is not None:
-                parts.append(f"prev={self.span.prev.id}")
-            if self.span.next is not None:
-                parts.append(f"next={self.span.next.id}")
+            # if self.span.prev is not None:
+            #     parts.append(f"prev={self.span.prev.id}")
+            # if self.span.next is not None:
+            #     parts.append(f"next={self.span.next.id}")
                 
         if self.mutator.is_rendered:
             parts.append(f"rendered")
