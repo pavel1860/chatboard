@@ -170,10 +170,12 @@ class Mutator(metaclass=MutatorMeta):
     #         return span
     #     return self.append_child(Block()).span
     def current_span(self) -> Span:        
-        span = self.body[-1].head if self.body else self.head
-        if not span.has_newline():
-            return span
-        return self._append_child_after(Block(), span).span            
+        return self.body[-1].mutator.current_span() if self.body else self.head
+        # return self.body[-1].head if self.body else self.head
+        # span = self.body[-1].head if self.body else self.head
+        # if not span.has_newline():
+        #     return span
+        # return self._append_child_after(Block(), span).span            
     
 
         
@@ -330,6 +332,11 @@ class Mutator(metaclass=MutatorMeta):
         return self
     
     
+    def join(self, sep: BlockChunk): 
+        for span in self.block.iter_delimiters():
+            span.append_postfix([sep])
+ 
+    
     # def get_last_span(self) -> Span:
     #     body = self.body
     #     if not body:
@@ -365,6 +372,24 @@ class Mutator(metaclass=MutatorMeta):
     #         if not last.has_newline() and not last.is_wrapper:
     #             last.add_newline()
     #     return last
+    
+    # -------------------------------------------------------------------------
+    # Text Operations
+    # -------------------------------------------------------------------------
+
+    
+    def iter_delimiters(self) -> Iterator[Span]:
+        yield self.block.span
+        length = len(self.body)
+        for i in range(length):
+            if i == length - 1:
+                return
+            yield self.body[i].mutator.current_span()
+
+    # -------------------------------------------------------------------------
+    # Traversal Operations
+    # -------------------------------------------------------------------------
+
 
 
     # -------------------------------------------------------------------------
@@ -761,10 +786,10 @@ class Block:
         else:
             block = Block(content, role=role, tags=tags, style=style, attrs=attrs, _auto_handle=self._auto_handle)
         
-        if self._auto_handle:
-            curr_head = self.mutator.current_head
-            if not curr_head.has_newline() and not curr_head.is_empty:
-                self.mutator.current_head.add_newline()
+        # if self._auto_handle:
+        #     curr_head = self.mutator.current_head
+        #     if not curr_head.has_newline() and not curr_head.is_empty:
+        #         self.mutator.current_head.add_newline()
         
         self.mutator.append_child(block)
         
@@ -805,10 +830,10 @@ class Block:
             style=style,
             is_required=is_required,
         )
-        if self._auto_handle:
-            curr_head = self.mutator.current_head
-            if not curr_head.has_newline() and not curr_head.is_empty:
-                self.mutator.current_head.add_newline()
+        # if self._auto_handle:
+        #     curr_head = self.mutator.current_head
+        #     if not curr_head.has_newline() and not curr_head.is_empty:
+        #         self.mutator.current_head.add_newline()
         self.mutator.append_child(schema_block)
         return schema_block
     
@@ -987,7 +1012,7 @@ class Block:
     #     self.mutator.append_child(block)
     #     return self
     
-    def append_child(self, child: Block) -> Block:
+    def append_child(self, child: Block | ContentType) -> Block:
         """Append child to body."""
         self.mutator.append_child(child)
         return self
@@ -1041,7 +1066,15 @@ class Block:
         """Check if the block is a wrapper."""
         return self.span.is_empty
     
+    # -------------------------------------------------------------------------
+    # Text Operations
+    # -------------------------------------------------------------------------
     
+    
+    def join(self, sep: BlockChunk | str = "\n"):
+        sep = BlockChunk(content=sep) if isinstance(sep, str) else sep
+        self.mutator.join(sep)
+        return self
     
     # -------------------------------------------------------------------------
     # Operator Overloading
@@ -1050,8 +1083,8 @@ class Block:
         # curr_head = self.mutator.current_head        
         # if self._auto_handle and not curr_head.has_newline():
         #     self.append("\n")
-        if self._auto_handle:
-            self.append("\n")
+        # if self._auto_handle:
+            # self.append("\n")
         if isinstance(other, tuple):
             if len(other) == 0:
                 return self
@@ -1071,7 +1104,7 @@ class Block:
             self.append_child(other)
         else:
             # Wrap ContentType in a Block
-            self.append(other)        
+            self.append_child(other)        
         
         return self
     
@@ -1282,6 +1315,11 @@ class Block:
     
     def traverse(self) -> Iterator[Block]:
         yield from self.iter_depth_first()
+        
+    def iter_delimiters(self) -> Iterator[Block]:
+        return self.mutator.iter_delimiters()
+            
+    
 
     def iter_depth_first(self, all_blocks: bool = False) -> Iterator[Block]:
         """Iterate blocks depth-first (pre-order)."""
@@ -1622,7 +1660,7 @@ class Block:
     #     for child in self.children:
     #         lines.append(child.debug(indent + 1))
     #     return "\n".join(lines)
-    def debug(self, indent: int = 0) -> str:
+    def debug(self, indent: int = 0, spans: bool = False) -> str:
         """Debug tree representation showing prefix, content, postfix."""
         ind = "  " * indent
         parts = []  
@@ -1660,25 +1698,27 @@ class Block:
 
         if self.children:
             parts.append(f"children={len(self.children)}")
-            
-        parts.append(f"span={self.span.id}")
-        if self.span.prev is not None:
-            parts.append(f"prev={self.span.prev.id}")
-        if self.span.next is not None:
-            parts.append(f"next={self.span.next.id}")
-            
+        
+        
+        if spans:  
+            parts.append(f"span={self.span!r}")
+            if self.span.prev is not None:
+                parts.append(f"prev={self.span.prev.id}")
+            if self.span.next is not None:
+                parts.append(f"next={self.span.next.id}")
+                
         if self.mutator.is_rendered:
             parts.append(f"rendered")
             
         cls_name = self.__class__.__name__
         lines = [f"{ind}{cls_name}({', '.join(parts)})"]
         for child in self.children:
-            lines.append(child.debug(indent + 1))
+            lines.append(child.debug(indent + 1, spans=spans))
         return "\n".join(lines)
     
     
-    def print_debug(self, spliter: str | None = None):
-        print(self.debug())
+    def print_debug(self, spliter: str | None = None, spans: bool = False):
+        print(self.debug(spans=spans))
         if spliter:
             print(spliter * 100)
     

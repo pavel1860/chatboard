@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Generator
+from typing import TYPE_CHECKING, Any, Generator, Iterator
 
 from .span import BlockChunkList, Span, BlockChunk, chunks_contain, split_chunks
 from .block import Block, Mutator, ContentType, BlockChildren
@@ -29,13 +29,27 @@ class XmlMutator(Mutator):
         return self.block.children[0].span.content_text
     
     
+    # def current_span(self) -> Span:
+    #     if self.is_head_open([]):
+    #         return self.head
+    #     if self.body:
+    #         return self.body[-1].span
+    #     else:
+    #         return self._append_child_after(Block(), self.block.children[0].span).span
     def current_span(self) -> Span:
-        if self.is_head_open([]):
-            return self.head
-        if self.body:
-            return self.body[-1].span
-        else:
-            return self._append_child_after(Block(), self.block.children[0].span).span
+        if self.did_commit:
+            return self.block.children[1].span
+        return super().current_span()
+    
+    
+    def iter_delimiters(self) -> Iterator[Span]:
+        yield self.block.children[0].span
+        length = len(self.body)
+        for i in range(length):
+            yield self.body[i].mutator.current_span()
+        # if self.did_commit:
+        #     yield self.block.children[1]
+
 
     
     @property
