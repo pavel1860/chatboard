@@ -66,8 +66,8 @@ class TestBlockTextInsertion:
 
     def test_append(self):
         bt = BlockText()
-        span1 = Span(content=[BlockChunk("First")])
-        span2 = Span(content=[BlockChunk("Second")])
+        span1 = Span(chunks=[BlockChunk("First")])
+        span2 = Span(chunks=[BlockChunk("Second")])
 
         bt.append(span1)
         bt.append(span2)
@@ -79,8 +79,8 @@ class TestBlockTextInsertion:
 
     def test_prepend(self):
         bt = BlockText()
-        span1 = Span(content=[BlockChunk("First")])
-        span2 = Span(content=[BlockChunk("Second")])
+        span1 = Span(chunks=[BlockChunk("First")])
+        span2 = Span(chunks=[BlockChunk("Second")])
 
         bt.append(span1)
         bt.prepend(span2)
@@ -93,7 +93,7 @@ class TestBlockTextInsertion:
         span1 = bt.create_span("A")
         span3 = bt.create_span("C")
 
-        span2 = Span(content=[BlockChunk("B")])
+        span2 = Span(chunks=[BlockChunk("B")])
         bt.insert_after(span1, span2)
 
         assert list(bt) == [span1, span2, span3]
@@ -104,7 +104,7 @@ class TestBlockTextInsertion:
         span1 = bt.create_span("A")
         span3 = bt.create_span("C")
 
-        span2 = Span(content=[BlockChunk("B")])
+        span2 = Span(chunks=[BlockChunk("B")])
         bt.insert_before(span3, span2)
 
         assert list(bt) == [span1, span2, span3]
@@ -166,7 +166,7 @@ class TestBlockTextQuery:
     def test_contains(self):
         bt = BlockText()
         span1 = bt.create_span("Test")
-        span2 = Span(content=[BlockChunk("Other")])
+        span2 = Span(chunks=[BlockChunk("Other")])
 
         assert bt.contains(span1) is True
         assert bt.contains(span2) is False
@@ -219,7 +219,7 @@ class TestBlockTextCopyFork:
         bt.create_span("Original")
 
         forked = bt.fork()
-        list(forked)[0].content = [BlockChunk("Modified")]
+        list(forked)[0].chunks = [BlockChunk("Modified")]
 
         assert bt.text() == "Original"
         assert forked.text() == "Modified"
@@ -242,8 +242,8 @@ class TestBlockTextExtend:
         bt.create_span("First")
 
         spans = [
-            Span(content=[BlockChunk("Second")]),
-            Span(content=[BlockChunk("Third")]),
+            Span(chunks=[BlockChunk("Second")]),
+            Span(chunks=[BlockChunk("Third")]),
         ]
         bt.extend(spans)
 

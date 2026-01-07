@@ -114,6 +114,20 @@ def split_chunks(chunks: BlockChunkList, sep: str) -> tuple[BlockChunkList, Bloc
 class SpanEvent(TypedDict):
     cmd: Literal["append_content", "prepend_content", "append_prefix", "prepend_prefix", "append_postfix", "prepend_postfix"]
     chunks: list[BlockChunk]
+    
+    
+ContentStylesSet = set(["space", "alpha", "digit", None])
+
+
+def sanitize_styles(styles: set[str] | str | None, add_default: bool = True) -> set[str]:
+    if styles is not None:
+        if isinstance(styles, str):
+            styles = {styles}
+    else:
+        styles = set([])        
+    if add_default:
+        styles = styles | ContentStylesSet
+    return styles
 
 @dataclass
 class BlockChunk:
@@ -127,11 +141,21 @@ class BlockChunk:
     is_text: bool = False
     id: str = field(default_factory=_generate_id)
     logprob: float | None = None
+    style: str | None = None
     
     
     
     def __post_init__(self):
         self.is_text = not (self.is_line_end or self.isspace())
+        if not self.style:
+            if self.is_line_end:
+                self.style = "newline"
+            elif self.isspace():
+                self.style = "space"
+            elif self.isalpha():
+                self.style = "alpha"
+            elif self.isdigit():
+                self.style = "digit"
         
     @property
     def is_line_end(self) -> bool:
@@ -150,6 +174,24 @@ class BlockChunk:
     def isalnum(self) -> bool:
         return self.content.isalnum()
     
+    
+    def lower(self) -> BlockChunk:
+        return BlockChunk(content=self.content.lower(), logprob=self.logprob, style=self.style)
+    
+    def upper(self) -> BlockChunk:
+        return BlockChunk(content=self.content.upper(), logprob=self.logprob, style=self.style)
+    
+    def title(self) -> BlockChunk:
+        return BlockChunk(content=self.content.title(), logprob=self.logprob, style=self.style)
+    
+    def capitalize(self) -> BlockChunk:
+        return BlockChunk(content=self.content.capitalize(), logprob=self.logprob, style=self.style)
+    
+    def swapcase(self) -> BlockChunk:
+        return BlockChunk(content=self.content.swapcase(), logprob=self.logprob, style=self.style)
+    
+    def replace(self, old: str, new: str) -> BlockChunk:
+        return BlockChunk(content=self.content.replace(old, new), logprob=self.logprob, style=self.style)
     
     def __contains__(self, item: str) -> bool:
         return item in self.content
@@ -192,7 +234,7 @@ class BlockChunk:
             logprob=data.get("logprob"),
         )
         
-BlockSpanEvent = Literal["append_content", "prepend_content", "append_prefix", "prepend_prefix", "append_postfix", "prepend_postfix"]
+BlockSpanEvent = Literal["append_content", "prepend_content", "lower", "upper", "title", "capitalize", "swapcase", "snake_case"]
 
 # @dataclass
 # class BlockChunkList:
@@ -238,6 +280,7 @@ BlockSpanEvent = Literal["append_content", "prepend_content", "append_prefix", "
 #         self.chunks = self.chunks + chunks
 #         return self
 class BlockChunkList(UserList[BlockChunk]):
+    
     def __init__(self, chunks: list[BlockChunk] | list[str] | BlockChunkList | None = None, event: BlockSpanEvent | None = None):
         if chunks is None:
             chunks = []
@@ -249,6 +292,11 @@ class BlockChunkList(UserList[BlockChunk]):
             chunks = chunks.data
         super().__init__(chunks)
         self.event = event
+        
+        
+    @property
+    def text(self) -> str:
+        return "".join(c.content for c in self)
         
     def contains(self, chunks: list[BlockChunk] | BlockChunkList | str) -> bool:
         if isinstance(chunks, BlockChunkList):
@@ -274,6 +322,48 @@ class BlockChunkList(UserList[BlockChunk]):
             return before, BlockChunkList(chunks=[])
         return before, separator + after
     
+    
+    def filter(self, styles: set[str] | str | None = None) -> BlockChunkList:
+        styles = sanitize_styles(styles, add_default=False)
+        return BlockChunkList(chunks=[c for c in self if c.style in styles])
+    
+    
+    def apply_style(self, style: str | None = None) -> BlockChunkList:
+        if style:
+            for c in self:
+                c.style = style
+        return self
+    
+    
+    def lower(self) -> BlockChunkList:
+        chunks = [c.lower() for c in self]
+        return BlockChunkList(chunks=chunks, event="lower")
+    
+    def upper(self) -> BlockChunkList:
+        chunks = [c.upper() for c in self]
+        return BlockChunkList(chunks=chunks, event="upper")
+    
+    def title(self) -> BlockChunkList:
+        chunks = [c.title() for c in self]
+        return BlockChunkList(chunks=chunks, event="title")
+    
+    def capitalize(self) -> BlockChunkList:
+        chunks = [c.capitalize() for c in self]
+        return BlockChunkList(chunks=chunks, event="capitalize")
+    
+    def swapcase(self) -> BlockChunkList:
+        chunks = [c.swapcase() for c in self]
+        return BlockChunkList(chunks=chunks, event="swapcase")
+    
+    def snake_case(self) -> BlockChunkList:
+        chunks = []
+        for c in self:
+            if c.style == "space":
+                chunks.append(BlockChunk(content="_", logprob=c.logprob, style=None))
+            else:
+                chunks.append(c.lower().replace(" ", "_"))
+        return BlockChunkList(chunks=chunks, event="snake_case")
+                
 @dataclass
 class Span:
     """
@@ -284,13 +374,8 @@ class Span:
 
     Ownership: BlockText owns Spans (Span.owner = BlockText).
     Blocks reference Spans but don't own them.
-    """
-    # prefix: list[BlockChunk] = field(default_factory=list)
-    # content: list[BlockChunk] = field(default_factory=list)
-    # postfix: list[BlockChunk] = field(default_factory=list)
-    prefix: BlockChunkList = field(default_factory=BlockChunkList)
-    content: BlockChunkList = field(default_factory=BlockChunkList)
-    postfix: BlockChunkList = field(default_factory=BlockChunkList)
+    """    
+    chunks: BlockChunkList = field(default_factory=BlockChunkList)    
 
     # Linked list pointers (managed by BlockText)
     prev: Span | None = field(default=None, repr=False)
@@ -306,135 +391,99 @@ class Span:
 
     # --- Text Access ---
 
-    @property
-    def prefix_text(self) -> str:
-        """Get prefix as string."""
-        return "".join(c.content for c in self.prefix)
-
-    @property
-    def content_text(self) -> str:
-        """Get content as string."""
-        return "".join(c.content for c in self.content)
-
-    @property
-    def postfix_text(self) -> str:
-        """Get postfix as string."""
-        return "".join(c.content for c in self.postfix)
 
     @property
     def text(self) -> str:
         """Get full text: prefix + content + postfix."""
-        return self.prefix_text + self.content_text + self.postfix_text
+        return self.chunks.text
+    
+    @property
+    def content(self) -> BlockChunkList:
+        chunks = []
+        found_content = False
+        for c in self.chunks:
+            if c.style in ContentStylesSet:
+                found_content = True
+            if found_content:
+                if c.style not in ContentStylesSet:
+                    break
+                chunks.append(c.copy())
+        return BlockChunkList(chunks=chunks)
+    
+    @property
+    def prefix(self) -> BlockChunkList:
+        chunks = []
+        for c in self.chunks:
+            if c.style not in ContentStylesSet:
+                break
+            chunks.append(c.copy())
+        return BlockChunkList(chunks=chunks)
+    
+    
+    @property
+    def postfix(self) -> BlockChunkList:
+        chunks = []
+        for c in reversed(self.chunks):
+            if c.style not in ContentStylesSet:
+                break
+            chunks.append(c.copy())
+        return BlockChunkList(chunks=chunks)
 
     # --- State ---
 
     @property
     def is_empty(self) -> bool:
         """True if all three lists are empty."""
-        return not self.prefix and not self.content and not self.postfix
+        return not self.chunks
 
     def has_newline(self) -> bool:
-        """True if postfix ends with newline."""
-        if self.postfix:
-            return any(c.is_line_end for c in self.postfix)
-            # return self.postfix[-1].is_line_end
-        # if self.content:
-        #     return self.content[-1].is_line_end
+        """True if postfix ends with newline."""        
+        for c in reversed(self.chunks):
+            if c.is_line_end:
+                return True
+            elif c.isspace():
+                continue
+            else:
+                return False
         return False
     
     def add_newline(self) -> Span:
         """Add newline to postfix."""
-        self.postfix.append(BlockChunk(content="\n"))
+        self.chunks.append(BlockChunk(content="\n", style="newline"))
         return self
 
     # --- Chunk Iteration ---
 
-    def chunks(self) -> Iterator[BlockChunk]:
-        """Iterate over all chunks in order: prefix, content, postfix."""
-        yield from self.prefix
-        yield from self.content
-        yield from self.postfix
+
 
     def __len__(self) -> int:
         """Total number of chunks."""
-        return len(self.prefix) + len(self.content) + len(self.postfix)
+        return len(self.chunks)
 
     # --- Mutation: Content ---
 
-    def append_content(self, chunks: list[BlockChunk]) -> BlockChunkList:
+    def append(self, chunks: list[BlockChunk] | BlockChunkList, style: str | None = None) -> BlockChunkList:
         """Append chunks to content."""
-        self.content.extend(chunks)
+        if style:
+            for c in chunks:
+                c.style = style
+        self.chunks.extend(chunks)
         return BlockChunkList(chunks=chunks, event="append_content")
 
-    def prepend_content(self, chunks: list[BlockChunk]) -> BlockChunkList:
+    def prepend(self, chunks: list[BlockChunk] | BlockChunkList, style: str | None = None) -> BlockChunkList:
         """Prepend chunks to content."""
-        self.content = chunks + self.content
+        if style:
+            for c in chunks:
+                c.style = style
+        self.chunks = chunks + self.chunks
         return BlockChunkList(chunks=chunks, event="prepend_content")
-
-    # --- Mutation: Prefix ---
-
-    def append_prefix(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        """Append chunks to prefix."""
-        self.prefix.extend(chunks)
-        return BlockChunkList(chunks=chunks, event="append_prefix")
-
-    def prepend_prefix(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        """Prepend chunks to prefix."""
-        self.prefix = chunks + self.prefix
-        return BlockChunkList(chunks=chunks, event="prepend_prefix")
-
-    # --- Mutation: Postfix ---
-
-    def append_postfix(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        """Append chunks to postfix."""
-        self.postfix.extend(chunks)
-        return BlockChunkList(chunks=chunks, event="append_postfix")
-
-    def prepend_postfix(self, chunks: list[BlockChunk]) -> BlockChunkList:
-        """Prepend chunks to postfix."""
-        self.postfix = chunks + self.postfix
-        return BlockChunkList(chunks=chunks, event="prepend_postfix")
-    # def append_content(self, chunks: list[BlockChunk]) -> Span:
-    #     """Append chunks to content."""
-    #     self.content.extend(chunks)
-    #     self._last_event = {"cmd": "append_content", "chunks": chunks}
-    #     return self
-
-    # def prepend_content(self, chunks: list[BlockChunk]) -> Span:
-    #     """Prepend chunks to content."""
-    #     self.content = chunks + self.content
-    #     self._last_event = {"cmd": "prepend_content", "chunks": chunks}
-    #     return self
-
-    # # --- Mutation: Prefix ---
-
-    # def append_prefix(self, chunks: list[BlockChunk]) -> Span:
-    #     """Append chunks to prefix."""
-    #     self.prefix.extend(chunks)
-    #     self._last_event = {"cmd": "append_prefix", "chunks": chunks}
-    #     return self
-
-    # def prepend_prefix(self, chunks: list[BlockChunk]) -> Span:
-    #     """Prepend chunks to prefix."""
-    #     self.prefix = chunks + self.prefix
-    #     self._last_event = {"cmd": "prepend_prefix", "chunks": chunks}
-    #     return self
-
-    # # --- Mutation: Postfix ---
-
-    # def append_postfix(self, chunks: list[BlockChunk]) -> Span:
-    #     """Append chunks to postfix."""
-    #     self.postfix.extend(chunks)
-    #     self._last_event = {"cmd": "append_postfix", "chunks": chunks}
-    #     return self
-
-    # def prepend_postfix(self, chunks: list[BlockChunk]) -> Span:
-    #     """Prepend chunks to postfix."""
-    #     self.postfix = chunks + self.postfix
-    #     self._last_event = {"cmd": "prepend_postfix", "chunks": chunks}
-    #     return self
-
-    # --- Copy ---
+    
+    
+    def extract_content(self, styles: set[str] | str | None = None) -> Span:
+        styles = sanitize_styles(styles)   
+        chunks = self.chunks.filter(styles)
+        return Span(chunks=chunks)
+            
 
     def copy(self) -> Span:
         """
@@ -443,19 +492,15 @@ class Span:
         The copy has new chunk instances and no owner/linked list pointers.
         """
         return Span(
-            prefix=[c.copy() for c in self.prefix],
-            content=[c.copy() for c in self.content],
-            postfix=[c.copy() for c in self.postfix],
+            chunks=self.chunks.copy(),
         )
 
     # --- Debug ---
 
     def __repr__(self) -> str:
-        prefix_str = f"prefix={self.prefix_text!r}, " if self.prefix else ""
-        postfix_str = f", postfix={self.postfix_text!r}" if self.postfix else ""
         prev_id = f"prev={self.prev.id}" if self.prev is not None else None
         next_id = f"next={self.next.id}" if self.next is not None else None        
-        return f"Span({prefix_str}content={self.content_text!r}{postfix_str}) id={self.id} {prev_id} {next_id}"
+        return f"Span({self.chunks.text!r}) id={self.id} {prev_id} {next_id}"
 
     # --- Serialization ---
 
@@ -476,15 +521,11 @@ class Span:
             Dict with prefix, content, postfix (as text or chunks)
         """
         result: dict = {
-            "prefix": self.prefix_text,
-            "content": self.content_text,
-            "postfix": self.postfix_text,
+            "content": self.chunks.text,
         }
 
         if include_chunks:
-            result["prefix_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.prefix]
-            result["content_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.content]
-            result["postfix_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.postfix]
+            result["content_chunks"] = [c.model_dump(exclude_none=exclude_none) for c in self.chunks]
 
         return result
 
@@ -504,13 +545,9 @@ class Span:
         """
         # Check if we have chunk-level data
         if data.get("prefix_chunks") or data.get("content_chunks") or data.get("postfix_chunks"):
-            prefix = [BlockChunk.model_validate(c) for c in data.get("prefix_chunks", [])]
             content = [BlockChunk.model_validate(c) for c in data.get("content_chunks", [])]
-            postfix = [BlockChunk.model_validate(c) for c in data.get("postfix_chunks", [])]
         else:
             # Create simple chunks from text
-            prefix = [BlockChunk(content=data["prefix"])] if data.get("prefix") else []
             content = [BlockChunk(content=data["content"])] if data.get("content") else []
-            postfix = [BlockChunk(content=data["postfix"])] if data.get("postfix") else []
 
-        return cls(prefix=prefix, content=content, postfix=postfix)
+        return cls(content=BlockChunkList(chunks=content))

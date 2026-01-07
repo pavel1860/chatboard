@@ -70,9 +70,9 @@ class BlockText:
 
         if content is not None:
             if isinstance(content, str):
-                span.content = [BlockChunk(content=content)]
+                span.chunks = [BlockChunk(content=content)]
             else:
-                span.content = content
+                span.chunks = content
 
         if after is None:
             self.append(span)

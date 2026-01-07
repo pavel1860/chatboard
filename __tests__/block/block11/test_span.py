@@ -50,7 +50,7 @@ class TestSpan:
         assert len(span) == 0
 
     def test_span_with_content(self):
-        span = Span(content=[BlockChunk("Hello")])
+        span = Span(chunks=[BlockChunk("Hello")])
         assert span.is_empty is False
         assert span.content_text == "Hello"
         assert span.text == "Hello"
@@ -58,7 +58,7 @@ class TestSpan:
     def test_span_with_all_parts(self):
         span = Span(
             prefix=[BlockChunk(">>")],
-            content=[BlockChunk("Hello")],
+            chunks=[BlockChunk("Hello")],
             postfix=[BlockChunk("\n")],
         )
         assert span.prefix_text == ">>"
@@ -68,23 +68,23 @@ class TestSpan:
 
     def test_span_has_end_of_line_postfix(self):
         span = Span(
-            content=[BlockChunk("Hello")],
+            chunks=[BlockChunk("Hello")],
             postfix=[BlockChunk("\n")],
         )
         assert span.has_newline() is True
 
     def test_span_has_end_of_line_content(self):
-        span = Span(content=[BlockChunk("Hello\n")])
+        span = Span(chunks=[BlockChunk("Hello\n")])
         assert span.has_newline() is True
 
     def test_span_no_end_of_line(self):
-        span = Span(content=[BlockChunk("Hello")])
+        span = Span(chunks=[BlockChunk("Hello")])
         assert span.has_newline() is False
 
     def test_span_chunks_iteration(self):
         span = Span(
             prefix=[BlockChunk("A")],
-            content=[BlockChunk("B"), BlockChunk("C")],
+            chunks=[BlockChunk("B"), BlockChunk("C")],
             postfix=[BlockChunk("D")],
         )
         chunks = list(span.chunks())
@@ -93,17 +93,17 @@ class TestSpan:
 
     def test_span_append_content(self):
         span = Span()
-        span.append_content([BlockChunk("Hello")])
-        span.append_content([BlockChunk(" World")])
+        span.append([BlockChunk("Hello")])
+        span.append([BlockChunk(" World")])
         assert span.content_text == "Hello World"
 
     def test_span_prepend_content(self):
-        span = Span(content=[BlockChunk("World")])
-        span.prepend_content([BlockChunk("Hello ")])
+        span = Span(chunks=[BlockChunk("World")])
+        span.prepend([BlockChunk("Hello ")])
         assert span.content_text == "Hello World"
 
     def test_span_append_prefix(self):
-        span = Span(content=[BlockChunk("text")])
+        span = Span(chunks=[BlockChunk("text")])
         span.append_prefix([BlockChunk("  ")])
         span.append_prefix([BlockChunk("- ")])
         assert span.prefix_text == "  - "
@@ -114,7 +114,7 @@ class TestSpan:
         assert span.prefix_text == "  - "
 
     def test_span_append_postfix(self):
-        span = Span(content=[BlockChunk("text")])
+        span = Span(chunks=[BlockChunk("text")])
         span.append_postfix([BlockChunk("\n")])
         assert span.postfix_text == "\n"
         assert span.has_newline() is True
@@ -127,23 +127,23 @@ class TestSpan:
     def test_span_copy(self):
         original = Span(
             prefix=[BlockChunk(">>")],
-            content=[BlockChunk("Hello")],
+            chunks=[BlockChunk("Hello")],
             postfix=[BlockChunk("\n")],
         )
         copy = original.copy()
 
         assert copy.text == original.text
         assert copy is not original
-        assert copy.content[0] is not original.content[0]
+        assert copy.chunks[0] is not original.chunks[0]
         assert copy.owner is None
         assert copy.prev is None
         assert copy.next is None
 
     def test_span_copy_isolation(self):
-        original = Span(content=[BlockChunk("Hello")])
+        original = Span(chunks=[BlockChunk("Hello")])
         copy = original.copy()
 
-        copy.append_content([BlockChunk(" World")])
+        copy.append([BlockChunk(" World")])
 
         assert original.content_text == "Hello"
         assert copy.content_text == "Hello World"

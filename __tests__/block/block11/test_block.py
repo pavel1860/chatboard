@@ -57,7 +57,7 @@ class TestBlockFactoryMethods:
         assert block.span is not None
 
     def test_from_span(self):
-        span = Span(content=[BlockChunk("Test")])
+        span = Span(chunks=[BlockChunk("Test")])
         block = Block.from_span(span)
         assert block.span is span
         assert block.content == "Test"
@@ -68,12 +68,12 @@ class TestBlockContentMutation:
 
     def test_append_content(self):
         block = Block("Hello")
-        block.append_content(" World")
+        block.append(" World")
         assert block.content == "Hello World"
 
     def test_prepend_content(self):
         block = Block("World")
-        block.prepend_content("Hello ")
+        block.prepend("Hello ")
         assert block.content == "Hello World"
 
     def test_append_prefix(self):
@@ -330,7 +330,7 @@ class TestBlockCopy:
         original = Block("Original")
         copy = original.copy(deep=True)
 
-        copy.append_content(" Modified")
+        copy.append(" Modified")
 
         assert original.content == "Original"
         assert copy.content == "Original Modified"

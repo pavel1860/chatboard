@@ -435,7 +435,7 @@ class BlockSchema(Block):
                 BlockChunk(content=c["content"], logprob=c.get("logprob"))
                 for c in span_data.get("postfix_chunks", [])
             ]
-            span = Span(prefix=prefix_chunks, content=content_chunks, postfix=postfix_chunks)
+            span = Span(prefix=prefix_chunks, chunks=content_chunks, postfix=postfix_chunks)
             block_text.append(span)
 
         # Create BlockSchema

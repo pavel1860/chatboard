@@ -26,7 +26,8 @@ class XmlMutator(Mutator):
     
     @property
     def content(self) -> str:
-        return self.block.children[0].span.content_text
+        # return self.block.children[0].span.extract_content().text
+        return self.block.children[0].span.content.text
     
     
     # def current_span(self) -> Span:
@@ -91,7 +92,7 @@ class XmlMutator(Mutator):
     
     def on_newline(self, chunk: BlockChunk):
         if self.did_commit:
-            return self.block_end.append_postfix([chunk])
+            return self.block_end.append([chunk], style="newline")
         return super().on_newline(chunk)           
         
     def render_attrs(self, block: Block) -> str:
@@ -134,16 +135,16 @@ class XmlMutator(Mutator):
         content, postfix = post.split_postfix(">")
 
         with Block(attrs=attrs) as xml_blk:
-            with xml_blk(content, tags=["opening-tag"]) as content:
-                content.append_prefix(prefix or "<")
-                content.append_postfix(postfix or ">")
+            with xml_blk(content.snake_case(), tags=["opening-tag"]) as content:
+                content.prepend(prefix or "<", style="xml")
+                content.append(postfix or ">", style="xml")
         return xml_blk
     
     def commit(self, chunks: BlockChunkList | None = None) -> Block | None:
         if chunks is None:
             prefix = []
             postfix = []
-            content = self.block.head.content
+            content = self.block.content
         else:
             prefix, post = chunks.split_prefix("</")
             content, postfix = post.split_postfix(">")
@@ -151,8 +152,8 @@ class XmlMutator(Mutator):
         #     self.body[-1].add_newline()
         
         with Block(content, tags=["closing-tag"]) as end_tag:
-            end_tag.append_prefix(prefix or "</")
-            end_tag.append_postfix(postfix or ">")
+            end_tag.prepend(prefix or "</", style="xml")
+            end_tag.append(postfix or ">", style="xml")
         self.block.mutator.append_child(end_tag, to_body=False)
         # with self.block(content, tags=["closing-tag"]) as end_tag:
         #     end_tag.append_prefix(prefix or "</")
@@ -310,9 +311,8 @@ class MarkdownMutator(Mutator):
     #     block.prepend_prefix("#" * (path.depth + 1) + " ")
     #     return block
     def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
-        print(path.indices_str(), "chunks:",chunks)
         block = Block(chunks)
-        block.prepend_prefix("#" * (path.depth + 1) + " ")
+        block.prepend("#" * (path.depth + 1) + " ", style="md")
         return block
         
                 

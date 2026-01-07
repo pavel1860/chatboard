@@ -119,7 +119,7 @@ class TestDumpSpan:
     def test_dump_span_with_content(self):
         """Span with content is serialized correctly."""
         span = Span(
-            content=[BlockChunk(content="hello"), BlockChunk(content=" world")]
+            chunks=[BlockChunk(content="hello"), BlockChunk(content=" world")]
         )
         result = dump_span(span)
 
@@ -130,7 +130,7 @@ class TestDumpSpan:
         """Span with prefix/postfix is serialized correctly."""
         span = Span(
             prefix=[BlockChunk(content="<tag>")],
-            content=[BlockChunk(content="content")],
+            chunks=[BlockChunk(content="content")],
             postfix=[BlockChunk(content="</tag>")],
         )
         result = dump_span(span)
@@ -295,8 +295,8 @@ class TestLoadBlock:
 
         block = load_block("block1", blocks, spans)
 
-        assert block.span.content[0].logprob == -0.1
-        assert block.span.content[1].logprob == -0.2
+        assert block.span.chunks[0].logprob == -0.1
+        assert block.span.chunks[1].logprob == -0.2
 
 
 class TestRoundTrip:

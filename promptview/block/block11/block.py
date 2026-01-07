@@ -86,7 +86,7 @@ class Mutator(metaclass=MutatorMeta):
     
     @property
     def content(self) -> str:
-        return self.block.span.content_text
+        return self.block.span.extract_content().text
     
     
     @property
@@ -124,7 +124,7 @@ class Mutator(metaclass=MutatorMeta):
             return True
         
         
-    def promote(self, content: ContentType) -> BlockChunkList:
+    def promote(self, content: ContentType, style: str | None = None) -> BlockChunkList:
         """
         Promote content of various types to list[Chunk].
 
@@ -145,19 +145,24 @@ class Mutator(metaclass=MutatorMeta):
         if isinstance(content, BlockChunkList):
             return content
         elif isinstance(content, str):
-            return BlockChunkList(chunks=[BlockChunk(content=content)])
+            return BlockChunkList(chunks=[BlockChunk(content=content, style=style)])
         elif isinstance(content, bool):
-            return BlockChunkList(chunks=[BlockChunk(content=str(content).lower())])
+            return BlockChunkList(chunks=[BlockChunk(content=str(content).lower(), style=style)])
         elif isinstance(content, (int, float)):
-            return BlockChunkList(chunks=[BlockChunk(content=str(content))])
+            return BlockChunkList(chunks=[BlockChunk(content=str(content), style=style)])
         elif isinstance(content, BlockChunk):
+            if style:
+                content.style = style
             return BlockChunkList(chunks=[content])
         elif isinstance(content, list):
             if len(content) == 0:
                 return BlockChunkList(chunks=[])
             if isinstance(content[0], str):
-                return BlockChunkList(chunks=[BlockChunk(content=s) for s in content])
+                return BlockChunkList(chunks=[BlockChunk(content=s, style=style) for s in content])
             elif isinstance(content[0], BlockChunk):
+                if style:
+                    for c in content:
+                        c.style = style
                 return BlockChunkList(chunks=content)
         return BlockChunkList(chunks=[])
     
@@ -219,9 +224,9 @@ class Mutator(metaclass=MutatorMeta):
 
     def on_space(self, chunk: BlockChunk):
         span = self.current_span()
-        if not span.content:
+        if not span.chunks:
             return span.append_prefix([chunk])
-        return span.append_content([chunk])        
+        return span.append([chunk])        
     
     def on_symbol(self, chunk: BlockChunk):
         return self.on_text([chunk])
@@ -229,7 +234,7 @@ class Mutator(metaclass=MutatorMeta):
     
     def on_text(self, chunks: list[BlockChunk]):
         span = self.current_span()
-        return span.append_content(chunks)
+        return span.append(chunks)
         
     
     
@@ -334,7 +339,7 @@ class Mutator(metaclass=MutatorMeta):
     
     def join(self, sep: BlockChunk): 
         for span in self.block.iter_delimiters():
-            span.append_postfix([sep])
+            span.append([sep])
  
     
     # def get_last_span(self) -> Span:
@@ -485,7 +490,7 @@ class Mutator(metaclass=MutatorMeta):
         return ex_block
     
     def extract(self) -> Block:
-        return Block(self.head.content, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
+        return Block(self.head.chunks, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
 
     # -------------------------------------------------------------------------
     # Schema Operations (for BlockSchema support)
@@ -749,7 +754,7 @@ class Block:
         return self.get_value()
     
     def chunks(self) -> BlockChunkList:
-        return BlockChunkList(chunks=list(self.span.chunks()))
+        return BlockChunkList(chunks=list(self.span.chunks))
         
     def get_value(self):
         from .object_helpers import block_to_object, parse_content
@@ -937,51 +942,24 @@ class Block:
 
 
 
-    def append_content(self, content: ContentType) -> Block:
+    def append(self, content: ContentType, style: str | None = None) -> Block:
         """Append to head content."""
-        chunks = self.mutator.promote(content)
-        self.mutator.head.append_content(chunks)
+        chunks = self.mutator.promote(content, style=style)
+        self.mutator.head.append(chunks, style=style)
         # self.mutator.append_content(self.mutator.promote(content))
         return self
 
-    def prepend_content(self, content: ContentType) -> Block:
+    def prepend(self, content: ContentType, style: str | None = None) -> Block:
         """Prepend to head content."""
-        chunks = self.mutator.promote(content)
-        self.mutator.head.prepend_content(chunks)
+        chunks = self.mutator.promote(content, style=style)
+        self.mutator.head.prepend(chunks, style=style)
         # self.mutator.prepend_content(self.mutator.promote(content))
         return self
 
-    def append_prefix(self, content: ContentType) -> Block:
-        """Append to head prefix."""
-        chunks = self.mutator.promote(content)
-        self.mutator.head.append_prefix(chunks)
-        # self.mutator.append_prefix(self.mutator.promote(content))
-        return self
-
-    def prepend_prefix(self, content: ContentType) -> Block:
-        """Prepend to head prefix."""
-        chunks = self.mutator.promote(content)
-        self.mutator.head.prepend_prefix(chunks)        
-        # self.mutator.prepend_prefix(self.mutator.promote(content))
-        return self
-
-    def append_postfix(self, content: ContentType) -> Block:
-        """Append to head postfix."""
-        chunks = self.mutator.promote(content)
-        self.mutator.head.append_postfix(chunks)
-        # self.mutator.append_postfix(self.mutator.promote(content))
-        return self
-
-    def prepend_postfix(self, content: ContentType) -> Block:
-        """Prepend to head postfix."""
-        chunks = self.mutator.promote(content)
-        self.mutator.head.prepend_postfix(chunks)
-        # self.mutator.prepend_postfix(self.mutator.promote(content))
-        return self
 
     def add_newline(self) -> Block:
         """Add newline to head postfix."""
-        self.head.append_postfix([BlockChunk(content="\n")])
+        self.head.append([BlockChunk(content="\n", style="newline")])
         return self
     
     def has_newline(self) -> bool:
@@ -994,8 +972,8 @@ class Block:
     
     def indent(self, spaces: int = 2):        
         if not self.is_wrapper:            
-            spaces_chunk = BlockChunk(content=" " * spaces)            
-            self.mutator.head.prepend_prefix([spaces_chunk])
+            spaces_chunk = BlockChunk(content=" " * spaces, style="tab")            
+            self.mutator.head.prepend([spaces_chunk])
         for child in self.children:
             child.indent(spaces)
         return self
@@ -1098,7 +1076,7 @@ class Block:
                 if isinstance(item, Block):
                     child.append_child(item.copy())
                 else:
-                    child.append_content(item)
+                    child.append(item)
             self.append_child(child)
         elif isinstance(other, Block):
             self.append_child(other)
@@ -1112,15 +1090,15 @@ class Block:
     def __and__(self, other: ContentType):
         # self.append(other, sep="")
         self_copy = self.copy()
-        self_copy.append_content(self.mutator.promote(other))
+        self_copy.append(self.mutator.promote(other))
         return self_copy
     
     def __rand__(self, other: ContentType):
-        self.prepend_content(other)
+        self.prepend(other)
         return self
     
     def __iand__(self, other: ContentType):
-        self.append_content(other)
+        self.append(other)
         return self
     
     
@@ -1591,18 +1569,18 @@ class Block:
         if self.role:
             parts.append(f"role={self.role!r}")
         if self.span:
-            text = self.span.content_text[:20]
-            if len(self.span.content_text) > 20:
+            text = self.span.content.text[:20]
+            if len(self.span.content.text) > 20:
                 text += "..."
             if text:
                 parts.append(f"content={text!r}")
-            postfix_text = self.span.postfix_text[:20]
-            if len(self.span.postfix_text) > 20:
+            postfix_text = self.span.postfix.text[:20]
+            if len(self.span.postfix.text) > 20:
                 postfix_text += "..."
             if postfix_text:
                 parts.append(f"postfix={postfix_text!r}")
-            prefix_text = self.span.prefix_text[:20]
-            if len(self.span.prefix_text) > 20:
+            prefix_text = self.span.prefix.text[:20]
+            if len(self.span.prefix.text) > 20:
                 prefix_text += "..."
             if prefix_text:
                 parts.append(f"prefix={prefix_text!r}")
@@ -1673,9 +1651,10 @@ class Block:
 
 
         if self.span:
-            prefix_text = self.span.prefix_text
-            content_text = self.span.content_text
-            postfix_text = self.span.postfix_text
+            prefix_text = self.span.prefix.text
+            content_text = self.span.content.text
+            postfix_text = self.span.postfix.text
+            
 
             if prefix_text:
                 parts.append(f"{prefix_text!r} << ")
@@ -1806,7 +1785,7 @@ class Block:
         ]
         result["span"]["content"] = [
             {"content": c.content, "logprob": c.logprob}
-            for c in self.span.content
+            for c in self.span.chunks
         ]
         result["span"]["postfix"] = [
             {"content": c.content, "logprob": c.logprob}
@@ -1886,7 +1865,7 @@ class Block:
                 BlockChunk(content=c["content"], logprob=c.get("logprob"))
                 for c in span_data.get("postfix_chunks", [])
             ]
-            span = Span(prefix=prefix_chunks, content=content_chunks, postfix=postfix_chunks)
+            span = Span(prefix=prefix_chunks, chunks=content_chunks, postfix=postfix_chunks)
             block_text.append(span)
             content = None  # Content comes from span
 
