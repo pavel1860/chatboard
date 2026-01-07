@@ -236,6 +236,9 @@ class Mutator(metaclass=MutatorMeta):
         span = self.current_span()
         return span.append(chunks)
         
+        
+    def on_child(self, child: Block):
+        return child
     
     
         
@@ -277,23 +280,14 @@ class Mutator(metaclass=MutatorMeta):
         block.block_text = bt
         for child in block.children:
             self._set_block_text_recursive(child, bt)
-            
-            
+                   
 
 
-    def append_child(self, child: Block | ContentType, to_body: bool = True) -> Block:
+    def append_child(self, child: Block, to_body: bool = True) -> Block:
         """Append a child block to the body."""
         # Find the span to insert after: the last span in the current subtree
-        # insert_after = self.get_last_span()
-        if not isinstance(child, Block):
-            child = Block(content=child)
-        insert_after = self.current_span()
-        # insert_after = self.body[-1].head if self.body else self.head
-        # self._attach_child(child, insert_after_span=insert_after)
-        # if to_body:
-        #     self.body.append(child)
-        # else:
-        #     self.block.children.append(child)
+        child = self.on_child(child)
+        insert_after = self.current_span()        
         child = self._append_child_after(child, insert_after, to_body)
         return child
     
@@ -992,6 +986,8 @@ class Block:
     
     def append_child(self, child: Block | ContentType) -> Block:
         """Append child to body."""
+        if not isinstance(child, Block):
+            child = Block(content=child)
         self.mutator.append_child(child)
         return self
     

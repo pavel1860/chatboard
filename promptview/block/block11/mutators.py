@@ -161,6 +161,12 @@ class XmlMutator(Mutator):
                 
         return end_tag
     
+    
+    def on_child(self, child: Block) -> Block:
+        if "closing-tag" in child.tags:
+            return child
+        return child.indent()
+    
     # def init(self, chunks: list[BlockChunk], tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, _auto_handle: bool = True) -> Block:
     #     prev_chunks, start_chunk, post = split_chunks(chunks, "<")
     #     content_chunks, end_chunk, post_chunks = split_chunks(post, ">")
