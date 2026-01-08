@@ -41,6 +41,7 @@ def render(block: Block, depth: int = 0) -> Block:
     
     mutator = config.mutator()
     tran_block = mutator.call_init(block.chunks(), path)
+    tran_block.stylizers = [stylizer() for stylizer in config.stylizers]
     
     for child in block.children:
         child = render(child, depth + 1)

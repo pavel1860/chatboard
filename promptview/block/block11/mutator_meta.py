@@ -8,7 +8,7 @@ from ...utils.function_utils import get_if_overridden, is_overridden
 from ...utils.type_utils import UNSET, UnsetType
 
 if TYPE_CHECKING:
-    from .block import Mutator
+    from .block import Mutator, Stylizer
 
 
 style_registry_ctx = contextvars.ContextVar("style_registry_ctx", default={})
@@ -22,6 +22,7 @@ TargetType = Literal["content", "block", "children", "tree", "subtree"]
 @dataclass
 class MutatorConfig:
     mutator: "Type[Mutator]"
+    stylizers: list["Type[Stylizer]"] = field(default_factory=list)
     hidden: "bool" = False
     is_wrapper: "bool" = False
     
@@ -75,7 +76,7 @@ class MutatorMeta(type):
         cls, 
         styles: list[str] | None = None, 
     ) -> "MutatorConfig":
-        from .block import Mutator
+        from .block import Mutator, Stylizer
         from .mutators import BlockMutator
         current = style_registry_ctx.get()
         # mutator_cfg = MutatorConfig(mutator=Mutator)
@@ -85,6 +86,9 @@ class MutatorMeta(type):
         for style in styles:
             if style == "hidden":
                 mutator_cfg.hidden = True                
-            elif style_cls := current.get(style): 
-                mutator_cfg["mutator"] = style_cls                          
+            elif style_cls := current.get(style):
+                if issubclass(style_cls, Stylizer):
+                    mutator_cfg.stylizers.append(style_cls)
+                else:
+                    mutator_cfg["mutator"] = style_cls                          
         return mutator_cfg

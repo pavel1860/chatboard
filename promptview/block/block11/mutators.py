@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Generator, Iterator, Literal
 
 from .span import BlockChunkList, Span, BlockChunk, chunks_contain, split_chunks
-from .block import Block, Mutator, ContentType, BlockChildren
+from .block import Block, Mutator, Stylizer, ContentType, BlockChildren
 from .path import Path
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ class MarkdownMutator(BlockMutator):
     
 
 
-class MarkdownListMutator(Mutator):
+class MarkdownListStylizer(Stylizer):
     styles = ["list"]
     
     def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:

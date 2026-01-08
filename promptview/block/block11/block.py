@@ -2,12 +2,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Iterator, Callable, Type, Generator
 from collections import UserList
+
+from ...utils.function_utils import is_overridden
 from .span import BlockChunkList, Span, BlockChunk, SpanEvent
 from .mutator_meta import MutatorMeta
 from .path import Path, compute_path
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import core_schema
-from promptview.utils.type_utils import UnsetType, UNSET
+from ...utils.type_utils import UnsetType, UNSET
 if TYPE_CHECKING:
     from .block_text import BlockText
     from .schema import BlockSchema, BlockListSchema, BlockList
@@ -35,7 +37,18 @@ class BlockChildren(UserList):
         UserList.__init__(self, items)
 
 
-
+@dataclass
+class Stylizer(metaclass=MutatorMeta):
+    styles = ()
+    
+    def append(self, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+        raise NotImplementedError("Stylizer.append is not implemented")
+        
+        
+    def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:
+        raise NotImplementedError("Stylizer.append_child is not implemented")
+        
+        
 
 @dataclass
 class Mutator(metaclass=MutatorMeta):
@@ -545,7 +558,7 @@ class Block:
     The Mutator provides indirection for accessing/mutating fields.
     """
 
-    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "_style", "_auto_handle", "attrs", "_schema"]
+    __slots__ = ["span", "children", "parent", "block_text", "role", "tags", "mutator", "stylizers", "_style", "_auto_handle", "attrs", "_schema"]
 
     def __init__(
         self,
@@ -556,6 +569,7 @@ class Block:
         style: str | list[str] | None = None,
         attrs: dict[str, Any] | None = None,
         mutator: Mutator | None = None,
+        stylizers: list[Stylizer] | None = None,
         block_text: "BlockText | None" = None,
         # Internal: for factory methods
         _span: Span | None = None,
@@ -592,13 +606,15 @@ class Block:
         else:
             self.mutator = mutator
             mutator.block = self
+            
+        self.stylizers: list[Stylizer] = stylizers or []
 
         # Set up BlockText - root blocks create their own, children inherit
         if block_text is None:
             self.block_text = BlockText()
         else:
             self.block_text = block_text
-
+        
         # Handle span initialization - create via BlockText for proper ownership
         if _span is not None:
             self.span = _span
@@ -932,6 +948,10 @@ class Block:
         events = []
         for event in self.mutator.append_child(child):
             events.append(event)
+        for stylizer in self.stylizers:
+            if is_overridden(stylizer, "append_child", Stylizer):
+                for event in stylizer.append_child(child):
+                    events.append(event)
         return events
 
 
