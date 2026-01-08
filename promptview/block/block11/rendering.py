@@ -47,6 +47,6 @@ def render(block: Block, depth: int = 0) -> Block:
         tran_block.append_child(child)
     mutator.call_commit()
     
-    if len(tran_block):
-        tran_block.join("\n")
+    # if len(tran_block):
+        # tran_block.join("\n")
     return tran_block

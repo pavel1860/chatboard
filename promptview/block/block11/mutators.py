@@ -10,10 +10,66 @@ if TYPE_CHECKING:
 
 
 
+class BlockMutator(Mutator):
+    styles = ["block"]
+    
+    # def append(self, span: Span, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+    #     yield span.append([chunk])
+    #     if chunk.is_line_end:            
+    #         yield self.append_child(Block())
+    
+    
+    # def append(self, span: Span, chunk: BlockChunk) -> Generator[BlockChunkList | Span, Any, Any]:
+    #     yield span.append([chunk])
+    #     if chunk.is_line_end:            
+    #         yield span.append_next()
+    
+    
+    def append(self, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+        yield self.tail.span.append([chunk])
+        if chunk.is_line_end:            
+            yield from self.append_child(Block())
+            
+    def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:
+        if not self.tail.span.has_newline():
+            yield self.tail.span.append([BlockChunk(content="\n", style="block")])
+        yield from super().append_child(child)
+        
+    
+
+
+class MarkdownMutator(BlockMutator):
+    styles = ["md"]
+
+
+    # def render(self, block: Block, path: Path) -> Block:
+    #     block.prepend_prefix("#" * (path.depth + 1) + " ")
+    #     return block
+    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
+        block = Block(chunks)
+        block.prepend("#" * (path.depth + 1) + " ", style="md")
+        return block
+    
+
+
+class MarkdownListMutator(Mutator):
+    styles = ["list"]
+    
+    def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:
+        yield child.span.prepend([BlockChunk("* ")], style="list")
+        
+        
+
+
 
 class XmlMutator(Mutator):
     styles = ["xml"]
     
+    
+    
+    @property
+    def content(self) -> str:    
+        return self.block.children[0].span.content.text
     
     @property
     def head(self) -> Block:
@@ -29,9 +85,57 @@ class XmlMutator(Mutator):
             return self.block.children[1]
         return super().tail
     
-    @property
-    def content(self) -> str:    
-        return self.block.children[0].span.content.text
+    # def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Span:
+    #     prefix, post = chunks.split_prefix("<")
+    #     content, postfix = post.split_postfix(">")
+    #     with Span(prefix + content.snake_case() + postfix) as content_span:
+    #         for match in content.find_all(regex=r"([a-z])([A-Z])=([a-z])"):
+    #             content_span(match[0], match[1], tags=["snake_case"])
+    #     return 
+
+    
+    # def commit(self, span: Span, body: list[Span], chunks: BlockChunkList | None = None) -> Block | None:
+    #     if chunks is None:
+    #         prefix = []
+    #         postfix = []
+    #         content = self.head.span.content
+    #     else:
+    #         prefix, post = chunks.split_prefix("</")
+    #         content, postfix = post.split_postfix(">")
+    #     return Span(prefix + content.snake_case() + postfix)
+    
+    
+    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
+        prefix, post = chunks.split_prefix("<")
+        content, postfix = post.split_postfix(">")
+
+        with Block(attrs=attrs) as xml_blk:
+            with xml_blk(content.snake_case(), tags=["opening-tag"]) as content:
+                content.prepend(prefix or "<", style="xml")
+                content.append(postfix or ">", style="xml")
+                with content() as body:
+                    pass
+            
+        return xml_blk
+    
+    def commit(self, chunks: BlockChunkList | None = None) -> Block | None:
+        if chunks is None:
+            prefix = []
+            postfix = []
+            content = self.block.content
+        else:
+            prefix, post = chunks.split_prefix("</")
+            content, postfix = post.split_postfix(">")
+        # if self.is_last_block_open(chunks):
+        #     self.body[-1].add_newline()
+        
+        with Block(content, tags=["closing-tag"]) as end_tag:
+            end_tag.prepend(prefix or "</", style="xml")
+            end_tag.append(postfix or ">", style="xml")
+        self.block.mutator.append_child(end_tag, to_body=False)
+                
+        return end_tag
+
     
     
     # def current_span(self) -> Span:
@@ -105,36 +209,6 @@ class XmlMutator(Mutator):
         return attrs
     
     
-    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
-        prefix, post = chunks.split_prefix("<")
-        content, postfix = post.split_postfix(">")
-
-        with Block(attrs=attrs) as xml_blk:
-            with xml_blk(content.snake_case(), tags=["opening-tag"]) as content:
-                content.prepend(prefix or "<", style="xml")
-                content.append(postfix or ">", style="xml")
-                with content() as body:
-                    pass
-            
-        return xml_blk
-    
-    def commit(self, chunks: BlockChunkList | None = None) -> Block | None:
-        if chunks is None:
-            prefix = []
-            postfix = []
-            content = self.block.content
-        else:
-            prefix, post = chunks.split_prefix("</")
-            content, postfix = post.split_postfix(">")
-        # if self.is_last_block_open(chunks):
-        #     self.body[-1].add_newline()
-        
-        with Block(content, tags=["closing-tag"]) as end_tag:
-            end_tag.prepend(prefix or "</", style="xml")
-            end_tag.append(postfix or ">", style="xml")
-        self.block.mutator.append_child(end_tag, to_body=False)
-                
-        return end_tag
     
     
     def on_child(self, child: Block) -> Block:
@@ -262,18 +336,6 @@ class RootMutator(Mutator):
     
 
 
-class MarkdownMutator(Mutator):
-    styles = ["markdown", "md"]
-
-
-    # def render(self, block: Block, path: Path) -> Block:
-    #     block.prepend_prefix("#" * (path.depth + 1) + " ")
-    #     return block
-    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
-        block = Block(chunks)
-        block.prepend("#" * (path.depth + 1) + " ", style="md")
-        return block
-        
                 
 
    
@@ -300,5 +362,6 @@ class ToolDescriptionMutator(Mutator):
                             param_blk /= "Required:", param.is_required                        
         return blk
 
+    
     
     

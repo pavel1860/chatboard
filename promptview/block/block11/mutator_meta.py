@@ -76,8 +76,10 @@ class MutatorMeta(type):
         styles: list[str] | None = None, 
     ) -> "MutatorConfig":
         from .block import Mutator
+        from .mutators import BlockMutator
         current = style_registry_ctx.get()
-        mutator_cfg = MutatorConfig(mutator=Mutator)
+        # mutator_cfg = MutatorConfig(mutator=Mutator)
+        mutator_cfg = MutatorConfig(mutator=BlockMutator)
         if styles is None:
             return mutator_cfg
         for style in styles:

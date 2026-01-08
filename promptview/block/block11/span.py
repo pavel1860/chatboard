@@ -310,17 +310,22 @@ class BlockChunkList(UserList[BlockChunk]):
     def split(self, sep: str) -> tuple[BlockChunkList, BlockChunkList, BlockChunkList]:
         return split_chunks(self, sep)
     
-    def split_prefix(self, sep: str) -> tuple[BlockChunkList, BlockChunkList]:
+    def split_prefix(self, sep: str, create_on_empty: bool = True) -> tuple[BlockChunkList, BlockChunkList]:
         before, separator, after = self.split(sep)
         if not separator:
+            if create_on_empty:
+                return BlockChunkList(chunks=[BlockChunk(content=sep)]), after
             return BlockChunkList(chunks=[]), before
         return before + separator, after
     
-    def split_postfix(self, sep: str) -> tuple[BlockChunkList, BlockChunkList]:
+    def split_postfix(self, sep: str, create_on_empty: bool = True) -> tuple[BlockChunkList, BlockChunkList]:
         before, separator, after = self.split(sep)
         if not separator:
+            if create_on_empty:
+                return before, BlockChunkList(chunks=[BlockChunk(content=sep)])
             return before, BlockChunkList(chunks=[])
         return before, separator + after
+    
     
     
     def filter(self, styles: set[str] | str | None = None) -> BlockChunkList:
@@ -500,6 +505,22 @@ class Span:
         styles = sanitize_styles(styles)   
         chunks = self.chunks.filter(styles)
         return Span(chunks=chunks)
+    
+    
+    def append_next(self, chunks: list[BlockChunk] | BlockChunkList | None = None, style: str | None = None) -> Span:
+        if chunks is None:
+            chunks = BlockChunkList(chunks=[])
+        elif isinstance(chunks, list):
+            chunks = BlockChunkList(chunks=chunks)
+        chunks.event = "init"
+        if style:
+            for c in chunks:
+                c.style = style
+        new_span = Span(chunks=chunks)
+        if self.owner is None:
+            raise ValueError("Span is not owned by a BlockText")
+        self.owner.insert_after(self, new_span)
+        return new_span
             
 
     def copy(self) -> Span:
