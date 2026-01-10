@@ -834,13 +834,18 @@ class Block:
 
     def next_or_none(self) -> Block | None:
         """
-        Get next block in tree order, or None.
+        Get next block in text order, or None.
 
-        Returns next sibling if exists, otherwise walks up ancestors
+        If block has children, returns first child.
+        Otherwise returns next sibling, or walks up ancestors
         to find the next block in the lineage.
         Returns None if at the end of the tree.
         """
-        # First check for next sibling
+        # First check for children
+        if self.children:
+            return self.children[0]
+
+        # Then check for next sibling
         next_sib = self.next_sibling()
         if next_sib is not None:
             return next_sib
@@ -857,9 +862,10 @@ class Block:
 
     def next(self) -> Block:
         """
-        Get next block in tree order.
+        Get next block in text order.
 
-        Returns next sibling if exists, otherwise walks up ancestors
+        If block has children, returns first child.
+        Otherwise returns next sibling, or walks up ancestors
         to find the next block in the lineage.
         Raises ValueError if at the end of the tree.
         """
