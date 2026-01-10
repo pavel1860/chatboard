@@ -97,6 +97,33 @@ class ModelMeta(ModelMetaclass, type):
             name += "s"
         return name
 
+    # def __getattr__(cls, name) -> Any:
+    #     """
+    #     This method is called for EVERY attribute access on the class!
+    #     Be careful - you must use super().__getattribute__ to avoid infinite recursion.
+    #     """
+    #     from .sql2.relations import RelField, NsRelation
+    #     from .namespace_manager2 import NamespaceManager
+    #     # Get the _columns dict (must use super to avoid recursion)
+    #     if name.startswith("_"):
+    #         return super().__getattribute__(name)
+        
+        
+    #     columns = super().__getattribute__('model_fields')    
+        
+    #     # If it's a column, return a ColumnExpression
+    #     if name in columns:
+    #         # print(name)
+    #         try:
+    #             ns = cls.get_namespace()
+    #             return RelField(NsRelation(ns), name, columns[name])
+    #         except:
+    #             return super().__getattribute__(name)
+    #         # return super().__getattribute__(name)
+        
+    #     # Otherwise, return the normal attribute
+    #     return super().__getattribute__(name)
+    
     def __getattr__(cls, name) -> Any:
         """
         This method is called for EVERY attribute access on the class!
@@ -104,22 +131,40 @@ class ModelMeta(ModelMetaclass, type):
         """
         from .sql2.relations import RelField, NsRelation
         from .namespace_manager2 import NamespaceManager
-        # Get the _columns dict (must use super to avoid recursion)
-        if name.startswith("_"):
+        
+        # Don't intercept any attributes starting with __ (Pydantic internals and special methods)
+        # These should be handled by the parent metaclass (ModelMetaclass) through normal
+        # Python attribute resolution. By raising AttributeError here, we prevent that.
+        # Instead, we should just not handle them at all - but since __getattr__ is only
+        # called when the attribute doesn't exist, we need to raise AttributeError.
+        # The key is to raise it in a way that doesn't interfere with Pydantic's handling.
+        if name.startswith("__"):
+            # For __ attributes, don't intercept - let Python's normal resolution work
+            # This means we should raise AttributeError, but in a way that allows
+            # the parent metaclass to potentially handle it via __getattribute__
+            # Actually, the parent's __getattribute__ won't be called from __getattr__
+            # So we need to manually check the parent metaclass
+            # Try to get it from ModelMetaclass directly
+            try:
+                return ModelMetaclass.__getattribute__(cls, name)
+            except AttributeError:
+                # If that fails, raise normally - this will let Pydantic handle it
+                raise AttributeError(f"type object '{cls.__name__}' has no attribute '{name}'")
+        
+        # For regular attributes, check if it's a model field
+        try:
+            columns = super().__getattribute__('model_fields')
+        except AttributeError:
+            # If model_fields doesn't exist yet, fall back to normal lookup
             return super().__getattribute__(name)
-        
-        
-        columns = super().__getattribute__('model_fields')    
         
         # If it's a column, return a ColumnExpression
         if name in columns:
-            # print(name)
             try:
                 ns = cls.get_namespace()
                 return RelField(NsRelation(ns), name, columns[name])
             except:
                 return super().__getattribute__(name)
-            # return super().__getattribute__(name)
         
         # Otherwise, return the normal attribute
         return super().__getattribute__(name)

@@ -1,4 +1,4 @@
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Type, TypeVar
 from uuid import uuid4
 
 
@@ -65,28 +65,55 @@ class BaseBlock(Generic[CONTENT]):
         }
         
     def repr_tree(self, verbose: bool = False):
-        return f"{self.path}  BaseBlock({self.content})"
+        space = " empty" if self.is_space() else ""
+        return f"{self.path}  BaseBlock({self.content}){space}"
     
     def print_tree(self, verbose: bool = False):
         print(self.repr_tree(verbose=verbose))
         
+        
+    def is_space(self) -> bool:
+        return self.content.isspace()
+                
         
     def __eq__(self, other: object):
         if isinstance(other, BaseBlock):
             return self.id == other.id
         else:
             return False
+        
+    def traverse_path(self):
+        curr = self
+        while curr is not None:
+            yield curr
+            curr = curr.parent
+            
+            
+    def index_in_parent(self, kind: "Type[BaseBlock] | None" = None) -> int:
+        if self.parent is None:
+            return 0 if kind is None or type(self) is kind else -1
+        idx = -1
+        for b in self.parent:
+            if kind is None or type(b) is kind:
+                idx += 1
+            if b == self:
+                return idx
+        return idx
+                
+            
+            
     
 
 
 CHILD = TypeVar("CHILD", bound=BaseBlock)
-PathType = list[int] | int
+PathType = list[int] | int | str
 
 
 class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
     
     __slots__ = [
-        "children",  
+        "children", 
+        "is_wrapper" 
     ]
     
     def __init__(
@@ -97,26 +124,59 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         postfix: CONTENT,
         parent: "BlockSequence | None" = None,
         id: str | None = None,
+        is_wrapper: bool = False,
 
     ):
         BaseBlock.__init__(self, content=content, parent=parent, prefix=prefix, postfix=postfix, id=id)
         self.children: list[CHILD] = []
         self.parent: "BlockSequence | None" = parent
         self.id: str = uuid4().hex[:8]
+        self.is_wrapper = is_wrapper
         if children is not None:
             for child in children:
                 self.append(child)
                 
     def promote_content(self, content: Any, prefix: CONTENT | None = None, postfix: CONTENT | None = None) -> CHILD:
         raise NotImplementedError("promote_content is not implemented")
+    
+    
+    @property
+    def is_no_content(self) -> bool:
+        if isinstance(self.content, list):
+            return len(self.content) == 0
+        elif isinstance(self.content, str):
+            return len(self.content) == 0
+        elif self.content is None:
+            return True
+        else:
+            return False
+    
+    @property
+    def is_empty(self) -> bool:
+        return self.is_no_content and len(self.children) == 0
+
         
     @property
     def path(self) -> list[int]:
         if self.parent is None:
-            return []
+            return [0]
         if self.index is None:
             return self.parent.path
         return self.parent.path + [self.index]
+    
+    
+    @property
+    def rel_path(self) -> list[int]:       
+        if self.is_wrapper:
+            return []
+        if self.parent is None:
+            if self.is_no_content:
+                return []
+            return [0]
+        if self.index is None or self.is_no_content:
+            return self.parent.rel_path
+        return self.parent.rel_path + [self.index]
+
     
     @property
     def index(self) -> int | None:
@@ -128,6 +188,8 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         return self.children.index(child)
     
     def _parse_path(self, path: PathType):
+        if isinstance(path, str):
+            return [int(p) for p in path.split(".")]
         if isinstance(path, int):
             return [path]
         return [p for p in path]
@@ -249,6 +311,28 @@ class BlockSequence(Generic[CONTENT,CHILD], BaseBlock[CONTENT]):
         target.replace_child(idx, child)
         return child
     
+    def is_space(self) -> bool:
+        return all(c.is_space() for c in self.children)
+    
+    
+    def strip_range(self):
+        start_index = 0
+        end_index = len(self.children)
+        for c in self.children:
+            if c.is_space():
+                start_index += 1
+            else:
+                break  
+        if start_index == len(self.children):
+            return start_index, end_index
+        for i in range(len(self.children) - 1, -1, -1):
+            if i < start_index:
+                break
+            if self.children[i].is_space():
+                end_index -= i
+            else:
+                break
+        return start_index, end_index
     
     
     def __iter__(self):

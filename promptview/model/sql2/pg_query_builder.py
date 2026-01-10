@@ -187,16 +187,16 @@ class PgQueryBuilder(Generic[Ts]):
         self.query.order_by(*fields)
         return self
 
-    def json(self) -> "PgQueryBuilder[Ts]":
-        """
-        Configure the query to return dicts instead of Model instances.
+    # def json(self) -> "PgQueryBuilder[Ts]":
+    #     """
+    #     Configure the query to return dicts instead of Model instances.
 
-        Usage:
-            posts = await select(Post).include(Comment).json()
-            # posts[0] is a dict
-        """
-        self._return_json = True
-        return self
+    #     Usage:
+    #         posts = await select(Post).include(Comment).json()
+    #         # posts[0] is a dict
+    #     """
+    #     self._return_json = True
+    #     return self
 
     def use_cte(self, cte: "PgQueryBuilder[Ts]", cte_name: str | None = None, recursive: bool = False) -> "PgQueryBuilder[Ts]":
         """
@@ -535,7 +535,7 @@ class PgQueryBuilder(Generic[Ts]):
         return model_cls
 
 
-    def parse_row(self, row: dict[str, Any]) -> dict[str, Any] | Ts:
+    def parse_row(self, row: dict[str, Any], return_json: bool = False) -> dict[str, Any] | Ts:
         """
         Parse a database row, deserializing JSON fields from included relations.
 
@@ -573,7 +573,7 @@ class PgQueryBuilder(Generic[Ts]):
                     parsed[field_name] = value
 
         # Return dict if json() was called, otherwise return Model instance
-        if self._return_json:
+        if return_json:
             return parsed
         else:
             # Get the model class from the first source namespace
@@ -588,7 +588,7 @@ class PgQueryBuilder(Generic[Ts]):
     async def json(self) -> list[dict[str, Any]]:
         sql, params = self.render()
         rows = await PGConnectionManager.fetch(sql, *params)
-        return [self.parse_row(row) for row in rows]
+        return [self.parse_row(row, return_json=True) for row in rows]
 
 
     async def execute(self) -> list[Ts]:

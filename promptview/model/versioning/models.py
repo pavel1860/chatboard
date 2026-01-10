@@ -312,7 +312,9 @@ class Turn(Model):
             self.message = reason
         return await self.save()
     
-    
+    def extract_blocks(self):
+        for data in self.data:
+            data.extract()
     
     async def __aenter__(self):
         if self.status != TurnStatus.STAGED:
@@ -587,7 +589,7 @@ class VersionedModel(Model):
     ):
         # Import here to avoid circular dependency        
         from ...prompt.context import Context, ContextError
-        ctx = Context.current()
+        ctx = Context.current_or_none()
         if ctx is None:            
             raise ContextError("Context not found")
         
@@ -766,80 +768,231 @@ class Parameter(VersionedModel):
         
     
 
-class BlockModel(Model):
-    _namespace_name: str = "blocks"
-    id: str = KeyField(primary_key=True)
-    # created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-    content: str | None = ModelField(default=None)
-    json_content: dict | None = ModelField(default=None) 
-    block_nodes: list["BlockNode"] = RelationField(foreign_key="block_id")   
-    
+# class BlockModel(Model):
+#     _namespace_name: str = "blocks"
+#     id: str = KeyField(primary_key=True)
+#     # created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+#     content: str | None = ModelField(default=None)
+#     json_content: dict | None = ModelField(default=None)
+#     signatures: list["BlockSignature"] = RelationField(foreign_key="block_id")
 
-class BlockNode(Model):
-    id: int = KeyField(primary_key=True)
-    tree_id: int = ModelField(foreign_key=True)
-    path: str = ModelField(db_type="LTREE")
-    block_id: str = ModelField(foreign_key=True)
-    styles: list[str] | None = ModelField(default=None)
-    role: str | None = ModelField(default=None)
-    tags: list[str] | None = ModelField(default=None)
-    attrs: dict | None = ModelField(default=None)
-    block: "BlockModel" = RelationField(primary_key="block_id", foreign_key="id")
-    tree: "BlockTree" = RelationField(primary_key="tree_id", foreign_key="id")
-    
-    @classmethod
-    async def block_query(cls, cte):
-        from ..block_models.block_log import pack_block
-        from ..sql.queries import Column
-        records = await cls.query([
-            Column("styles", "bn"),
-            Column("role", "bn"),
-            Column("tags", "bn"),
-            Column("path", "bn"),
-            Column("attrs", "bn"),
-            Column("type", "bn"),
-            Column("content", "bsm"),
-            Column("json_content", "bsm"),            
-        ], alias="bn") \
-        .use_cte(cte,"tree_cte", alias="btc") \
-        .join(BlockModel.query(["content", "json_content"], alias="bsm"), on=("block_id", "id")) \
-        .where(lambda b: (b.tree_id == RawValue("btc.id"))).json()
-        return pack_block(records)
+
+# class BlockSignature(Model):
+#     """
+#     Reusable block signature combining content + styling.
+#     Deduplicates blocks with identical content and presentation.
+#     """
+#     _namespace_name: str = "block_signatures"
+#     id: str = KeyField(primary_key=True)  # hash(block_id + styles + role + tags + attrs)
+#     block_id: str = ModelField(foreign_key=True)
+#     styles: list[str] | None = ModelField(default=None)
+#     role: str | None = ModelField(default=None)
+#     tags: list[str] | None = ModelField(default=None)
+#     attrs: dict | None = ModelField(default=None)
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
+#     block: "BlockModel" = RelationField(primary_key="block_id", foreign_key="id")
+#     nodes: list["BlockNode"] = RelationField(foreign_key="signature_id")
+
+
+# class BlockNode(Model):
+#     """
+#     Lightweight tree structure node referencing block signatures.
+#     Only stores tree_id + path + signature reference.
+#     """
+#     _namespace_name: str = "block_nodes"
+#     id: int = KeyField(primary_key=True)
+#     tree_id: int = ModelField(foreign_key=True)
+#     path: str = ModelField(db_type="LTREE")
+#     signature_id: str = ModelField(foreign_key=True)
+
+#     signature: "BlockSignature" = RelationField(primary_key="signature_id", foreign_key="id")
+#     tree: "BlockTree" = RelationField(primary_key="tree_id", foreign_key="id")
+
+#     @classmethod
+#     async def block_query(cls, cte):
+#         from ..block_models.block_log import pack_block
+#         from ..sql.queries import Column
+#         records = await cls.query([
+#             Column("styles", "bs"),
+#             Column("role", "bs"),
+#             Column("tags", "bs"),
+#             Column("path", "bn"),
+#             Column("attrs", "bs"),
+#             Column("content", "bm"),
+#             Column("json_content", "bm"),
+#         ], alias="bn") \
+#         .use_cte(cte,"tree_cte", alias="btc") \
+#         .join(BlockSignature.query(["block_id", "styles", "role", "tags", "attrs"], alias="bs"), on=("signature_id", "id")) \
+#         .join(BlockModel.query(["content", "json_content"], alias="bm"), on=("block_id", "id"), prefix="bs") \
+#         .where(lambda b: (b.tree_id == RawValue("btc.id"))).json()
+#         return pack_block(records)
      
         
-class BlockTree(VersionedModel):
-    _artifact_kind: ArtifactKind = "block"
-    id: int = KeyField(primary_key=True)
+# class BlockTree(VersionedModel):
+#     _artifact_kind: ArtifactKind = "block"
+#     id: int = KeyField(primary_key=True)
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+#     nodes: List[BlockNode] = RelationField(foreign_key="tree_id")
+#     span_id: int | None = ModelField(foreign_key=True)
+#     _block: "Block | None" = None
+    
+    
+#     @classmethod
+#     def query(
+#         cls: Type[Self], 
+#         include_branch_turn: bool = False,
+#         alias: str | None = None, 
+#         use_ctx: bool = True,
+#         branch: Branch | int | None = None,
+#         turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+#         use_liniage: bool = True,
+#         limit: int | None = None, 
+#         offset: int | None = None, 
+#         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+#         direction: Literal["asc", "desc"] = "desc",
+
+#     ):
+#         from ..sql2.pg_query_builder import select, PgQueryBuilder
+#         from ..block_models.block_log import load_block_dump
+#         async def to_block(trees: list[BlockTree]):
+#             blocks = []
+#             for tree in trees:
+#                 dump = tree.model_dump()
+#                 blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
+#             return blocks
+#         query =(
+#             super()
+#             .query(
+#                 include_branch_turn=include_branch_turn,
+#                 alias=alias,
+#                 use_ctx=use_ctx,
+#                 branch=branch,
+#                 turn_cte=turn_cte,
+#                 use_liniage=use_liniage,
+#                 limit=limit,
+#                 offset=offset,
+#                 statuses=statuses,
+#             )
+#             .include(
+#                 BlockNode.query(alias="bn")
+#                     # .order_by("id")
+#                     .include(
+#                         BlockSignature.query(alias="bs").include(BlockModel)
+#                     )
+#                 ).order_by("created_at")
+#             .parse(to_block, target="models")
+#         )
+#         return query
+    
+
+class BlockSpan(Model):
+    """
+    Content-addressed span storage.
+
+    Deduplicated by hash of (prefix + content + postfix + chunks).
+    Stores both text (for queries) and structured chunks (for reconstruction).
+    """
+    _namespace_name: str = "block_spans"
+
+    id: str = KeyField(primary_key=True)  # SHA256 hash
+    prefix_text: str = ModelField(default="")
+    content_text: str = ModelField(default="")
+    postfix_text: str = ModelField(default="")
+    prefix_chunks: dict = ModelField(default_factory=list)  # [{content, logprob}, ...]
+    content_chunks: dict = ModelField(default_factory=list)
+    postfix_chunks: dict = ModelField(default_factory=list)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-    nodes: List[BlockNode] = RelationField(foreign_key="tree_id")
-    span_id: int | None = ModelField(foreign_key=True)
-    _block: "Block | None" = None
-    
-    
+
+
+class BlockModel(Model):
+    """
+    Merkle tree node - content-addressed by span + metadata + children.
+
+    The id is a hash that includes children's IDs, so identical subtrees
+    automatically have identical hashes and share storage.
+    """
+    _namespace_name: str = "blocks"
+
+    id: str = KeyField(primary_key=True)  # Merkle hash
+    span_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=BlockSpan)  # FK to spans
+    role: str | None = ModelField(default=None)
+    tags: list[str] = ModelField(default_factory=list)
+    styles: list[str] = ModelField(default_factory=list)
+    name: str | None = ModelField(default=None)  # For BlockSchema
+    type_name: str | None = ModelField(default=None)  # For BlockSchema
+    attrs: dict = ModelField(default_factory=dict)
+    children: list[str] = ModelField(default_factory=list)  # Ordered block IDs
+    is_rendered: bool = ModelField(default=False)  # Mutator render state
+    block_type: str = ModelField(default="block")  # "block", "schema", "list", "list_schema"
+    item_name: str | None = ModelField(default=None)  # For BlockListSchema
+    path: str = ModelField(default="")  # Index path e.g., "0.1.2"
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
+    span: BlockSpan | None = RelationField(primary_key="span_id", foreign_key="id")
+
+
+class BlockTree(VersionedModel):
+    """
+    Root reference for a block tree, linked to versioning system.
+    """
+    _namespace_name: str = "block_trees"
+    _artifact_kind: ArtifactKind = "block"
+
+    id: int = KeyField(primary_key=True)
+    root_id: str = ModelField(foreign_key=True, foreign_cls=BlockModel)  # FK to blocks
+    span_id: int | None = ModelField(default=None, foreign_key=True)  # Execution span
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
+    root: BlockModel | None = RelationField(primary_key="root_id", foreign_key="id")
+
+
     @classmethod
-    def query(cls: Type[Self], include_branch_turn: bool = False):
+    def query2(
+        cls: Type[Self], 
+        include_branch_turn: bool = False,
+        alias: str | None = None, 
+        use_ctx: bool = True,
+        branch: Branch | int | None = None,
+        turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+        use_liniage: bool = True,
+        limit: int | None = None, 
+        offset: int | None = None, 
+        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+        direction: Literal["asc", "desc"] = "desc",
+
+    ):
         from ..sql2.pg_query_builder import select, PgQueryBuilder
-        from ..block_models.block_log import load_block_dump
+        from ..block_models.block11_storage import load_block
         async def to_block(trees: list[BlockTree]):
             blocks = []
             for tree in trees:
                 dump = tree.model_dump()
-                blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
+                # blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
             return blocks
         query =(
             super()
-            .query(include_branch_turn=include_branch_turn)
-            .include(
-                BlockNode.query().include(
-                    BlockModel
-                )
+            .query(
+                include_branch_turn=include_branch_turn,
+                alias=alias,
+                use_ctx=use_ctx,
+                branch=branch,
+                turn_cte=turn_cte,
+                use_liniage=use_liniage,
+                limit=limit,
+                offset=offset,
+                statuses=statuses,
             )
+            .include(
+                BlockModel.query(alias="bn")
+                    # .order_by("id")
+                    .include(
+                        BlockSpan.query(alias="bs").include(BlockModel)
+                    )
+                ).order_by("created_at")
             .parse(to_block, target="models")
         )
         return query
-    
-
-
 
 
 
@@ -1073,9 +1226,18 @@ class DataFlowNode(Model):
     
     @property
     def list_kind(self) -> list[str] | None:
+        from ...block import Block
         if self.kind != "list" or self._value is None:
             return None
-        return [v.kind for v in self._value]
+        result = []
+        for v in self._value:
+            if isinstance(v, Block):
+                result.append("block")
+            elif hasattr(v, "kind"):
+                result.append(v.kind)
+            else:
+                result.append(type(v).__name__)
+        return result
 
     @property
     def value_or_none(self) -> Any | None:
@@ -1087,6 +1249,20 @@ class DataFlowNode(Model):
         return int(self.path.split('.')[-1])
     
     
+    def extract(self) -> Any:
+        """ turns blocks into simplified blocks """
+        from ...block import Block
+        if self.kind == "block":
+            self._value = self._value.extract()
+        elif self.kind == "list":
+            new_list = []
+            for t, v in zip(self.list_kind, self._value):
+                if t == "block":
+                    new_list.append(v.extract())
+                else:
+                    new_list.append(v)
+            self._value = new_list
+        return self._value
     
     def model_dump(self, *args, **kwargs) -> dict:
         dump = super().model_dump(*args, **kwargs)
@@ -1098,8 +1274,10 @@ class DataFlowNode(Model):
             else:
                 dump["value"] = [v.model_dump() for v in self.value]
                 dump["list_kind"] = self.list_kind
-        elif self._value is not None:     
+        elif self._value is not None and hasattr(self._value, "model_dump"):     
             dump["value"] = self._value.model_dump()
+        elif self.kind == "parameter":
+            dump["value"] = self._value
         else:
             dump["value"] = None
         return dump
@@ -1146,7 +1324,7 @@ class ExecutionSpan(VersionedModel):
     @property
     def ctx(self) -> "Context":
         from ...prompt.context import Context
-        ctx = Context.current()
+        ctx = Context.current_or_none()
         if ctx is None:
             raise ValueError("Context is not set")
         return ctx

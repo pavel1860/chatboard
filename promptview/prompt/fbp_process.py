@@ -877,13 +877,95 @@ from typing import Any, AsyncGenerator, Callable, Type, TYPE_CHECKING
 
 import json
 import asyncio
+import hashlib
+import os
 
-from ..evaluation.decorators import EvalCtx
+
 from ..model.versioning.models import DataFlowNode, ExecutionSpan, SpanType
+
+
+def _serialize_for_hash(value: Any) -> Any:
+    """
+    Serialize a value for hashing. Handles Pydantic models, dicts, lists, and primitives.
+
+    For Block objects, uses the text content for deterministic hashing.
+    """
+    from ..block import Block
+
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    # Handle Block specially - use Merkle hash from dump_block for deterministic hashing
+    if isinstance(value, Block):
+        from ..model.block_models.block11_storage import dump_block
+        root_data, _, _ = dump_block(value)
+        return root_data["id"]  # Merkle hash of entire block tree
+    if hasattr(value, 'model_dump'):
+        # Pydantic model - try with mode='json', fall back to without
+        try:
+            return value.model_dump(mode='json')
+        except TypeError:
+            try:
+                return value.model_dump()
+            except Exception:
+                return str(value)
+    if isinstance(value, dict):
+        return {k: _serialize_for_hash(v) for k, v in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_serialize_for_hash(v) for v in value]
+    # For other types, use string representation
+    return str(value)
+
+
+def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
+    """
+    Compute a cache key hash from stream name and bound arguments.
+
+    Args:
+        name: The stream name (used as prefix)
+        bound_args: Dictionary of bound arguments from inspect.signature.bind()
+
+    Returns:
+        A hash string suitable for use in filenames
+    """
+    # Filter out non-serializable types (Context, LLM instances, etc.)
+    from .context import Context
+    from ..llms import LLM, LlmConfig
+    from ..evaluation.decorators import EvalCtx
+
+    filtered_args = {}
+    for key, value in bound_args.items():
+        if value is None:
+            continue
+        # Skip 'self' argument (method bound to instance)
+        if key == 'self':
+            continue
+        if isinstance(value, (Context, LLM, LlmConfig, EvalCtx)):
+            continue
+        # Skip private arguments
+        if key.startswith('_'):
+            continue
+        # Skip objects that look like LLM instances (have 'stream' method)
+        if hasattr(value, 'stream') and hasattr(value, 'complete'):
+            continue
+        filtered_args[key] = _serialize_for_hash(value)
+
+    # Create deterministic JSON string
+    json_str = json.dumps(filtered_args, sort_keys=True, default=str)
+
+    # Debug: print what's being hashed
+    print(f"[CACHE DEBUG] name={name}, json_str={json_str[:500]}")
+
+    # Compute hash
+    hash_value = hashlib.sha256(json_str.encode('utf-8')).hexdigest()[:16]
+
+    return f"{name}_{hash_value}.json"
+
 
 if TYPE_CHECKING:
     from .span_tree import SpanTree, DataFlow
-    from ..block import Block
+    from ..block import Block, BlockChunk, BlockSchema, BaseBlock
     from .context import Context
 
 
@@ -933,6 +1015,7 @@ class Process:
         self._upstream = upstream
         self._did_start = False
         self._did_yield = False
+        self._did_end = False
         self._last_ip: Any = None
         self._span_tree: "SpanTree | None" = None
 
@@ -1032,10 +1115,11 @@ class Process:
 
             return ip
 
-        except StopAsyncIteration:
+        except StopAsyncIteration as e:
             # Upstream exhausted - cleanup and propagate
             await self.on_stop()
-            raise StopAsyncIteration
+            self._did_end = True
+            raise e
 
         except Exception as e:
             # Error occurred - handle and propagate
@@ -1101,6 +1185,21 @@ class Process:
         """
         downstream._upstream = self
         return downstream
+    
+    async def athrow(self, typ, val=None, tb=None):
+        return await self.upstream.athrow(typ, val, tb)
+
+    async def aclose(self):
+        return await self.upstream.aclose()
+    
+    def did_end(self):
+        return self._did_end
+    
+    def did_upstream_end(self):
+        if self._upstream is None:
+            raise ValueError("Upstream is not set")
+        return self._upstream.did_end()
+
 
 
 class Stream(Process):
@@ -1148,18 +1247,26 @@ class Stream(Process):
             async def __anext__(self):
                 return await self._gen.__anext__()
 
+            async def athrow(self, typ, val=None, tb=None):
+                return await self._gen.athrow(typ, val, tb)
+
+            async def aclose(self):
+                return await self._gen.aclose()
+
         super().__init__(upstream=GeneratorWrapper(gen))
         self._name = name
-        self._save_stream_dir: str | None = None
+        self._save_stream_path: str | None = None
+        self._collected_chunks: list[Any] = []  # Collect chunks for JSONL save
 
     def save_stream(self, filepath: str):
         """
-        Enable stream persistence - saves each IP to a JSONL file.
+        Enable stream persistence - saves all IPs to a JSONL file on successful completion.
 
         Args:
             filepath: Path to JSONL file to save stream to
         """
-        self._save_stream_dir = filepath
+        self._save_stream_path = filepath
+        self._collected_chunks = []
 
     @classmethod
     def load(cls, filepath: str, delay: float = 0.0):
@@ -1168,7 +1275,6 @@ class Stream(Process):
 
         Args:
             filepath: Path to JSONL file to load stream from
-            model: Optional Pydantic model to deserialize IPs into
             delay: Optional delay between IPs (for simulating streaming)
 
         Returns:
@@ -1178,34 +1284,52 @@ class Stream(Process):
             from ..block import BlockChunk
             with open(filepath, "r") as f:
                 for line in f:
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-                    data = json.loads(line)
-                    block = BlockChunk.model_validate(data)
-                    yield block
+                    if line.strip():
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        data = json.loads(line)
+                        block = BlockChunk.model_validate(data)
+                        yield block
 
         return cls(load_stream(), name=f"stream_from_{filepath}")
+
+    @classmethod
+    def from_list(cls, chunks: list[str], name: str = "stream_from_list"):
+        async def gen():
+            from ..block import BlockChunk
+            for chunk in chunks:
+                yield BlockChunk(content=chunk, logprob=1.0)
+        return cls(gen(), name=name)
 
     async def __anext__(self):
         """
         Receive next IP from wrapped generator.
 
-        If persistence is enabled, writes IP to file before returning.
+        If persistence is enabled, collects IP for later save.
+        Only saves to JSONL on successful stream completion (not on errors).
         """
         ip = await super().__anext__()
 
-        # Save to file if persistence enabled
-        if self._save_stream_dir:
-            with open(self._save_stream_dir, "a") as f:
-                # Handle Pydantic models
-                if hasattr(ip, "model_dump"):
-                    data = ip.model_dump()
-                else:
-                    data = ip
-
-                f.write(json.dumps(data) + "\n")
+        # Collect for save if persistence enabled
+        if self._save_stream_path is not None:
+            if hasattr(ip, "model_dump"):
+                data = ip.model_dump()
+            else:
+                data = ip
+            self._collected_chunks.append(data)
 
         return ip
+
+    async def on_stop(self):
+        """Save collected chunks to JSONL file on successful completion."""
+        if self._save_stream_path is not None and self._collected_chunks:
+            with open(self._save_stream_path, "w") as f:
+                for data in self._collected_chunks:
+                    f.write(json.dumps(data) + "\n")
+        await super().on_stop()
+    
+
+
 
 
 class Accumulator(Process):
@@ -1342,13 +1466,14 @@ class ObservableProcess(Process):
         self._load_eval_args: bool = False
         self._input_data_flows: dict[str, "DataFlowNode"] = {}
         
+        
     @property
     def ctx(self):
         """Get current context."""
         from .context import Context
         if self._ctx:
             return self._ctx
-        ctx = Context.current()
+        ctx = Context.current_or_none()
         if ctx is None:
             raise ValueError("StreamController requires Context. Use 'async with Context():'")
         return ctx
@@ -1374,6 +1499,10 @@ class ObservableProcess(Process):
     def span_id(self):
         """Get the span ID."""
         return self.span.id if self.span else None
+    
+    
+    def get_output(self, idx: int | None = None) -> Any:
+        raise NotImplementedError("get_output is not implemented")
 
     async def _resolve_dependencies(self):
         """
@@ -1384,6 +1513,7 @@ class ObservableProcess(Process):
         """
         from .injector import resolve_dependencies_kwargs
         from ..llms import LLM, LlmConfig
+        from ..evaluation.decorators import EvalCtx
         
         
         self._data_flow = await self.ctx.start_span(
@@ -1611,7 +1741,8 @@ class ObservableProcess(Process):
         self._ctx = ctx
         self._load_eval_args = load_eval_args
         return FlowRunner(self, ctx=ctx, event_level=event_level).stream_events()
-
+    
+    
     def get_response(self):
         """
         Get the response/result from this process.
@@ -1622,6 +1753,12 @@ class ObservableProcess(Process):
         if isinstance(self._last_ip, ObservableProcess):
             return self._last_ip.get_response()
         return self._last_ip
+    
+    
+
+    
+
+
 
 
 # ============================================================================
@@ -1679,17 +1816,38 @@ class StreamController(ObservableProcess):
             kwargs: Keyword arguments to pass to gen_func (dependencies auto-resolved)
             upstream: Optional upstream process (usually None for StreamController)
         """
+        from ..block import XmlParser
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._stream: Process | None = None
         self._accumulator: Accumulator | None = None
-        self._parser: Parser | None = None
+        self._parser: XmlParser | None = None
+        self._gen: AsyncGenerator | None = None
         self._save_filepath: str | None = None
         self._load_filepath: str | None = None
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
-        self._temp_data_flow: DataFlowNode | None = None
+        self._temp_data_flow: DataFlowNode | None = None        
 
+
+    def get_output(self, idx: int | None = None, include_fence: bool = False) -> Any:
+        """
+        Get the output from this stream controller.
+
+        Args:
+            idx: Not used, kept for interface compatibility.
+            include_fence: If True, include markdown code fences in result.
+                          If False (default), return just the XML content.
+
+        Returns:
+            The parsed result or accumulated result.
+        """
+        if self._parser is not None:
+            return self._parser.get_result(include_fence=include_fence)
+        if self._accumulator is not None:
+            return self._accumulator.result
+        return None
+    
     async def on_start(self):
         """
         Build subnetwork and register with context.
@@ -1699,26 +1857,54 @@ class StreamController(ObservableProcess):
 
         In replay mode (when span has saved outputs), sets up replay buffer instead of
         executing the generator function.
+
+        Auto-cache behavior:
+        - If ctx.cache_dir is set and no explicit load/save path is configured:
+          - Computes cache key from stream name + bound arguments
+          - If cache file exists: loads from cache (no re-execution)
+          - If cache file doesn't exist: executes and saves to cache
         """
-        bound, kwargs =await self._resolve_dependencies()
-        gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+        from ..block import Block
+        bound, kwargs = await self._resolve_dependencies()
+
+        # Auto-cache: determine cache path from context if not explicitly set
+        cache_path = None
+        if self._load_filepath is None and self._save_filepath is None:
+            cache_dir = self.ctx.cache_dir
+            if cache_dir is not None:
+                # Compute cache key from bound arguments
+                cache_filename = compute_stream_cache_key(self._name, dict(bound.arguments))
+                cache_path = os.path.join(cache_dir, cache_filename)
+
+                # Check if cache exists
+                if os.path.exists(cache_path):
+                    # Load from cache
+                    self._load_filepath = cache_path
+                else:
+                    # Save to cache
+                    self._save_filepath = cache_path
 
         # Wrap in Stream process and pipe through Accumulator
         if self._load_filepath is not None:
-            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.0)        
+            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.0)
         else:
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
             stream = Stream(gen_instance, name=f"{self._name}_stream")
+
         if self._save_filepath is not None:
-            import os
             os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
             if os.path.exists(self._save_filepath):
                 os.remove(self._save_filepath)
             stream.save_stream(self._save_filepath)
-        accumulator = Accumulator()
-        self._stream = stream | accumulator
+
+        self._stream = stream
+        self._gen = stream
         if self._parser is not None:
-            self._stream |= self._parser
-        self._accumulator = accumulator
+            self._gen |= self._parser
+        else:
+            self._accumulator = Accumulator(Block())
+            self._gen |= self._accumulator
+        
         
     async def on_value_event(self, payload: Any = None):
         """
@@ -1729,9 +1915,42 @@ class StreamController(ObservableProcess):
         """
         from .events import StreamEvent
         from ..model.versioning.artifact_log import ArtifactLog
+        from ..block.block11.parsers import ParserEvent
+
+         
+        if type(payload) == ParserEvent:     
+            # if payload.type == "block_stream":
+            # if payload.type == "block_init":
+            #     print(payload.type, payload.value.path)
+            if self._temp_data_flow is None:                    
+                if self._parser is None:
+                    if self._accumulator is None:
+                        raise FlowException("Accumulator is not initialized")
+                    payload = self._accumulator.result
+
+                data_flow = ArtifactLog.build_data_flow_node(self.span, payload.value, io_kind="output")
+                self._temp_data_flow = data_flow
+                return self.ctx.build_event(
+                    path=self._temp_data_flow.path,
+                    kind=f"{self._span_type}_stream",
+                    payload=data_flow,
+                    name=self._name,
+                    
+                )            
         
-        
-        if self._temp_data_flow is None:
+            return self.ctx.build_event(
+                path=self._temp_data_flow.path,
+                kind=self._value_event_type,
+                payload=payload,
+                name=self._name
+            )
+            
+        elif self._temp_data_flow is None:
+            if self._parser is None:
+                if self._accumulator is None:
+                    raise FlowException("Accumulator is not initialized")
+                payload = self._accumulator.result
+
             data_flow = ArtifactLog.build_data_flow_node(self.span, payload, io_kind="output")
             self._temp_data_flow = data_flow
             return self.ctx.build_event(
@@ -1741,6 +1960,8 @@ class StreamController(ObservableProcess):
                 name=self._name,
                 
             )
+
+
         
         return self.ctx.build_event(
             path=self._temp_data_flow.path,
@@ -1751,11 +1972,17 @@ class StreamController(ObservableProcess):
 
         
     def parse(self, block_schema: "Block"):
+        from ..block import XmlParser
+        from .context import Context
         if self._parser is not None:
             raise FlowException("Parser already initialized")
         if self._gen_func is None:
             raise FlowException("StreamController is not initialized")
-        self._parser = Parser(response_schema=block_schema)      
+        ctx = Context.current_or_none()
+        verbose = False
+        if ctx is not None:
+            verbose = ctx.get_verbosity("parser")
+        self._parser = XmlParser(block_schema, verbose=verbose)      
         return self
     
     def name(self, name: str):
@@ -1770,9 +1997,11 @@ class StreamController(ObservableProcess):
         In replay mode, yields saved outputs from the span instead of executing
         the generator function.
         """
+        from ..block.block11.parsers import ParserEvent
         if not self._did_start:
             await self.on_start()
             self._did_start = True
+            return ParserEvent(path="0", type="block_stream", value=[])
 
         try:
             # Check if we're in replay mode
@@ -1792,7 +2021,7 @@ class StreamController(ObservableProcess):
                 return ip
             else:
                 # Normal mode: get next IP from stream (which passes through Accumulator)
-                ip = await self._stream.__anext__()
+                ip = await self._gen.__anext__()
                 self._last_ip = ip
 
                 # Don't log individual values - they're stream deltas
@@ -1808,9 +2037,10 @@ class StreamController(ObservableProcess):
                 # await self._span_tree.log_value(self._accumulator.result, io_kind="output")
             if self.span:
                 value = None
-                if self._parser and self._parser.res_ctx.instance is not None:
-                    value = await self.span.log_value(self._parser.res_ctx.instance, io_kind="output")
+                if self._parser and self._parser.result is not None:
+                    value = await self.span.log_value(self._parser.result, io_kind="output")
                 elif self._accumulator:
+                    # raise FlowException("Accumulator is not supported for StreamController")
                     value = await self.span.log_value(self._accumulator.result, io_kind="output")
                 self._stream_value = value
 
@@ -1841,7 +2071,9 @@ class StreamController(ObservableProcess):
         #         return self._stream_value.value._block
         #     return self._stream_value.value
         if self._parser:
-            return self._parser.res_ctx.instance
+            return self._parser.result
+        if self._accumulator:
+            return self._accumulator.result
         # return self.acc
         return None
     
@@ -1857,6 +2089,18 @@ class StreamController(ObservableProcess):
         self._load_filepath = filename
         self._load_delay = delay
         return self
+    
+    async def athrow(self, typ, val=None, tb=None):
+        if self._stream is None:
+            raise FlowException("StreamController is not initialized")
+        return await self._stream.athrow(typ, val, tb)
+
+    async def aclose(self):
+        if self._stream is None:
+            raise FlowException("StreamController is not initialized")
+        return await self._stream.aclose()
+
+
 
 
 # ============================================================================
@@ -1923,6 +2167,14 @@ class PipeController(ObservableProcess):
         super().__init__(gen_func, name, span_type, tags, args, kwargs, upstream)
         self._gen: AsyncGenerator | None = None
         self._last_value: DataFlow | None = None
+        self._output_data_flows: list[DataFlow] = []
+        
+        
+    def get_output(self, idx: int | None = None) -> Any:
+        if idx is None:
+            return self._output_data_flows[-1]
+        else:
+            return self._output_data_flows[idx]
         
 
     async def on_start(self):
@@ -1981,7 +2233,7 @@ class PipeController(ObservableProcess):
                 child = self._replay_outputs[self._replay_index]
                 self._replay_index += 1
                 self._last_ip = child
-
+                self._output_data_flows.append(child)
                 if not self._did_yield:
                     self._did_yield = True
                     
@@ -2000,6 +2252,7 @@ class PipeController(ObservableProcess):
                 # Normal mode: send value into the internal generator using asend()
                 child = await self._gen.asend(value)
                 self._last_ip = child
+                self._output_data_flows.append(child)
 
                 # Set parent reference and index on child
                 if isinstance(child, (StreamController, PipeController)):
@@ -2036,6 +2289,18 @@ class PipeController(ObservableProcess):
         """
         # Delegate to asend with None (equivalent to __anext__)
         return await self.asend(None)
+    
+    
+    async def athrow(self, typ, val=None, tb=None):
+        if self._gen is None:
+            raise FlowException("Process is not initialized")
+        return await self._gen.athrow(typ, val, tb)
+
+    async def aclose(self):
+        if self._gen is None:
+            raise FlowException("Process is not initialized")
+        return await self._gen.aclose()
+
 
 
 
@@ -2124,7 +2389,8 @@ class FlowRunner:
         self._event_level = event_level
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
-        self.ctx = ctx or Context.current()
+        self._exited_processes: list[ObservableProcess] = []
+        self.ctx = ctx or Context.current_or_none()
 
     @property
     def current(self) -> Process:
@@ -2132,6 +2398,11 @@ class FlowRunner:
         if not self.stack:
             raise StopAsyncIteration
         return self.stack[-1]
+    
+    @property
+    def result(self) -> Any:
+        """Get result from root process."""
+        return self.get_output()
 
     @property
     def should_output_events(self) -> bool:
@@ -2146,7 +2417,17 @@ class FlowRunner:
         """Pop process from stack."""
         process = self.stack.pop()
         self._last_process = process
+        self._exited_processes.append(process)
         return process
+    
+    def get_output(self, name: str | None = None) -> Any:
+        if name is None:
+            return self._exited_processes[-1].get_response()
+        else:
+            for process in self._exited_processes:
+                if process.name == name:
+                    return process.get_output()
+            return None
 
     def _get_response(self) -> Any:
         """
@@ -2160,6 +2441,8 @@ class FlowRunner:
             self._response_to_send = None
             return response
         return None
+
+        
 
     def __aiter__(self):
         """Make FlowRunner async iterable."""
@@ -2273,6 +2556,13 @@ class FlowRunner:
 
             except Exception as e:
                 # Error occurred, pop from stack
+                
+                try:
+                    await self.current.athrow(e)
+                except Exception as sub_ex:
+                    pass
+                
+                
                 process = self.pop()
 
                 # Emit error event if needed
@@ -2399,210 +2689,428 @@ class FlowRunner:
         self._output_events = True
         return self
 
+    # def print(self):
 
-# ============================================================================
-# Phase 5: Parser Integration
-# ============================================================================
+# # ============================================================================
+# # Phase 5: Parser Integration
+# # ============================================================================
+
+# class ParserError(Exception):
+#     pass
 
 
-class Parser(Process):
-    """
-    Parser process - transforms XML-tagged chunks into Block structures.
-    
-    This is a STATEFUL TRANSFORMER in FBP - maintains parsing state,
-    buffers chunks, and yields Block events as XML tags are parsed.
-    
-    The Parser uses lxml's XMLPullParser to incrementally parse streaming
-    XML content and build Block structures via BlockBuilderContext.
-    
-    Example:
-        >>> response_schema = Block(text=str)
-        >>> parser = Parser(response_schema)
-        >>> 
-        >>> stream = Stream(chunk_gen())
-        >>> pipeline = stream | parser | acc
-        >>> async for block_event in pipeline:
-        ...     print(block_event)
-    """
-    
-    def __init__(self, response_schema: "Block", upstream: Process | None = None):
-        """
-        Initialize Parser.
+# class Parser(Process):
+#     def __init__(self, schema: "BlockSchema"):
+#         from xml.parsers import expat
+#         from ..block import BlockChunk
+#         super().__init__()
+#         self.schema = schema
+#         self.build_ctx = StreamingBlockBuilder(schema)
+#         self.parser = expat.ParserCreate()
+#         self.parser.buffer_text = False
+#         self.parser.StartElementHandler = self._on_start
+#         self.parser.EndElementHandler = self._on_end
+#         self.parser.CharacterDataHandler = self._on_chardata
         
-        Args:
-            response_schema: Block schema defining expected structure
-            upstream: Upstream process providing BlockChunk IPs
-        """
-        super().__init__(upstream)
-        from lxml import etree
-        from ..block.block9.block_schema import BlockBuilderContext
+#         self.chunks = []  # (start_byte, end_byte, chunk)
+#         self.total_bytes = 0
+#         self.pending = None  # (event_type, event_data, start_byte)
+#         self.chunk_queue = []
+#         self._tag_path = []
+#         self._has_synthetic_root_tag = False
+#         if self.schema.is_wrapper:
+#             self.feed(BlockChunk(content=f"<{self.schema.name}>"))
+#             self._has_synthetic_root_tag = True
+#         # self._root_tag_in_schema = not self.schema.is_wrapper
+#         # self._synthetic_root_tag: str | None = "root" if self.schema.is_wrapper else None
         
-        self.start_tag = "tag_start"
-        self.end_tag = "tag_end"
-        self.text_tag = "chunk"
-        self._safety_tag = "stream_start"
-        self.res_ctx = BlockBuilderContext(response_schema.copy())
-        self.parser = etree.XMLPullParser(events=("start", "end"))
-        self.block_buffer = []
-        self._stream_started = False
-        self._detected_tag = False
-        self._total_chunks = 0
-        self._chunks_from_last_tag = 0
-        self._tag_stack = []
-        self._full_content = ""
-        self._event_queue = []  # Queue events to yield across multiple __anext__ calls
+#     @property
+#     def result(self):
+#         return self.build_ctx.result
+    
+#     def feed(self, chunk: "BlockChunk", isfinal=False):
+#         from xml.parsers.expat import ExpatError
+#         # print(chunk.content)
+#         # data = chunk.content.encode() if isinstance(chunk.data, str) else chunk.data
+#         data = chunk.content.encode("utf-8")
+#         start = self.total_bytes
+#         end = start + len(data)
+#         self.chunks.append((start, end, chunk))
+#         self.total_bytes = end
+#         try:
+#             self.parser.Parse(data, isfinal)
+#         except ExpatError as e:
+#             if e.code == 4:
+#                 raise ParserError(f"Invalid XML token: {data}")
+#             else:
+#                 raise e
+
         
-    def _push_tag(self, tag: str, is_list: bool):
-        self._tag_stack.append({"tag": tag, "is_list": is_list})
-    
-    def _pop_tag(self):
-        return self._tag_stack.pop()
-    
-    @property
-    def current_tag(self):
-        if not self._tag_stack:
-            return None
-        return self._tag_stack[-1]["tag"]
-    
-    @property
-    def current_tag_is_list(self):
-        if not self._tag_stack:
-            return False
-        return self._tag_stack[-1]["is_list"]
-    
-    def _read_buffer(self, start_from: str | None = None, flush=True):
-        buffer = []
-        start_appending = start_from is None
-        for block in self.block_buffer:
-            if start_from and start_from in block.content:
-                start_appending = True
-            if start_appending:
-                buffer.append(block)
-        if flush:
-            self.block_buffer = []
-        return buffer
-    
-    def _write_to_buffer(self, value: Any):
-        self._total_chunks += 1
-        self._chunks_from_last_tag += 1
-        self.block_buffer.append(value)
-    
-    def _try_set_tag_lock(self, value: Any):
-        if "<" in value.content:
-            self._detected_tag = True
-    
-    def _release_tag_lock(self):
-        self._chunks_from_last_tag = 0
-        self._detected_tag = False
-    
-    def _should_output_chunk(self):
-        if self.current_tag and not self._detected_tag:
-            if self._chunks_from_last_tag < 2:
-                return False
-            return True
-        return False
-    
-    def _feed_parser(self, content: str):
-        self._full_content += content
-        self.parser.feed(content)
-    
-    def _process_chunk(self, chunk):
-        """Process a chunk and add events to queue."""
-        if not self._stream_started:
-            self._feed_parser(f'<{self._safety_tag}>')
-            self._stream_started = True
         
-        # Check if res_ctx has queued events first
-        if self.res_ctx.has_events():
-            event = self.res_ctx.get_event()
-            self._event_queue.append(event)
+#     def _push_block(self, block: "BaseBlock"):
+#         self.chunk_queue.append(block)
         
-        # Process the chunk
-        self._write_to_buffer(chunk)
-        try:
-            self._feed_parser(chunk.content)
-        except Exception as e:
-            print(self._full_content)
-            print(f"Parser Error on content: {chunk.content}")
-            raise e
+#     def _push_block_list(self, blocks: list["BaseBlock"]):
+#         self.chunk_queue.extend(blocks)
         
-        self._try_set_tag_lock(chunk)
+#     def _pop_block(self):
+#         return self.chunk_queue.pop(0)
+    
+#     def _has_outputs(self):
+#         return len(self.chunk_queue) > 0
+    
+#     def close(self):
+#         from ..block import BlockChunk
+#         if self._has_synthetic_root_tag:
+#             self.feed(BlockChunk(content=f"</{self.schema.name}>"))        
+#         self.parser.Parse(b'', True)
+#         # Flush any pending event
+#         self._flush_pending(self.total_bytes)
+    
+#     def _get_chunks_in_range(self, start, end):
+#         """
+#         Return all chunks overlapping [start, end), splitting chunks at boundaries.
+
+#         When a chunk partially overlaps the range, it is split so that only the
+#         portion within [start, end) is returned. This handles cases where the LLM
+#         returns mixed content like "Hello<tag>" in a single chunk.
+
+#         The original chunks in self.chunks remain intact - only the returned
+#         list contains the split portions.
+
+#         Args:
+#             start: Start byte position (inclusive)
+#             end: End byte position (exclusive)
+
+#         Returns:
+#             List of BlockChunk objects, potentially split at byte boundaries
+#         """
+#         from ..block import BlockChunk
+
+#         result = []
+#         for chunk_start, chunk_end, chunk in self.chunks:
+#             # Check if chunk overlaps with [start, end)
+#             if chunk_start < end and chunk_end > start:
+#                 # Calculate the overlap
+#                 overlap_start = max(chunk_start, start)
+#                 overlap_end = min(chunk_end, end)
+
+#                 # Check if we need to split (chunk extends beyond the range)
+#                 if overlap_start == chunk_start and overlap_end == chunk_end:
+#                     # Full chunk is within range, no split needed
+#                     result.append(chunk)
+#                 else:
+#                     # Need to split the chunk - extract only the overlapping portion
+#                     content_bytes = chunk.content.encode("utf-8")
+
+#                     # Calculate byte offsets relative to chunk start
+#                     slice_start = overlap_start - chunk_start
+#                     slice_end = overlap_end - chunk_start
+
+#                     # Adjust slice boundaries to respect UTF-8 character boundaries
+#                     # UTF-8 continuation bytes start with 10xxxxxx (0x80-0xBF)
+#                     # Move slice_start forward to skip continuation bytes
+#                     while slice_start < len(content_bytes) and (content_bytes[slice_start] & 0xC0) == 0x80:
+#                         slice_start += 1
+
+#                     # Move slice_end forward to include full character
+#                     while slice_end < len(content_bytes) and (content_bytes[slice_end] & 0xC0) == 0x80:
+#                         slice_end += 1
+
+#                     # Extract the slice and decode back to string
+#                     sliced_bytes = content_bytes[slice_start:slice_end]
+
+#                     # Skip if slice is empty after boundary adjustment
+#                     if not sliced_bytes:
+#                         continue
+
+#                     sliced_content = sliced_bytes.decode("utf-8")
+
+#                     # Create a new chunk with the sliced content
+#                     # Preserve logprob from original chunk
+#                     split_chunk = BlockChunk(
+#                         content=sliced_content,
+#                         logprob=chunk.logprob,
+#                         # prefix=chunk.prefix if slice_start == 0 else "",
+#                         # postfix=chunk.postfix if slice_end == len(content_bytes) else "",
+#                     )
+#                     result.append(split_chunk)
+#         return result
+    
+#     def _flush_pending(self, end_byte):
+#         if self.pending is None:
+#             return
         
-        # Output chunks in middle of stream
-        if self._should_output_chunk():
-            for c in self._read_buffer(flush=True):
-                self.res_ctx.append(self.current_tag, c)
+#         event_type, event_data, start_byte = self.pending
+#         chunks = self._get_chunks_in_range(start_byte, end_byte)
+#         metas = [c.logprob for c in chunks]
+#         # print(event_type)
+#         if event_type == 'start':
+#             name, attrs = event_data
+#             block = self.build_ctx.open_view(name, chunks, attrs=attrs, ignore_style=True)
+#             self._push_block(block)
+#             # self._push_block_list(blocks)
+#             # print(f"StartElement '{name}' {attrs or ''} from chunks: {metas}")
+#         elif event_type == 'end':
+#             view = self.build_ctx.close_view(chunks)
+#             self._push_block(view)
+#             # self._push_block(view.postfix)
+#             # self.build_ctx.commit_view()
+#             # print(f"EndElement '{event_data}' from chunks: {metas}")
+#         elif event_type == 'chardata':
+#             for chunk in chunks:
+#                 cb = self.build_ctx.append(chunk)
+#                 self._push_block(cb)
+#             # print(f"CharData {repr(event_data)} from chunks: {metas}")
         
-        # Process XML events
-        for event, element in self.parser.read_events():
-            if element.tag == self._safety_tag:
-                continue
+#         self.pending = None
+    
+#     def _on_start(self, name, attrs):
+#         current_pos = self.parser.CurrentByteIndex
+#         self._flush_pending(current_pos)
+#         self._tag_path.append(name)
+#         self.pending = ('start', (name, attrs), current_pos)
+    
+#     def _on_end(self, name):
+#         current_pos = self.parser.CurrentByteIndex
+#         self._flush_pending(current_pos)
+#         self._tag_path.pop()
+#         self.pending = ('end', name, current_pos)
+    
+#     def _on_chardata(self, data):
+#         # print(f"chardata: '{data}'")
+#         current_pos = self.parser.CurrentByteIndex
+#         self._flush_pending(current_pos)
+#         # For chardata we could compute end directly, but for consistency
+#         # we'll use the deferred approach too
+#         self.pending = ('chardata', data, current_pos)
+        
+        
+#     async def on_stop(self):
+#         self.close()
+        
+    
+#     # async def __anext__(self):
+#     #     while not self._has_outputs() and not self.did_upstream_end():
+#     #         try:
+#     #             value = await super().__anext__()
+#     #             # print("anext", value.content)
+#     #             self.feed(value)        
+#     #         except Exception as e:
+#     #             pass
+#     #     if not self._has_outputs() and self.did_upstream_end():
+#     #         raise StopAsyncIteration
+#     #     block = self._pop_block()
+#     #     return block
+    
+#     async def __anext__(self):
+#         while not self._has_outputs():
+#             value = await super().__anext__()
+#             # print("anext", value.content)
+#             self.feed(value)        
+#         block = self._pop_block()
+#         return block
+
+# class Parser2(Process):
+#     """
+#     Parser process - transforms XML-tagged chunks into Block structures.
+    
+#     This is a STATEFUL TRANSFORMER in FBP - maintains parsing state,
+#     buffers chunks, and yields Block events as XML tags are parsed.
+    
+#     The Parser uses lxml's XMLPullParser to incrementally parse streaming
+#     XML content and build Block structures via BlockBuilderContext.
+    
+#     Example:
+#         >>> response_schema = Block(text=str)
+#         >>> parser = Parser(response_schema)
+#         >>> 
+#         >>> stream = Stream(chunk_gen())
+#         >>> pipeline = stream | parser | acc
+#         >>> async for block_event in pipeline:
+#         ...     print(block_event)
+#     """
+    
+#     def __init__(self, response_schema: "Block", upstream: Process | None = None):
+#         """
+#         Initialize Parser.
+        
+#         Args:
+#             response_schema: Block schema defining expected structure
+#             upstream: Upstream process providing BlockChunk IPs
+#         """
+#         super().__init__(upstream)
+#         from lxml import etree
+#         from ..block import BlockBuilderContext
+        
+#         self.start_tag = "tag_start"
+#         self.end_tag = "tag_end"
+#         self.text_tag = "chunk"
+#         self._safety_tag = "stream_start"
+#         self.res_ctx = BlockBuilderContext(response_schema.copy())
+#         self.parser = etree.XMLPullParser(events=("start", "end"))
+#         self.block_buffer = []
+#         self._stream_started = False
+#         self._detected_tag = False
+#         self._total_chunks = 0
+#         self._chunks_from_last_tag = 0
+#         self._tag_stack = []
+#         self._full_content = ""
+#         self._event_queue = []  # Queue events to yield across multiple __anext__ calls
+        
+#     def _push_tag(self, tag: str, is_list: bool):
+#         self._tag_stack.append({"tag": tag, "is_list": is_list})
+    
+#     def _pop_tag(self):
+#         return self._tag_stack.pop()
+    
+#     @property
+#     def current_tag(self):
+#         if not self._tag_stack:
+#             return None
+#         return self._tag_stack[-1]["tag"]
+    
+#     @property
+#     def current_tag_is_list(self):
+#         if not self._tag_stack:
+#             return False
+#         return self._tag_stack[-1]["is_list"]
+    
+#     def _read_buffer(self, start_from: str | None = None, flush=True):
+#         buffer = []
+#         start_appending = start_from is None
+#         for block in self.block_buffer:
+#             if start_from and start_from in block.content:
+#                 start_appending = True
+#             if start_appending:
+#                 buffer.append(block)
+#         if flush:
+#             self.block_buffer = []
+#         return buffer
+    
+#     def _write_to_buffer(self, value: Any):
+#         self._total_chunks += 1
+#         self._chunks_from_last_tag += 1
+#         self.block_buffer.append(value)
+    
+#     def _try_set_tag_lock(self, value: Any):
+#         if "<" in value.content:
+#             self._detected_tag = True
+    
+#     def _release_tag_lock(self):
+#         self._chunks_from_last_tag = 0
+#         self._detected_tag = False
+    
+#     def _should_output_chunk(self):
+#         if self.current_tag and not self._detected_tag:
+#             if self._chunks_from_last_tag < 2:
+#                 return False
+#             return True
+#         return False
+    
+#     def _feed_parser(self, content: str):
+#         self._full_content += content
+#         self.parser.feed(content)
+    
+#     def _process_chunk(self, chunk):
+#         """Process a chunk and add events to queue."""
+#         if not self._stream_started:
+#             self._feed_parser(f'<{self._safety_tag}>')
+#             self._stream_started = True
+        
+#         # Check if res_ctx has queued events first
+#         if self.res_ctx.has_events():
+#             event = self.res_ctx.get_event()
+#             self._event_queue.append(event)
+        
+#         # Process the chunk
+#         self._write_to_buffer(chunk)
+#         try:
+#             self._feed_parser(chunk.content)
+#         except Exception as e:
+#             print(self._full_content)
+#             print(f"Parser Error on content: {chunk.content}")
+#             raise e
+        
+#         self._try_set_tag_lock(chunk)
+        
+#         # Output chunks in middle of stream
+#         if self._should_output_chunk():
+#             for c in self._read_buffer(flush=True):
+#                 self.res_ctx.append(self.current_tag, c)
+        
+#         # Process XML events
+#         for event, element in self.parser.read_events():
+#             if element.tag == self._safety_tag:
+#                 continue
             
-            if event == 'start':
-                if self.current_tag_is_list:
-                    view, schema = self.res_ctx.instantiate_list_item(
-                        self.current_tag,
-                        element.tag,
-                        self._read_buffer(),
-                        attrs=dict(element.attrib),
-                    )
-                else:
-                    view, schema = self.res_ctx.instantiate(
-                        element.tag,
-                        self._read_buffer(),
-                        attrs=dict(element.attrib),
-                    )
-                self._push_tag(element.tag, schema.is_list)
-                self._release_tag_lock()
+#             if event == 'start':
+#                 if self.current_tag_is_list:
+#                     view, schema = self.res_ctx.instantiate_list_item(
+#                         self.current_tag,
+#                         element.tag,
+#                         self._read_buffer(),
+#                         attrs=dict(element.attrib),
+#                     )
+#                 else:
+#                     view, schema = self.res_ctx.instantiate(
+#                         element.tag,
+#                         self._read_buffer(),
+#                         attrs=dict(element.attrib),
+#                     )
+#                 self._push_tag(element.tag, schema.is_list)
+#                 self._release_tag_lock()
             
-            elif event == 'end':
-                self.res_ctx.set_view_attr(
-                    element.tag,
-                    postfix=self._read_buffer(start_from="</"),
-                )
-                self._pop_tag()
-                self._release_tag_lock()
+#             elif event == 'end':
+#                 self.res_ctx.set_view_attr(
+#                     element.tag,
+#                     postfix=self._read_buffer(start_from="</"),
+#                 )
+#                 self._pop_tag()
+#                 self._release_tag_lock()
         
-        # Collect any new events
-        while self.res_ctx.has_events():
-            event = self.res_ctx.get_event()
-            self._event_queue.append(event)
+#         # Collect any new events
+#         while self.res_ctx.has_events():
+#             event = self.res_ctx.get_event()
+#             self._event_queue.append(event)
     
-    async def __anext__(self):
-        """
-        Get next block event.
+#     async def __anext__(self):
+#         """
+#         Get next block event.
         
-        Parser may need to consume multiple chunks to produce one event,
-        or produce multiple events from one chunk.
-        """
-        # Process queued events first
-        if self._event_queue:
-            return self._event_queue.pop(0)
+#         Parser may need to consume multiple chunks to produce one event,
+#         or produce multiple events from one chunk.
+#         """
+#         # Process queued events first
+#         if self._event_queue:
+#             return self._event_queue.pop(0)
         
-        # Try to get more chunks and process them
-        max_iterations = 20
-        for _ in range(max_iterations):
-            try:
-                # Get next chunk from upstream
-                chunk = await super().__anext__()
+#         # Try to get more chunks and process them
+#         max_iterations = 20000
+#         for _ in range(max_iterations):
+#             try:
+#                 # Get next chunk from upstream
+#                 chunk = await super().__anext__()
                 
-                # Process the chunk
-                self._process_chunk(chunk)
+#                 # Process the chunk
+#                 self._process_chunk(chunk)
                 
-                # If we now have events, return one
-                if self._event_queue:
-                    return self._event_queue.pop(0)
+#                 # If we now have events, return one
+#                 if self._event_queue:
+#                     return self._event_queue.pop(0)
             
-            except StopAsyncIteration:
-                # Upstream exhausted
-                # Return any remaining queued events first
-                if self._event_queue:
-                    return self._event_queue.pop(0)
-                # No more events, we're done
-                raise StopAsyncIteration
+#             except StopAsyncIteration:
+#                 # Upstream exhausted
+#                 # Return any remaining queued events first
+#                 if self._event_queue:
+#                     return self._event_queue.pop(0)
+#                 # No more events, we're done
+#                 raise StopAsyncIteration
+#         else:
+#             print("no more chunks")
         
-        # Hit max iterations without producing event
-        raise StopAsyncIteration
+#         # Hit max iterations without producing event
+#         raise StopAsyncIteration
 
 
-# %%
+# # %%

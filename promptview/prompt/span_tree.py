@@ -207,7 +207,7 @@ class SpanTree:
         if self.parent is None and self.root.parent_span_id is None and self.root.path == "0":
             # Get turn from context and use its span counter
             from .context import Context
-            ctx = Context.current()
+            ctx = Context.current_or_none()
             if ctx is None or ctx.turn is None:
                 raise ValueError("Cannot create top-level span outside of turn context")
 

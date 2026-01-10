@@ -1,11 +1,13 @@
+from typing import TYPE_CHECKING
 import inspect
 from typing import (Any, Callable, Dict, Generic, TypeVar, ParamSpec)
-from ..context import ExecutionContext
+if TYPE_CHECKING:   
+    from ..context import ExecutionContext
 
 
-from ..block import BlockChunk
+
 from .depends import  DependsContainer, resolve_dependency
-from .context import Context
+
 from ..utils.function_utils import filter_args_by_exclude
 
 
@@ -19,16 +21,19 @@ class Controller(Generic[P, R]):
     
     def _filter_args_for_trace(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
         from ..llms import LLM
+        from .context import Context
         _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLM, Context))
         return {"args": _args, "kwargs": _kwargs}
     
     
     def _sanitize_output(self, output: Any) -> Any:
+        from ..block import BlockChunk
         if isinstance(output, BlockChunk):
             return output.content
         return output
     
-    def build_execution_ctx(self) -> ExecutionContext:
+    def build_execution_ctx(self) -> "ExecutionContext":
+        from ..context import ExecutionContext
         curr_ctx: ExecutionContext | None = ExecutionContext.current_or_none()
         if curr_ctx is not None:
             ctx = curr_ctx.build_child(self._name)

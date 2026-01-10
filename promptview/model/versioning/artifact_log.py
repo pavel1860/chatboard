@@ -12,7 +12,8 @@ from typing import Any, Iterator, TYPE_CHECKING
 from ...utils.type_utils import SerializableType, serialize_value, type_to_str_or_none
 from .models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanType, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
 from ...block import BlockList, Block
-from ..block_models.block_log import insert_block, get_blocks
+# from ..block_models.block_log import insert_block, get_blocks
+from ..block_models.block11_storage import insert_block
 
 from collections import defaultdict
 from ...prompt.context import Context
@@ -94,7 +95,7 @@ class ArtifactLog:
     async def populate_turns(cls, turns: List[Turn]):
         from collections import defaultdict
         from ..namespace_manager2 import NamespaceManager
-        from ..block_models.block_log import get_blocks
+        from ..block_models.block11_storage import get_blocks
         from .models import BlockTree, Artifact
         def kind2table(k: str):
             if k == "parameter":
@@ -111,7 +112,7 @@ class ArtifactLog:
             for value in turn.data:        
                 # print(value.path, value.kind, value.artifact_id)
                 for da in value.artifact_data:
-                    models_to_load[da.kind].append(da.artifact_id)  
+                    models_to_load[kind2table(da.kind)].append(da.artifact_id)  
                 # else:
                 #     value._value = span_lookup[value.artifact_id]
                 #     span._parent_value = value
@@ -130,7 +131,8 @@ class ArtifactLog:
             # elif k == "execution_spans":
             #     value_dict[k] = {s.artifact_id: s for s in spans}
             else:
-                ns = NamespaceManager.get_namespace(kind2table(k))
+                # ns = NamespaceManager.get_namespace(kind2table(k))
+                ns = NamespaceManager.get_namespace(k)
                 models = await ns._model_cls.query(include_branch_turn=True).where(ns._model_cls.artifact_id.isin(models_to_load[k]))
                 model_lookup[k] = {m.artifact_id: m for m in models}
 
@@ -140,11 +142,11 @@ class ArtifactLog:
                     value._value = []
                     for da in value.artifact_data:
                         if da.kind == "list":
-                            value._container_value = model_lookup[da.kind][da.artifact_id]
+                            value._container_value = model_lookup[kind2table(da.kind)][da.artifact_id]
                         else:
-                            value._value.append(model_lookup[da.kind][da.artifact_id])
+                            value._value.append(model_lookup[kind2table(da.kind)][da.artifact_id])
                 else:
-                    value._value = model_lookup[value.kind][value.artifact_id]
+                    value._value = model_lookup[kind2table(value.kind)][value.artifact_id]
         return turns    
     
     
@@ -193,7 +195,7 @@ class ArtifactLog:
     async def log_value(cls, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None, ctx: Context | None = None):
         
         
-        ctx = Context.current() if ctx is None else ctx
+        ctx = Context.current_or_none() if ctx is None else ctx
         if ctx is None:
             raise ValueError("Context is not set")
         span_id = None

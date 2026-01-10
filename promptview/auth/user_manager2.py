@@ -1,4 +1,4 @@
-from typing import Any, Dict, Generic, List, Optional, Type, final
+from typing import Any, Dict, Generic, List, Optional, Type, final, TYPE_CHECKING
 from datetime import datetime
 from uuid import UUID, uuid4
 import os
@@ -12,7 +12,8 @@ from promptview.auth.crypto import decode_nextauth_session_token
 from .google_auth import GoogleAuth
 from ..model import Model, ModelField, RelationField, Branch, KeyField
 from uuid import UUID
-
+if TYPE_CHECKING:
+    from ..prompt import Context
 
 
 # class AuthBranch(Model):
@@ -38,8 +39,9 @@ class AuthModel(Model):
     #     junction_model=AuthBranch,        
     # )
 
-
-
+    def create_context(self, branch_id: int | None = None) -> "Context":
+        from ..prompt import Context
+        return Context(auth=self, branch_id=branch_id)
     
     
     
