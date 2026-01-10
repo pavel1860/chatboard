@@ -111,7 +111,12 @@ class MutatorMeta(type):
         return mutator_cfg
 
 
-
+def _apply_metadata(to_block: Block, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None):
+    to_block.tags = tags or to_block.tags
+    to_block.role = role or to_block.role
+    to_block.style = style or to_block.style
+    to_block.attrs = attrs or to_block.attrs
+    return to_block
 
 
 class Stylizer(metaclass=MutatorMeta):
@@ -124,7 +129,7 @@ class Stylizer(metaclass=MutatorMeta):
     def on_child(self, child: Block):
         raise NotImplementedError("Stylizer.append_child is not implemented")
         
-        
+     
 
 class Mutator(metaclass=MutatorMeta):
     """
@@ -154,25 +159,38 @@ class Mutator(metaclass=MutatorMeta):
     
     @classmethod
     def create_block(cls, content: str, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:        
-        block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+        block = Block(content)
         block = cls.init(block)
+        block = _apply_metadata(block, tags, role, style, attrs)
         block._mutator = cls(block)
         return block
     
     @classmethod
-    def init(cls, block: Block):
+    def init(cls, block: Block) -> Block:
         return block
     
     
-    def on_append(self, child: Block):
+    def on_append(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append is not implemented")
     
-    def on_append_child(self, child: Block):
+    def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append_child is not implemented")
 
     
-    def commit(self, block: Block, content: str | None = None):
+    def commit(self, block: Block) -> Block | None:
         return None
+    
+    
+    def _transfer_metadata(self, from_block: Block, to_block: Block):        
+        to_block.tags = from_block.tags.copy()
+        to_block.role = from_block.role
+        to_block.style = from_block.style.copy()
+        to_block.attrs = from_block.attrs.copy()
+        return from_block, to_block
+    
+
+
+
         
         
             
@@ -187,5 +205,28 @@ class BlockMutator(Mutator):
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         if not child.prev().has_newline():
             yield child.prev().add_newline()
+        
+        
+        
+        
+        
+class XmlMutator(Mutator):
+    styles = ("xml",)
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        with Block() as blk:
+            blk /= "<" + block.text + ">"
+        return blk
+    
+    
+    def commit(self, block: Block) -> Block:
+        block /= "</" + block.text + ">"
+        return block.children[-1]
+    
+    def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
+        if not child.prev().has_newline():
+            yield child.prev().add_newline()
+        
         
         

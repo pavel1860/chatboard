@@ -14,7 +14,7 @@ Usage:
 """
 
 from __future__ import annotations
-from typing import Any, Iterator, TYPE_CHECKING, Union
+from typing import Any, Iterator, TYPE_CHECKING, Self, Type, Union
 import re
 
 from promptview.utils.function_utils import is_overridden
@@ -23,6 +23,7 @@ from .chunk import ChunkMeta, Chunk
 
 if TYPE_CHECKING:
     from .mutator import Mutator
+    from .schema import BlockSchema
 
 
 def _generate_id() -> str:
@@ -290,7 +291,7 @@ class Block:
     # Operator Overloads
     # =========================================================================
 
-    def __itruediv__(self, other: Block | ContentType | tuple) -> Block:
+    def __itruediv__(self, other: Block | ContentType | tuple) -> Self:
         """
         /= operator for appending children.
 
@@ -541,8 +542,9 @@ class Block:
                 child._raw_append(content)
 
         # Determine insertion position
+        # Use subtree_end() to find the rightmost position including all descendants
         if self.children:
-            insert_pos = self.children[-1].end
+            insert_pos = self.children[-1].subtree_end()
         else:
             insert_pos = self.end
 
@@ -600,7 +602,7 @@ class Block:
         elif index >= len(self.children):
             return self._raw_append_child(child)
         else:
-            insert_pos = self.children[index - 1].end
+            insert_pos = self.children[index - 1].subtree_end()
 
         # Merge child's text if it has any
         if child._text:
@@ -755,6 +757,20 @@ class Block:
             yield node
             node = node.parent
 
+    def subtree_end(self) -> int:
+        """
+        Get the rightmost end position in this block's subtree.
+
+        This is the maximum end position among this block and all its descendants.
+        Used to find the correct insertion point after a sibling.
+        """
+        max_end = self.end
+        for child in self.children:
+            child_end = child.subtree_end()
+            if child_end > max_end:
+                max_end = child_end
+        return max_end
+
     def next_sibling(self) -> Block | None:
         """Get next sibling or None."""
         if self.parent is None:
@@ -777,23 +793,38 @@ class Block:
         except ValueError:
             return None
 
+    def rightmost_descendant(self) -> Block:
+        """
+        Get the rightmost (deepest last) descendant of this block.
+
+        If this block has no children, returns self.
+        Otherwise, recursively finds the last child's rightmost descendant.
+        """
+        if not self.children:
+            return self
+        return self.children[-1].rightmost_descendant()
+
     def prev_or_none(self) -> Block | None:
         """
-        Get previous block in tree order, or None.
+        Get previous block in text order, or None.
 
-        Returns previous sibling if exists, otherwise returns parent.
+        If there's a previous sibling, returns its rightmost descendant
+        (the block immediately before this one in text order).
+        Otherwise returns parent.
         Returns None if this is the root.
         """
         prev_sib = self.prev_sibling()
         if prev_sib is not None:
-            return prev_sib
+            # Return the rightmost descendant of the previous sibling
+            return prev_sib.rightmost_descendant()
         return self.parent
 
     def prev(self) -> Block:
         """
-        Get previous block in tree order.
+        Get previous block in text order.
 
-        Returns previous sibling if exists, otherwise returns parent.
+        If there's a previous sibling, returns its rightmost descendant.
+        Otherwise returns parent.
         Raises ValueError if this is the root (no previous block).
         """
         result = self.prev_or_none()
@@ -930,6 +961,22 @@ class Block:
             attrs=attrs,
         )
         return self._raw_append_child(child)
+    
+    
+    def view(
+        self,
+        name: str,
+        type: Type | None = None,
+        role: str | None = None,
+        tags: list[str] | None = None,
+        style: str | list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
+    ) -> "BlockSchema":
+        from .schema import BlockSchema
+        schema = BlockSchema(name, type=type, role=role, tags=tags, style=style, attrs=attrs)
+        self._raw_append_child(schema)
+        return schema
+             
 
     # =========================================================================
     # Copy Operations
@@ -1029,8 +1076,8 @@ class Block:
     # =========================================================================
     
     
-    def commit(self, content: str | None = None) -> Block | None:
-        post_block = self.mutator.commit(self, content)
+    def commit(self) -> Block | None:
+        post_block = self.mutator.commit(self)
         return post_block
         
     
