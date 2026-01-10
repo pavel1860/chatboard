@@ -8,7 +8,7 @@ from ...utils.function_utils import get_if_overridden, is_overridden
 from ...utils.type_utils import UNSET, UnsetType
 
 if TYPE_CHECKING:
-    from .block import Mutator
+    from .block import Mutator, Stylizer
 
 
 style_registry_ctx = contextvars.ContextVar("style_registry_ctx", default={})
@@ -21,10 +21,16 @@ TargetType = Literal["content", "block", "children", "tree", "subtree"]
     
 @dataclass
 class MutatorConfig:
-    mutator: "Type[Mutator] | None" = None    
+    mutator: "Type[Mutator]"
+    stylizers: list["Type[Stylizer]"] = field(default_factory=list)
     hidden: "bool" = False
     is_wrapper: "bool" = False
     
+    
+    def __post_init__(self):
+        from .block import Mutator
+        if self.mutator is None:
+            self.mutator = Mutator
     
     def get(self, key: str, default: "Type[MutatorConfig] | None" = None) -> "Type[MutatorConfig] | None":
         return getattr(self, key)
@@ -68,15 +74,22 @@ class MutatorMeta(type):
     @classmethod
     def resolve(
         cls, 
-        styles: list[str], 
-        targets: set[TargetType] | None = None,
+        styles: list[str] | None = None,
+        default: "Type[Mutator] | None" = None,
     ) -> "MutatorConfig":
-        from .block import Mutator
+        from .block import Mutator, Stylizer
+        from .mutators import BlockMutator
         current = style_registry_ctx.get()
-        mutator_cfg = MutatorConfig(mutator=Mutator)
+        # mutator_cfg = MutatorConfig(mutator=Mutator)
+        mutator_cfg = MutatorConfig(mutator=default or Mutator)
+        if styles is None:
+            return mutator_cfg
         for style in styles:
             if style == "hidden":
                 mutator_cfg.hidden = True                
-            elif style_cls := current.get(style): 
-                mutator_cfg["mutator"] = style_cls                          
+            elif style_cls := current.get(style):
+                if issubclass(style_cls, Stylizer):
+                    mutator_cfg.stylizers.append(style_cls)
+                else:
+                    mutator_cfg["mutator"] = style_cls                          
         return mutator_cfg

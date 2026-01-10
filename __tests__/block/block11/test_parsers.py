@@ -6,7 +6,7 @@ from promptview.block.block11 import (
     BlockListSchema,
     XmlParser,
     ParserError,
-    Chunk,
+    BlockChunk,
 )
 
 
@@ -102,9 +102,9 @@ class TestXmlParserStreaming:
         schema = BlockSchema("response")
         parser = XmlParser(schema)
 
-        parser.feed(Chunk(content="<response>"))
-        parser.feed(Chunk(content="Hello"))
-        parser.feed(Chunk(content="</response>"))
+        parser.feed(BlockChunk(content="<response>"))
+        parser.feed(BlockChunk(content="Hello"))
+        parser.feed(BlockChunk(content="</response>"))
         parser.close()
 
         assert parser.result is not None

@@ -3,7 +3,7 @@ from .block import Block
 from .schema import BlockSchema
 from pydantic import BaseModel
 from typing import Any, Generator, Literal, Type
-
+import json
 
 
 
@@ -121,3 +121,49 @@ def pydantic_to_schema(name: str, cls: Type[BaseModel], key_field: str, style: s
                     with params.view(field_name, type=field_info.annotation, tags=[field_name, "field"], is_required=is_required) as bf:
                         bf /= field_info.description
     return b
+
+
+
+
+
+
+def parse_content(content: str, type: Type) -> Any:
+    if type == int:
+        return int(content)
+    elif type == float:
+        return float(content)
+    elif type == bool:
+        return bool(content)
+    elif type == str:
+        return content
+    elif type == list:
+        return content.split(",")
+    elif type == dict:
+        return json.loads(content)
+    else:
+        raise ValueError(f"Invalid type: {type}")
+
+
+def block_to_object(block: Block, _type: Type):        
+    if _type is not None:
+        if issubclass(_type, BaseModel):
+            root_path = block.path
+            def set_dict_attr(target: dict, path: list[str], value: Any):
+                curr = target
+                for p in path[:-1]:
+                    curr = curr[p]
+                curr[path[-1]] = value
+                return curr
+
+            target = {}  
+            for f in block.traverse():
+                if root_path == f.path or f._schema is None:
+                    continue
+                path = f.path - root_path
+                set_dict_attr(target, path.tags, f.value)
+            return _type(**target)
+
+        else:
+            content = "".join([b.render() for b in block.body])
+            content = content.strip()
+            return parse_content(content, _type)

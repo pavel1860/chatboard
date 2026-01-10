@@ -77,11 +77,11 @@ def strip(text: str):
     return textwrap.dedent(text).strip()
 
 
-def diff(block, target: str):
+def diff(block_str: str, target: str):
     import difflib
     diff = difflib.unified_diff(
         strip(target).splitlines(),
-        str(block).splitlines(),
+        strip(block_str).splitlines(),
         fromfile='target',
         tofile='actual',
         lineterm=''

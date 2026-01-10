@@ -1,7 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterator, Type
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterator, Literal, Type
 
 from fastapi import UploadFile
 from pydantic import BaseModel
@@ -62,6 +62,7 @@ class ContextError(Exception):
 class Context(BaseModel):
     branch_id: int | None = None
     turn_id: int | None = None
+    cache_dir: str | None = None
     _request: "Request | None" = None
     _auth: AuthModel | None = None
     _ctx_models: dict[str, Model] = {}
@@ -90,6 +91,8 @@ class Context(BaseModel):
         request: "Request | None" = None,
         auth: AuthModel | None = None,
         eval_ctx: "EvaluationContext | None" = None,
+        verbose: bool = False,  
+        cache_dir: str | None = None,      
     ):
         super().__init__()
         self._ctx_models = {m.__class__.__name__:m for m in models}
@@ -111,6 +114,8 @@ class Context(BaseModel):
         self.events = []
         self.message = message
         self.state = state
+        self._verbose = verbose
+        self.cache_dir = cache_dir
         
     @property
     def request_id(self):
@@ -752,3 +757,9 @@ class Context(BaseModel):
             alias="ct",
         )
         return query
+    
+    
+    
+    
+    def get_verbosity(self, target: Literal["parser"]) -> bool:
+        return self._verbose

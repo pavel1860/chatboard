@@ -1,6 +1,6 @@
 """Tests for Block class."""
 import pytest
-from promptview.block.block11 import Block, Chunk, Span, BlockText
+from promptview.block.block11 import Block, BlockChunk, Span, BlockText
 
 
 class TestBlockCreation:
@@ -57,7 +57,7 @@ class TestBlockFactoryMethods:
         assert block.span is not None
 
     def test_from_span(self):
-        span = Span(content=[Chunk("Test")])
+        span = Span(chunks=[BlockChunk("Test")])
         block = Block.from_span(span)
         assert block.span is span
         assert block.content == "Test"
@@ -68,12 +68,12 @@ class TestBlockContentMutation:
 
     def test_append_content(self):
         block = Block("Hello")
-        block.append_content(" World")
+        block.append(" World")
         assert block.content == "Hello World"
 
     def test_prepend_content(self):
         block = Block("World")
-        block.prepend_content("Hello ")
+        block.prepend("Hello ")
         assert block.content == "Hello World"
 
     def test_append_prefix(self):
@@ -97,7 +97,7 @@ class TestBlockContentMutation:
         block = Block("text")
         block.add_newline()
         assert block.span.postfix_text == "\n"
-        assert block.has_end_of_line() is True
+        assert block.has_newline() is True
 
     def test_method_chaining(self):
         block = (
@@ -292,7 +292,7 @@ class TestBlockOperators:
         block /= "Third"
 
         # First should have newline added before Second was appended
-        assert block.span.has_end_of_line() is True
+        assert block.span.has_newline() is True
 
     def test_context_manager(self):
         with Block("Header") as block:
@@ -330,7 +330,7 @@ class TestBlockCopy:
         original = Block("Original")
         copy = original.copy(deep=True)
 
-        copy.append_content(" Modified")
+        copy.append(" Modified")
 
         assert original.content == "Original"
         assert copy.content == "Original Modified"

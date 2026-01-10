@@ -1,8 +1,9 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING, Type, Any
-
+from ...utils.string_utils import camel_to_snake
 from .block import Block, Mutator, ContentType, parse_style
-from promptview.utils.type_utils import UnsetType, UNSET
+from ...utils.type_utils import UnsetType, UNSET
+from .span import BlockChunkList
 from pydantic import BaseModel
 if TYPE_CHECKING:
     from .block_text import BlockText
@@ -33,7 +34,7 @@ class BlockSchema(Block):
         # <response>Hello</response>
     """
 
-    __slots__ = ["name", "type", "is_required", "attrs"]
+    __slots__ = ["name", "_type", "is_required", "attrs"]
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class BlockSchema(Block):
         mutator: Mutator | None = None,
         block_text: "BlockText | None" = None,
         _span = None,
+        _auto_handle: bool = True,
         _children: list[Block] | None = None,
     ):
         """
@@ -74,17 +76,18 @@ class BlockSchema(Block):
             role=role,
             tags=tags,
             style=style,
+            attrs=attrs,
             mutator=mutator,
             block_text=block_text,
             _span=_span,
             _children=_children,
+            _auto_handle=_auto_handle,
         )
 
         # Schema-specific attributes
         self.name = name
-        self.type = type
+        self._type = type
         self.is_required = is_required
-        self.attrs = attrs or {}
 
     # -------------------------------------------------------------------------
     # Schema Operations
@@ -92,63 +95,108 @@ class BlockSchema(Block):
     @property
     def is_wrapper(self) -> bool:
         return self.name is None
+    
+    @property
+    def type(self) -> Type | None:
+        return self._type
+    
+    
+    def instantiate_partial(
+        self,
+        content: ContentType | None = None,
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+    ) -> Block:
+        from .mutator_meta import MutatorMeta
+        
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        
+        config = MutatorMeta.resolve(style)
+        mutator = config.mutator()            
+        chunks = mutator.promote(content) if content is not None else BlockChunkList()
+        block = mutator.call_init(chunks, path=self.path, tags=tags, role=role, style=style, _auto_handle=False)
+        block._schema = self
+        return block
+
+
 
     def instantiate(
         self,
         content: ContentType | dict | BaseModel | None = None,
-        name: ContentType | None = None,
         style: str | list[str] | None | UnsetType = UNSET,
         role: str | None | UnsetType = UNSET,
         tags: list[str] | None | UnsetType = UNSET,
-        extract_schema: bool = True,
-    ) -> Block:
-        """
-        Create a Block instance from this schema.
-
-        Delegates to mutator.instantiate() for style-specific behavior.
-
-        Args:
-            content: Content for the new block (default: schema name)
-            style: Override style for the block
-            role: Override role for the block
-            tags: Override tags for the block
-
-        Returns:
-            A new Block instance
-        """
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
+    ) -> Block:        
         from .mutator_meta import MutatorMeta
-        if extract_schema:
-            schema = self.extract_schema()
-            if schema is None:
-                raise ValueError("No schema found")
-            return schema.instantiate(content, name=name, style=style, role=role, tags=tags, extract_schema=False)
+        from .span import BlockChunk
         
         role = UnsetType.get_value(role, self.role)
-        tags = UnsetType.get_value(tags, self.tags)
-        
+        tags = UnsetType.get_value(tags, self.tags)        
         style = UnsetType.get_value(style, self.style)
-
+        attrs = UnsetType.get_value(attrs, self.attrs)
+        
+        schema = self.extract_schema()
+        if schema is None:
+            raise ValueError("Schema is not supported for instantiation")
+            
+        
         if isinstance(content, dict):
-            return self.inst_from_dict(content, style=style, role=role, tags=tags)
+            return schema.inst_from_dict(content, style=style, role=role, tags=tags, attrs=attrs)
         elif isinstance(content, BaseModel):
-            return self.inst_from_dict(content.model_dump(), style=style, role=role, tags=tags)
-        else:
-            config = MutatorMeta.resolve(self.style)
-            if config.mutator is None:
-                raise ValueError(f"No mutator found for style {style}")
-            mutator = config.mutator()
-            block = mutator.call_instantiate(name or self.name, role=role, tags=tags, style=style)
-            if content is not None:
-                block.add_newline()
-                block.append(content)
-            return block
+            pass
+        else: 
+            return schema.inst_content(content, tags=tags, role=role, style=style, attrs=attrs)            
+            # config = MutatorMeta.resolve()
+            # mutator = config.mutator()            
+            # name_chunks = [Chunk(self.name)] if self.name else []
+            # block = mutator.call_init(name_chunks, tags=tags, role=role, style=style)
+            # if content is not None:
+            #     chunks = mutator.promote(content)
+            #     # block.append(chunks)
+            #     block /= chunks
+            # return block
+            
+        
+    def inst_content(
+        self, 
+        content: ContentType | None = None, 
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
+    ) -> Block:
+        from .mutator_meta import MutatorMeta
+        from .span import BlockChunk
+        
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        attrs = UnsetType.get_value(attrs, self.attrs)
+        
+        config = MutatorMeta.resolve()
+        mutator = config.mutator()            
+        name_chunks = BlockChunkList([BlockChunk(self.name)]) if self.name else BlockChunkList()
+        block = mutator.call_init(name_chunks, path=self.path, tags=tags, role=role, style=style, attrs=attrs)
+        block._schema = self
+        if content is not None:
+            chunks = mutator.promote(content)
+            # block.append(chunks)
+            block /= chunks
+        return block
+        
+        
 
     def inst_from_dict(
         self,
         data: dict,
-        style: str | list[str] | None = None,
-        role: str | None = None,
-        tags: list[str] | None = None,
+        style: str | list[str] | None | UnsetType = UNSET,
+        role: str | None | UnsetType = UNSET,
+        tags: list[str] | None | UnsetType = UNSET,
+        attrs: dict[str, Any] | None | UnsetType = UNSET,
     ) -> Block:
         """
         Create a Block instance from a dictionary.
@@ -167,19 +215,14 @@ class BlockSchema(Block):
         """
         from .mutator_meta import MutatorMeta
 
-        # Resolve style and get mutator
-        style = style if style is not None else self.style
-        role = role if role is not None else self.role
-        tags = tags if tags is not None else self.tags
-        # config = MutatorMeta.resolve(style)
-        # config = MutatorMeta.resolve([])
-        # if config.mutator is None:
-        #     raise ValueError(f"No mutator found for style {style}")
-        # mutator = config.mutator()
+        role = UnsetType.get_value(role, self.role)
+        tags = UnsetType.get_value(tags, self.tags)        
+        style = UnsetType.get_value(style, self.style)
+        attrs = UnsetType.get_value(attrs, self.attrs)
 
         # Create the parent block with schema name as content (for XML tag rendering)        
         # block = mutator.call_instantiate(self.name, role=role, tags=tags)
-        block = self.instantiate(role=role, tags=tags, style=style)
+        block = self.inst_content(role=role, tags=tags, style=style, attrs=attrs)
 
         # Build lookup of child schemas by name
         child_schemas: dict[str, BlockSchema] = {}
@@ -208,7 +251,7 @@ class BlockSchema(Block):
                     child_block = child_schema.inst_from_list(value, style=style)
                 else:
                     # Scalar value
-                    child_block = child_schema.instantiate(value, style=style)
+                    child_block = child_schema.inst_content(value, style=style)
                     # child_block.append(value)
 
                 block.append_child(child_block)
@@ -308,6 +351,118 @@ class BlockSchema(Block):
         if not self.is_required:
             parts.append("optional")
         return f"BlockSchema({', '.join(parts)})"
+
+    # -------------------------------------------------------------------------
+    # Serialization (model_dump / model_validate)
+    # -------------------------------------------------------------------------
+
+    def model_dump(
+        self,
+        *,
+        include_chunks: bool = False,
+        include_span: bool = False,
+        exclude_none: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Serialize BlockSchema to a JSON-compatible dict.
+
+        Includes schema-specific fields: name, type, is_required.
+        """
+        # Get base block fields
+        result = super().model_dump(
+            include_chunks=include_chunks,
+            include_span=include_span,
+            exclude_none=exclude_none,
+        )
+
+        # Add schema-specific fields
+        if self.name is not None or not exclude_none:
+            result["name"] = self.name
+        if self.type is not None:
+            result["type"] = self.type.__name__ if self.type else None
+        if not self.is_required or not exclude_none:
+            result["is_required"] = self.is_required
+
+        return result
+
+    @classmethod
+    def model_validate(
+        cls,
+        data: dict[str, Any],
+        *,
+        block_text: "BlockText | None" = None,
+    ) -> "BlockSchema":
+        """
+        Deserialize a dict to a BlockSchema.
+
+        Args:
+            data: Dict from model_dump() or JSON
+            block_text: Shared BlockText for all blocks
+
+        Returns:
+            Reconstructed BlockSchema
+        """
+        from .block_text import BlockText
+        from .span import Span, BlockChunk
+
+        # Create shared BlockText if not provided
+        if block_text is None:
+            block_text = BlockText()
+
+        # Extract schema-specific fields
+        name = data.get("name")
+        type_name = data.get("type")
+        is_required = data.get("is_required", True)
+
+        # Extract common fields
+        role = data.get("role")
+        tags = data.get("tags")
+        style = data.get("style")
+        attrs = data.get("attrs")
+
+        # Handle span with chunks if present
+        span = None
+        span_data = data.get("span")
+        if span_data and (span_data.get("content_chunks") or span_data.get("prefix_chunks")):
+            prefix_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("prefix_chunks", [])
+            ]
+            content_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("content_chunks", [])
+            ]
+            postfix_chunks = [
+                BlockChunk(content=c["content"], logprob=c.get("logprob"))
+                for c in span_data.get("postfix_chunks", [])
+            ]
+            span = Span(prefix=prefix_chunks, chunks=content_chunks, postfix=postfix_chunks)
+            block_text.append(span)
+
+        # Create BlockSchema
+        schema = cls(
+            name=name,
+            type=None,  # Type reconstruction would need a type registry
+            style=style,
+            tags=tags,
+            role=role,
+            is_required=is_required,
+            attrs=attrs,
+            block_text=block_text,
+            _span=span,
+        )
+
+        # Recursively load children
+        for child_data in data.get("children", []):
+            # Check if child is a schema or regular block
+            if child_data.get("name") is not None:
+                child = BlockSchema.model_validate(child_data, block_text=block_text)
+            else:
+                child = Block.model_validate(child_data, block_text=block_text)
+            child.parent = schema
+            schema.children.append(child)
+
+        return schema
 
 
 class BlockList(Block):
@@ -511,6 +666,10 @@ class BlockListSchema(BlockSchema):
             _span=_span,
             _children=_children,
         )
+        
+        if name is None:
+            list_name = f"{item_name}_list"
+        self.tags.append(list_name)
 
         # List-specific attributes
         self.item_name = item_name
@@ -538,18 +697,28 @@ class BlockListSchema(BlockSchema):
         self.append_child(block)
         return block
 
-    def get_item_schema(self, key_value: str | None = None) -> BlockSchema | None:
+    def get_item_schema(self, key_value: str | None = None, model_cls: Type[BaseModel] | None = None) -> BlockSchema | None:
         """
         Get an item schema, optionally by key value.
 
         If key_value is provided and key is set, looks up by key.
         Otherwise returns the first registered schema.
         """
+        if model_cls is None and key_value is None:
+            raise ValueError("Either key_value or model must be provided")
+        if model_cls is not None:
+            key_value = camel_to_snake(model_cls.__name__)
         if key_value is not None and self.key is not None:
-            for schema in self.list_schemas:
-                if schema.attrs.get(self.key) == key_value:
-                    return schema
+            schema = self.get_one_schema(key_value)
+            if schema is None:
+                raise ValueError(f"Schema for {key_value} not found")
+            return schema
+                
+            # for schema in self.list_schemas:
+            #     if schema.attrs.get(self.key) == key_value:
+            #         return schema
         return self.list_schemas[0] if self.list_schemas else None
+    
 
     # -------------------------------------------------------------------------
     # Instantiation
@@ -574,7 +743,7 @@ class BlockListSchema(BlockSchema):
             item_schema=item_schema,
             role=UnsetType.get_value(role, self.role),
             tags=UnsetType.get_value(tags, self.tags),
-            style=UnsetType.get_value(style, self._style),
+            # style=UnsetType.get_value(style, self._style),
         )
 
     def instantiate_item(
@@ -633,16 +802,19 @@ class BlockListSchema(BlockSchema):
         """
         # Create the list container
         block_list = self.instantiate(
-            style=style if style is not None else UNSET,
+            # style=style if style is not None else UNSET,
             role=role if role is not None else UNSET,
             tags=tags if tags is not None else UNSET,
         )
 
         # Get item schema for instantiation
-        item_schema = self.get_item_schema()
+        # item_schema = self.get_item_schema()
+        # print(id(self))
 
         for item in data:
             if isinstance(item, dict):
+                raise ValueError("Not implemented")
+                item_schema = self.get_item_schema()
                 if item_schema is not None and item_schema.children:
                     # Dict with nested schema
                     item_block = item_schema.inst_from_dict(item)
@@ -661,15 +833,13 @@ class BlockListSchema(BlockSchema):
                         child = Block(content=v, tags=[k])
                         item_block.append_child(child)
             elif isinstance(item, BaseModel):
-                if item_schema is not None:
-                    item_block = item_schema.inst_from_dict(item.model_dump())
-                else:
-                    item_block = Block(
-                        content=None,
-                        tags=[self.item_name],
-                        style=self._style,
-                    )
+                item_schema = self.get_item_schema(model_cls=item.__class__)
+                if item_schema is None:
+                    raise ValueError(f"Could not find item schema for model: {item.__class__.__name__}")                
+                attrs = {self.key: camel_to_snake(item.__class__.__name__)} if self.key is not None else None
+                item_block = item_schema.inst_from_dict(item.model_dump(), style=style, attrs=attrs)                
             else:
+                raise ValueError(f"Invalid item type: {type(item)}")
                 # Scalar value
                 if item_schema is not None:
                     item_block = item_schema.instantiate(item)
@@ -697,7 +867,7 @@ class BlockListSchema(BlockSchema):
         if new_span:
             new_block_text.append(new_span)
 
-        return BlockListSchema(
+        list_schema = BlockListSchema(
             item_name=self.item_name,
             name=self.name,
             key=self.key,
@@ -711,6 +881,9 @@ class BlockListSchema(BlockSchema):
             _span=new_span,
             _children=[],
         )
+        # list_schema.list_schemas = [schema.copy() for schema in self.list_schemas]
+        # list_schema.list_models = self.list_models.copy()
+        return list_schema
 
     def copy(self, deep: bool = True) -> "BlockListSchema":
         """Copy this list schema."""
