@@ -7,6 +7,7 @@ This module provides:
 - ChunkMeta: Lightweight metadata for text regions
 - Chunk: Text content with metadata for frontend consumption
 - Mutator: Strategy for style-aware block operations
+- XmlParser: Streaming XML parser for building blocks from schema
 """
 
 from .chunk import ChunkMeta, Chunk
@@ -16,6 +17,7 @@ from .mutator import (
     Mutator,
     MutatorMeta,
 )
+from .parsers import XmlParser, ParserEvent, ParserError
 
 __all__ = [
     "Block",
@@ -24,4 +26,7 @@ __all__ = [
     "ChunkMeta",
     "Mutator",
     "MutatorMeta",
+    "XmlParser",
+    "ParserEvent",
+    "ParserError",
 ]
