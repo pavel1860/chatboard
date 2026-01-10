@@ -1,5 +1,6 @@
 from .block import Block, Mutator
 from .mutator_meta import MutatorMeta, MutatorConfig, TargetType, style_registry_ctx, MutatorMeta
+from .mutators import BlockMutator
 
 
 
@@ -34,7 +35,10 @@ def render(block: Block, depth: int = 0) -> Block:
     if block.mutator.is_rendered:
         return block
         
-    config = MutatorMeta.resolve(block.style if not block.is_wrapper else [])
+    config = MutatorMeta.resolve(
+        block.style if not block.is_wrapper else [],
+        default=BlockMutator
+    )
     
     # new_block = block.copy_head()
     path = block.path

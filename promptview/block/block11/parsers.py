@@ -491,7 +491,7 @@ class XmlParser(Process):
     def _push_block(self, schema: BlockSchema, block: Block):
         # Append to current block
         if self.current_block is not None:
-            self.current_block.append_child(block)
+            self.current_block.append_child(block, add_newline=False)
         else:
             self._root = block
 
@@ -569,7 +569,7 @@ class XmlParser(Process):
             raise ParserError(f"Mismatched closing tag: expected '{schema.name}', got '{name}'")
 
         # Commit could be called here for validation
-        end_block = block.commit(chunks)
+        end_block = block.commit(chunks, add_newline=False)
         self._temp_block = None
         # Queue commit event for FBP streaming
         self._push_event(block.path.indices_str(),"block_commit", end_block.copy_head())
@@ -597,18 +597,20 @@ class XmlParser(Process):
         """Handle postfix - append to current block and queue for streaming."""
         if self.current_block is None:
             return
-        event = self.current_block.head.append_postfix(chunks)
+        events = self.current_block.head.append(chunks, style="prefix")
 
         # Queue delta event for FBP streaming
-        self._push_event(self.current_block.path.indices_str(),event.event, event)
+        for event in events:
+            self._push_event(self.current_block.path.indices_str(),event.event, event)
         
     def _handle_end_postfix(self, chunks: list[BlockChunk]):
         if self.current_block is None:
             return
-        event = self.current_block.mutator.block_postfix.append_postfix(chunks)
+        events= self.current_block.tail.append(chunks, style="postfix")
 
         # Queue delta event for FBP streaming
-        self._push_event(self.current_block.path.indices_str(),event.event, event)
+        for event in events:
+            self._push_event(self.current_block.path.indices_str(),event.event, event)
         
     def _handle_root_text(self, chunks: list[BlockChunk]):
         pass

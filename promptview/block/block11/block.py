@@ -113,22 +113,26 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     
-    def commit(self, chunks: BlockChunkList | None = None)-> Block | None:
+    def commit(self, chunks: BlockChunkList | None = None, add_newline: bool = True)-> Block | None:
         return None
     
     
-    def append(self, span: Span, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
-        yield span.append([chunk])
-        # if chunk.is_line_end:            
-        #     yield self.append_child(Block())
+    # def append(self, span: Span, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+    #     raise NotImplementedError("Mutator.append is not implemented")
+    def create_empty_child(self, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None):
+        child = Block(tags=tags, role=role, style=style, attrs=attrs)
+        # insert_after = self.tail.span
+        # child = self.block._append_child_after(child, insert_after)
+        return child
+        
+    def append(self, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+        raise NotImplementedError("Mutator.append is not implemented")
             
             
-    def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:
+    def append_child(self, child: Block, add_newline: bool = True) -> Generator[BlockChunkList | Block, Any, Any]:
         """Append a child block to the body."""
         # Find the span to insert after: the last span in the current subtree
-        insert_after = self.tail.span
-        child = self._append_child_after(child, insert_after)
-        yield child
+        raise NotImplementedError("Mutator.append_child is not implemented")
 
     
     def call_init(self, chunks: BlockChunkList, path: Path, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, _auto_handle: bool = True, attrs: dict[str, Any] | None = None):
@@ -141,11 +145,11 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     
-    def call_commit(self, chunks: BlockChunkList | None = None) -> Block | None:
+    def call_commit(self, chunks: BlockChunkList | None = None, add_newline: bool = True) -> Block | None:
         """
         Call the commit method of the block.
         """
-        block = self.commit(chunks)
+        block = self.commit(chunks, add_newline=add_newline)
         self.did_commit = True
         self.did_init = True
         return block
@@ -218,52 +222,52 @@ class Mutator(metaclass=MutatorMeta):
     
         
 
-    def _attach_child(self, child: Block, insert_after_span: Span | None = None) -> None:
-        """Attach a child to this block (set parent and inherit block_text).
+    # def _attach_child(self, child: Block, insert_after_span: Span | None = None) -> None:
+    #     """Attach a child to this block (set parent and inherit block_text).
 
-        Args:
-            child: The child block to attach
-            insert_after_span: The span after which to insert the child's spans.
-                              If None, appends to the end of the BlockText.
-        """
-        child.parent = self._block
-        # Copy child's spans into parent's BlockText
-        if self._block is not None:
-            parent_bt = self._block.block_text
-            if child.block_text is not parent_bt:
-                # Copy spans from the child and its descendants to parent's BlockText
-                # and update the block's span reference to the new copy
-                # Insert after the specified span (or append if None)
-                current_insert_point = insert_after_span
-                for block in child.iter_depth_first(all_blocks=True):
-                    if block.span is not None:
-                        new_span = block.span.copy()
-                        if current_insert_point is not None:
-                            parent_bt.insert_after(current_insert_point, new_span)
-                        else:
-                            parent_bt.append(new_span)
-                        block.span = new_span
-                        current_insert_point = new_span
-                # Recursively update block_text on child and all descendants
-                self._set_block_text_recursive(child, parent_bt)
-            else:
-                raise ValueError("Child block already has a block_text")
-                child.block_text = parent_bt
+    #     Args:
+    #         child: The child block to attach
+    #         insert_after_span: The span after which to insert the child's spans.
+    #                           If None, appends to the end of the BlockText.
+    #     """
+    #     child.parent = self._block
+    #     # Copy child's spans into parent's BlockText
+    #     if self._block is not None:
+    #         parent_bt = self._block.block_text
+    #         if child.block_text is not parent_bt:
+    #             # Copy spans from the child and its descendants to parent's BlockText
+    #             # and update the block's span reference to the new copy
+    #             # Insert after the specified span (or append if None)
+    #             current_insert_point = insert_after_span
+    #             for block in child.iter_depth_first(all_blocks=True):
+    #                 if block.span is not None:
+    #                     new_span = block.span.copy()
+    #                     if current_insert_point is not None:
+    #                         parent_bt.insert_after(current_insert_point, new_span)
+    #                     else:
+    #                         parent_bt.append(new_span)
+    #                     block.span = new_span
+    #                     current_insert_point = new_span
+    #             # Recursively update block_text on child and all descendants
+    #             self._set_block_text_recursive(child, parent_bt)
+    #         else:
+    #             raise ValueError("Child block already has a block_text")
+    #             child.block_text = parent_bt
 
-    def _set_block_text_recursive(self, block: Block, bt: "BlockText") -> None:
-        """Recursively set block_text on a block and all its descendants."""
-        block.block_text = bt
-        for child in block.children:
-            self._set_block_text_recursive(child, bt)
+    # def _set_block_text_recursive(self, block: Block, bt: "BlockText") -> None:
+    #     """Recursively set block_text on a block and all its descendants."""
+    #     block.block_text = bt
+    #     for child in block.children:
+    #         self._set_block_text_recursive(child, bt)
                    
     
-    def _append_child_after(self, child: Block, insert_after: Span, to_body: bool = True) -> Block:
-        self._attach_child(child, insert_after_span=insert_after)
-        if to_body:
-            self.body.append(child)
-        else:
-            self.block.children.append(child)
-        return child
+    # def _append_child_after(self, child: Block, insert_after: Span, to_body: bool = True) -> Block:
+    #     self._attach_child(child, insert_after_span=insert_after)
+    #     if to_body:
+    #         self.body.append(child)
+    #     else:
+    #         self.block.children.append(child)
+    #     return child
 
 
     def prepend_child(self, child: Block) -> Mutator:
@@ -450,7 +454,8 @@ class Mutator(metaclass=MutatorMeta):
         return ex_block
     
     def extract(self) -> Block:
-        return Block(self.head.span.content, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
+        return self.block.copy(deep=False)
+        # return Block(self.head.span.content, tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
 
     # -------------------------------------------------------------------------
     # Schema Operations (for BlockSchema support)
@@ -652,14 +657,14 @@ class Block:
         return cls(mutator=mutator, block_text=block_text)
     
     
-    def commit(self, content: ContentType):
+    def commit(self, content: ContentType, add_newline: bool = True):
         """
         Commit the block.
         """        
         chunks = self.mutator.promote(content) if content is not None else BlockChunkList(chunks=[])
         # block = self.mutator.commit(chunks)
         # self.mutator.did_commit = True
-        block = self.mutator.call_commit(chunks)
+        block = self.mutator.call_commit(chunks, add_newline=add_newline)
         return block
 
     # -------------------------------------------------------------------------
@@ -771,8 +776,8 @@ class Block:
         #     if not curr_head.has_newline() and not curr_head.is_empty:
         #         self.mutator.current_head.add_newline()
         
-        for event in self.mutator.append_child(block):
-            pass
+        self.append_child(block)
+        
         
         return block
     
@@ -815,7 +820,7 @@ class Block:
         #     curr_head = self.mutator.current_head
         #     if not curr_head.has_newline() and not curr_head.is_empty:
         #         self.mutator.current_head.add_newline()
-        self.mutator.append_child(schema_block)
+        self.append_child(schema_block)
         return schema_block
     
     
@@ -847,7 +852,7 @@ class Block:
         #     curr_head = self.mutator.tail
         #     if not curr_head.has_newline() and not curr_head.is_empty():
         #         self.mutator.tail.add_newline()
-        self.mutator.append_child(schema_block)
+        self.append_child(schema_block)
         return schema_block
 
 
@@ -916,14 +921,35 @@ class Block:
             events.append(res)
         return events
     
+    # def append(self, content: ContentType, style: str | None = None) -> list[BlockChunkList | Block]:
+    #     """Append content to the last block"""
+    #     chunks = self.mutator.promote(content, style=style)
+    #     events = []
+    #     for chunk in chunks:
+    #         tail = self.tail
+    #         for event in tail.mutator.append(tail.span, chunk):
+    #             events.append(event)
+    #     return events
+    
     def append(self, content: ContentType, style: str | None = None) -> list[BlockChunkList | Block]:
         """Append content to the last block"""
         chunks = self.mutator.promote(content, style=style)
         events = []
         for chunk in chunks:
-            tail = self.tail
-            for event in tail.mutator.append(tail.span, chunk):
-                events.append(event)
+            # tail = self.tail
+            # using self.mutator instead of tail.mutator so the actual mutator is used instead of the default one
+            if is_overridden(self.mutator.__class__, "append", Mutator):
+                for event in self.mutator.append(chunk):
+                    if isinstance(event, Block):
+                        self.append_child(event, add_newline=False)
+                        # self._append_child_after(event, self.tail.span)
+                    events.append(event)
+            for stylizer in self.stylizers:
+                if is_overridden(stylizer.__class__, "append", Stylizer):
+                    for event in stylizer.append(chunk):
+                        events.append(event)
+            event = self.tail.span.append([chunk])
+            events.append(event)
         return events
 
     # def append(self, content: ContentType, style: str | None = None) -> Block:
@@ -941,18 +967,70 @@ class Block:
         return self
 
 
-    def append_child(self, child: Block | ContentType) -> list[BlockChunkList | Block]:
+    def append_child(self, child: Block | ContentType, to_body: bool = True, add_newline: bool = True) -> list[BlockChunkList | Block]:
         """Append child to body."""
         if not isinstance(child, Block):
             child = Block(content=child)
         events = []
-        for event in self.mutator.append_child(child):
-            events.append(event)
-        for stylizer in self.stylizers:
-            if is_overridden(stylizer, "append_child", Stylizer):
-                for event in stylizer.append_child(child):
-                    events.append(event)
+        if to_body and is_overridden(self.mutator.__class__, "append_child", Mutator):
+            for event in self.mutator.append_child(child, add_newline=add_newline):
+                events.append(event)
+        if to_body:
+            for stylizer in self.stylizers:
+                if is_overridden(stylizer.__class__, "append_child", Stylizer):
+                    for event in stylizer.append_child(child):
+                        events.append(event)   
+        insert_after = self.tail.span    
+        child = self._append_child_after(child, insert_after, to_body=to_body)
         return events
+
+
+    def _attach_child(self, child: Block, insert_after_span: Span | None = None) -> None:
+        """Attach a child to this block (set parent and inherit block_text).
+
+        Args:
+            child: The child block to attach
+            insert_after_span: The span after which to insert the child's spans.
+                              If None, appends to the end of the BlockText.
+        """
+        child.parent = self
+        # Copy child's spans into parent's BlockText
+        
+        parent_bt = self.block_text
+        if child.block_text is not parent_bt:
+            # Copy spans from the child and its descendants to parent's BlockText
+            # and update the block's span reference to the new copy
+            # Insert after the specified span (or append if None)
+            current_insert_point = insert_after_span
+            for block in child.iter_depth_first(all_blocks=True):
+                if block.span is not None:
+                    new_span = block.span.copy()
+                    if current_insert_point is not None:
+                        parent_bt.insert_after(current_insert_point, new_span)
+                    else:
+                        parent_bt.append(new_span)
+                    block.span = new_span
+                    current_insert_point = new_span
+            # Recursively update block_text on child and all descendants
+            self._set_block_text_recursive(child, parent_bt)
+        else:
+            # raise ValueError("Child block already has a block_text")
+            child.block_text = parent_bt
+
+    def _set_block_text_recursive(self, block: Block, bt: "BlockText") -> None:
+        """Recursively set block_text on a block and all its descendants."""
+        block.block_text = bt
+        for child in block.children:
+            self._set_block_text_recursive(child, bt)
+                   
+    
+    def _append_child_after(self, child: Block, insert_after: Span, to_body: bool = True) -> Block:
+        self._attach_child(child, insert_after_span=insert_after)
+        if to_body:
+            self.body.append(child)
+        else:
+            self.children.append(child)
+        return child
 
 
     def add_newline(self) -> Block:
@@ -970,17 +1048,17 @@ class Block:
         """Check if the block is empty."""
         return self.mutator.head.span.is_empty
     
-    def indent(self, spaces: int = 2):        
+    def indent(self, spaces: int = 2, style: str | None = None):        
         if not self.is_wrapper:            
-            spaces_chunk = BlockChunk(content=" " * spaces, style="tab")            
+            spaces_chunk = BlockChunk(content=" " * spaces, style=style or "tab")            
             self.mutator.head.prepend([spaces_chunk])
         for child in self.children:
-            child.indent(spaces)
+            child.indent(spaces, style=style)
         return self
     
-    def indent_body(self, spaces: int = 2):
+    def indent_body(self, spaces: int = 2, style: str | None = None):
         for child in self.children:
-            child.indent(spaces)
+            child.indent(spaces, style=style)
         return self
     
     
@@ -1148,6 +1226,14 @@ class Block:
     def count_block_tree(self, all_blocks: bool = False) -> int:
         """Count all blocks in the tree."""
         return 1 + sum(child.count_block_tree(all_blocks=all_blocks) for child in (self.children if all_blocks else self.body))
+    
+    def tree_size(self, all_blocks: bool = False) -> int:
+        """Get the size of the tree."""
+        return 1 + sum(child.tree_size(all_blocks=all_blocks) for child in (self.children if all_blocks else self.body))
+    
+    def subtree_size(self, all_blocks: bool = False) -> int:
+        """Get the size of the subtree."""
+        return sum(child.tree_size(all_blocks=all_blocks) for child in (self.children if all_blocks else self.body))
     
     def max_depth(self, all_blocks: bool = False) -> int:
         """Get the maximum depth of the tree."""
@@ -1318,6 +1404,7 @@ class Block:
         for block in self.iter_depth_first():
             if block.is_leaf():
                 yield block
+                
 
     # -------------------------------------------------------------------------
     # Span Collection
@@ -1343,6 +1430,11 @@ class Block:
     def print_text(self):
         """Print the text of the block."""
         print(self.block_text.text())
+        
+        
+    def diff_text(self, target: str) -> str:
+        from ..util import diff
+        return diff(self.render(), target)
     
     
     def transform(self) -> Block:
@@ -1422,6 +1514,7 @@ class Block:
                 role=self.role,
                 tags=self.tags.copy() if self.tags else [],
                 style=self._style.copy() if self._style else [],
+                attrs=self.attrs.copy() if self.attrs else {},
                 block_text=new_block_text,
             )
             # Deep copy children - they inherit the new block_text
@@ -1432,16 +1525,13 @@ class Block:
         else:
             return Block(
                 _span=self.span,
-                _children=self.children.copy(),
+                # _children=self.children.copy(),
                 role=self.role,
                 tags=self.tags,
                 style=self._style,
+                attrs=self.attrs.copy() if self.attrs else {},
                 block_text=self.block_text,
             )
-            
-    # -------------------------------------------------------------------------
-    # Rendering
-    # -------------------------------------------------------------------------
 
     # -------------------------------------------------------------------------
     # Schema Extraction

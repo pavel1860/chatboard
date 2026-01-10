@@ -30,10 +30,9 @@ class BlockMutator(Mutator):
         if chunk.is_line_end:            
             yield from self.append_child(Block())
             
-    def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:
-        if not self.tail.span.has_newline():
+    def append_child(self, child: Block, add_newline: bool = True) -> Generator[BlockChunkList | Block, Any, Any]:
+        if add_newline and not self.tail.span.has_newline():
             yield self.tail.span.append([BlockChunk(content="\n", style="block")])
-        yield from super().append_child(child)
         
     
 
@@ -113,12 +112,12 @@ class XmlMutator(Mutator):
             with xml_blk(content.snake_case(), tags=["opening-tag"]) as content:
                 content.prepend(prefix or "<", style="xml")
                 content.append(postfix or ">", style="xml")
-                with content() as body:
-                    pass
+                # with content() as body:
+                #     pass
             
         return xml_blk
     
-    def commit(self, chunks: BlockChunkList | None = None) -> Block | None:
+    def commit(self, chunks: BlockChunkList | None = None, add_newline: bool = True) -> Block | None:
         if chunks is None:
             prefix = []
             postfix = []
@@ -129,19 +128,54 @@ class XmlMutator(Mutator):
         # if self.is_last_block_open(chunks):
         #     self.body[-1].add_newline()
         
+        if add_newline and not self.tail.span.has_newline():
+            self.tail.span.append([BlockChunk(content="\n", style="xml")])
+        
         with Block(content, tags=["closing-tag"]) as end_tag:
             end_tag.prepend(prefix or "</", style="xml")
             end_tag.append(postfix or ">", style="xml")
-        self.block.mutator.append_child(end_tag, to_body=False)
-                
+        self.block.append_child(end_tag, to_body=False)
+        
+        # if self.block.subtree_size() > 1 and not self.tail.span.has_newline():
+        #     self.tail.span.append([BlockChunk(content="\n", style="xml")])
         return end_tag
+    
+    
+    def append(self, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+        if not chunk.is_line_end:
+            if len(self.body) == 0:
+                # child = self.add_empty_child()                
+                # yield child
+                yield Block()
+                
+                
+            
 
+    # def append_child(self, child: Block) -> Generator[BlockChunkList | Block, Any, Any]:
+    #     subtree_size = self.block.subtree_size()
+    #     if subtree_size == 0:
+    #         if child.tree_size() > 1:
+    #             yield self.head.span.append([BlockChunk(content="\n", style="xml")])
+    #     elif subtree_size == 1:
+    #         child.indent()
+    #         self.body[-1].indent()
+    #         if not self.head.span.has_newline():
+    #             yield self.head.span.append([BlockChunk(content="\n", style="xml")])
+    #             yield self.tail.span.append([BlockChunk(content="\n", style="xml")])
+    #     elif subtree_size > 1 and not self.tail.span.has_newline():
+    #         child.indent()
+    #         yield self.tail.span.append([BlockChunk(content="\n", style="xml")])
+    def append_child(self, child: Block, add_newline: bool = True) -> Generator[BlockChunkList | Block, Any, Any]:
+        child.indent(style="xml")
+        if len(self.body) == 0:
+            if add_newline and not self.head.span.has_newline():        
+                yield self.head.span.append([BlockChunk(content="\n", style="xml")])
+        else:
+            if add_newline and not self.tail.span.has_newline():
+                yield self.tail.span.append([BlockChunk(content="\n", style="xml")])
+        
+        
     
-    
-    # def current_span(self) -> Span:
-    #     if self.did_commit:
-    #         return self.block.children[1].span
-    #     return super().current_span()
     
     
     def iter_delimiters(self) -> Iterator[Block]:
@@ -157,47 +191,47 @@ class XmlMutator(Mutator):
         for span in self.iter_delimiters():            
             span.append([sep])
     
-    @property
-    def block_end(self) -> Span:
-        if len(self.block.children) == 1:
-            # return self.body[-1].span
-            if len(self.block.children[0].children) == 0:
-                return self.block.children[0].span
-            else:
-                return self.block.children[0].children[-1].span
-        return self.block.children[1].span
+    # @property
+    # def block_end(self) -> Span:
+    #     if len(self.block.children) == 1:
+    #         # return self.body[-1].span
+    #         if len(self.block.children[0].children) == 0:
+    #             return self.block.children[0].span
+    #         else:
+    #             return self.block.children[0].children[-1].span
+    #     return self.block.children[1].span
     
     
-    @property
-    def block_postfix(self) -> Span | None:
-        if len(self.block.children) == 2:
-            return self.block.children[1].span
-        return None
+    # @property
+    # def block_postfix(self) -> Span | None:
+    #     if len(self.block.children) == 2:
+    #         return self.block.children[1].span
+    #     return None
     
     
-    def is_head_open(self, chunks: list[BlockChunk]) -> bool:
-        if self.block.children[0].children:
-            return False
-        if chunks_contain(self.block.children[0].span.postfix, ">"):
-            # if all(chunk.isspace() or chunk.is_line_end for chunk in chunks):
-            #     return True
-            if all(chunk.is_line_end for chunk in chunks):
-                return True
-            if all(chunk.isspace() for chunk in chunks):
-                if self.block.children[0].has_newline():
-                    return False                
-                return True
+    # def is_head_open(self, chunks: list[BlockChunk]) -> bool:
+    #     if self.block.children[0].children:
+    #         return False
+    #     if chunks_contain(self.block.children[0].span.postfix, ">"):
+    #         # if all(chunk.isspace() or chunk.is_line_end for chunk in chunks):
+    #         #     return True
+    #         if all(chunk.is_line_end for chunk in chunks):
+    #             return True
+    #         if all(chunk.isspace() for chunk in chunks):
+    #             if self.block.children[0].has_newline():
+    #                 return False                
+    #             return True
             
-            else:
-                return False
-        else:
-            return True
+    #         else:
+    #             return False
+    #     else:
+    #         return True
     
     
-    def on_newline(self, chunk: BlockChunk):
-        if self.did_commit:
-            return self.block_end.append([chunk], style="newline")
-        return super().on_newline(chunk)           
+    # def on_newline(self, chunk: BlockChunk):
+    #     if self.did_commit:
+    #         return self.block_end.append([chunk], style="newline")
+    #     return super().on_newline(chunk)           
         
     def render_attrs(self, block: Block) -> str:
         attrs = ""
@@ -238,15 +272,15 @@ class RootMutator(Mutator):
     styles = ["root"]
     state: Literal["prefix", "content", "postfix"] = "prefix"
 
-    @property
-    def head(self) -> Block:
-        """The opening markdown fence (```xml)."""
-        return self.block.children[0]
+    # @property
+    # def head(self) -> Block:
+    #     """The opening markdown fence (```xml)."""
+    #     return self.block.children[0]
 
-    @property
-    def body(self) -> BlockChildren:
-        """The actual content inside the wrapper."""
-        return self.block.children[1].children
+    # @property
+    # def body(self) -> BlockChildren:
+    #     """The actual content inside the wrapper."""
+    #     return self.block.children[1].children
         
         # First child is the wrapper containing actual content
         # first_child = self.block.children[0]
@@ -258,22 +292,38 @@ class RootMutator(Mutator):
         """Content of the head span."""
         return self.block.children[0].span.content_text
 
-    @property
-    def tail(self) -> Block:
-        """The closing fence span."""
+    # @property
+    # def tail(self) -> Block:
+    #     """The closing fence span."""
         
-        if len(self.block.children) == 1:
-            return self.block.children[0]
-        elif len(self.block.children) == 2:
-            return self.block.children[1].mutator.tail
-        else:
-            return self.block.children[2]
-        # if not len(self.block.children[1]):
-        #     return self.block.children[0]
-        # elif not len(self.block.children[2]):
-        #     return self.block.children[1].mutator.tail
-        # else:
-        #     return self.block.children[2]
+    #     if len(self.block.children) == 1:
+    #         return self.block.children[0]
+    #     elif len(self.block.children) == 2:
+    #         return self.block.children[1].mutator.tail
+    #     else:
+    #         return self.block.children[2]
+        
+    # def append_child(self, child: Block, add_newline: bool = True) -> Generator[BlockChunkList | Block, Any, Any]:
+    #     self.state = "content"
+    #     yield None
+        
+    
+        
+    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
+        with Block(tags=["root"], attrs=attrs) as root_blk:            
+            with root_blk(tags=["root_prefix"]) as pre:                
+                pass            
+            # with root_blk(tags=["root_content"]) as content:                
+            #     pass   
+            # with root_blk(tags=["root_postfix"]) as post:
+            #     pass          
+        return root_blk
+    
+    
+    def append(self, chunk: BlockChunk) -> Generator[BlockChunkList | Block, Any, Any]:
+        if len(self.body) > 1 and not "root_postfix" in self.block.children[-1].tags:
+            print("!!!!!!!!!!!!!!!")
+            yield self.create_empty_child(tags=["root_postfix"])
             
 
     # @property
@@ -284,8 +334,8 @@ class RootMutator(Mutator):
     #     return None
     
     
-    def on_newline(self, chunk: BlockChunk):
-        return self.on_text([chunk])
+    # def on_newline(self, chunk: BlockChunk):
+    #     return self.on_text([chunk])
     
     # def on_text(self, chunks: list[BlockChunk]):
     #     if self.state == "prefix":
@@ -297,20 +347,22 @@ class RootMutator(Mutator):
     #             return self.block.mutator.append_child(Block(chunks), to_body=False)
     #         return self.block.children[2].append(chunks)
     
-    def on_text(self, chunks: list[BlockChunk]):
-        if self.state == "prefix":
-            return self.block.children[0].append(chunks)
-        elif self.state == "content":            
-            self.state = "postfix"
-            return self.block.mutator.append_child(Block(chunks), to_body=False)            
-        elif self.state == "postfix":            
-            return self.block.children[2].append(chunks)
+    # def on_text(self, chunks: list[BlockChunk]):
+    #     if self.state == "prefix":
+    #         return self.block.children[0].append(chunks)
+    #     elif self.state == "content":            
+    #         self.state = "postfix"
+    #         return self.block.mutator.append_child(Block(chunks), to_body=False)            
+    #     elif self.state == "postfix":            
+    #         return self.block.children[2].append(chunks)
         
-    def on_child(self, child: Block):
-        self.state = "content"
-        return child
+    # def on_child(self, child: Block):
+    #     self.state = "content"
+    #     return child
     
     def extract(self) -> Block:
+        if len(self.block.children) <= 1:        
+            return self.block.copy(deep=False)
         return self.block.children[1].copy_head()
     
     
@@ -324,15 +376,7 @@ class RootMutator(Mutator):
     #             pass
     #     return root
     
-    def init(self, chunks: BlockChunkList, path: Path, attrs: dict[str, Any] | None = None) -> Block:
-        with Block("root", tags=["root"], attrs=attrs) as root_blk:            
-            with root_blk(tags=["root_prefix"]) as pre:                
-                pass            
-            with root_blk(tags=["root_content"]) as content:                
-                pass   
-            # with root_blk(tags=["root_postfix"]) as post:
-            #     pass          
-        return root_blk
+
     
 
 

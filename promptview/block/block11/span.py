@@ -314,16 +314,16 @@ class BlockChunkList(UserList[BlockChunk]):
         before, separator, after = self.split(sep)
         if not separator:
             if create_on_empty:
-                return BlockChunkList(chunks=[BlockChunk(content=sep)]), after
-            return BlockChunkList(chunks=[]), before
+                return BlockChunkList(chunks=[BlockChunk(content=sep)]), self
+            return BlockChunkList(chunks=[]), self
         return before + separator, after
     
     def split_postfix(self, sep: str, create_on_empty: bool = True) -> tuple[BlockChunkList, BlockChunkList]:
         before, separator, after = self.split(sep)
         if not separator:
             if create_on_empty:
-                return before, BlockChunkList(chunks=[BlockChunk(content=sep)])
-            return before, BlockChunkList(chunks=[])
+                return self, BlockChunkList(chunks=[BlockChunk(content=sep)])
+            return self, BlockChunkList(chunks=[])
         return before, separator + after
     
     

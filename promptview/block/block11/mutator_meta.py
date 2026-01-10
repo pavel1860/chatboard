@@ -74,13 +74,14 @@ class MutatorMeta(type):
     @classmethod
     def resolve(
         cls, 
-        styles: list[str] | None = None, 
+        styles: list[str] | None = None,
+        default: "Type[Mutator] | None" = None,
     ) -> "MutatorConfig":
         from .block import Mutator, Stylizer
         from .mutators import BlockMutator
         current = style_registry_ctx.get()
         # mutator_cfg = MutatorConfig(mutator=Mutator)
-        mutator_cfg = MutatorConfig(mutator=BlockMutator)
+        mutator_cfg = MutatorConfig(mutator=default or Mutator)
         if styles is None:
             return mutator_cfg
         for style in styles:
