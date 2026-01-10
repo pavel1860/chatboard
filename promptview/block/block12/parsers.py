@@ -319,13 +319,20 @@ class XmlParser(Process):
         if child_schema is None:
             raise ParserError(f"Unknown tag '{name}' - no matching schema found")
 
-        # Instantiate block from schema
-        child_block = child_schema._inst_content(
-            style=child_schema.style,
-            tags=list(child_schema.tags),
+        # Instantiate block from schema (without initial content - we'll add prefix separately)
+        child_block = Block(
             role=child_schema.role,
+            tags=list(child_schema.tags),
+            style=list(child_schema.style),
             attrs=dict(attrs) if attrs else dict(child_schema.attrs),
         )
+
+        # Add opening tag as prefix chunk with logprob
+        prefix_chunks = []
+        for content, logprob in chunks:
+            if content:
+                chunk = child_block._raw_append(content, logprob=logprob, style="prefix")
+                prefix_chunks.append(chunk)
 
         # Append to current block
         if self.current_block is not None:
@@ -333,7 +340,7 @@ class XmlParser(Process):
 
         # Push to stack
         self._stack.append((child_schema, child_block))
-        self._emit_event("block_init", child_block)
+        self._emit_event("block_init", child_block, prefix_chunks if prefix_chunks else None)
 
     def _handle_end(self, name: str, chunks: list[tuple[str, float | None]]):
         """Handle closing tag - commit and pop stack."""
@@ -349,11 +356,18 @@ class XmlParser(Process):
         if name != schema.name and name not in schema.tags:
             raise ParserError(f"Mismatched closing tag: expected '{schema.name}', got '{name}'")
 
+        # Add closing tag as postfix chunk with logprob
+        postfix_chunks = []
+        for content, logprob in chunks:
+            if content:
+                chunk = block._raw_append(content, logprob=logprob, style="postfix")
+                postfix_chunks.append(chunk)
+
         # Pop from stack
         self._stack.pop()
 
         # Emit commit event
-        self._emit_event("block_commit", block)
+        self._emit_event("block_commit", block, postfix_chunks if postfix_chunks else None)
 
     def _handle_chardata(self, chunks: list[tuple[str, float | None]]):
         """Handle character data - append to current block."""
