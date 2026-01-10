@@ -1,12 +1,15 @@
 """
-ChunkMeta - Lightweight metadata for text chunks.
+Chunk and ChunkMeta - Text chunks with metadata.
 
 ChunkMeta stores metadata (logprob, style) for a region of text within a block.
 Positions are relative to the owning block's start position.
+
+Chunk holds the actual content along with ChunkMeta, suitable for frontend consumption.
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import uuid4
 
 
@@ -86,3 +89,117 @@ class ChunkMeta:
         if self.style:
             parts.append(f"style={self.style!r}")
         return f"ChunkMeta({', '.join(parts)})"
+
+
+@dataclass
+class Chunk:
+    """
+    A chunk of text with metadata.
+
+    Combines content text with ChunkMeta for frontend consumption.
+
+    Attributes:
+        content: The actual text content
+        meta: ChunkMeta with position and metadata info
+    """
+    content: str
+    meta: ChunkMeta
+
+    @property
+    def start(self) -> int:
+        """Start position (from meta)."""
+        return self.meta.start
+
+    @property
+    def end(self) -> int:
+        """End position (from meta)."""
+        return self.meta.end
+
+    @property
+    def logprob(self) -> float | None:
+        """Log probability (from meta)."""
+        return self.meta.logprob
+
+    @property
+    def style(self) -> str | None:
+        """Style label (from meta)."""
+        return self.meta.style
+
+    @property
+    def id(self) -> str:
+        """Unique ID (from meta)."""
+        return self.meta.id
+
+    @property
+    def length(self) -> int:
+        """Length of content."""
+        return len(self.content)
+
+    @property
+    def is_empty(self) -> bool:
+        """True if chunk has no content."""
+        return len(self.content) == 0
+
+    @property
+    def is_newline(self) -> bool:
+        """True if chunk is just a newline."""
+        return self.content == "\n"
+
+    @property
+    def is_whitespace(self) -> bool:
+        """True if chunk is only whitespace."""
+        return self.content.isspace() if self.content else True
+
+    def copy(self) -> Chunk:
+        """Create a copy of this chunk."""
+        return Chunk(
+            content=self.content,
+            meta=self.meta.copy(),
+        )
+
+    def model_dump(self) -> dict[str, Any]:
+        """Serialize chunk to dictionary for frontend."""
+        return {
+            "id": self.meta.id,
+            "content": self.content,
+            "start": self.meta.start,
+            "end": self.meta.end,
+            "logprob": self.meta.logprob,
+            "style": self.meta.style,
+        }
+
+    @classmethod
+    def model_load(cls, data: dict[str, Any]) -> Chunk:
+        """Deserialize chunk from dictionary."""
+        meta = ChunkMeta(
+            start=data.get("start", 0),
+            end=data.get("end", 0),
+            logprob=data.get("logprob"),
+            style=data.get("style"),
+            id=data.get("id", _generate_id()),
+        )
+        return cls(
+            content=data.get("content", ""),
+            meta=meta,
+        )
+
+    @classmethod
+    def from_meta(cls, meta: ChunkMeta, text: str) -> Chunk:
+        """
+        Create Chunk from ChunkMeta by extracting content from text.
+
+        Args:
+            meta: The chunk metadata with positions
+            text: The full text to extract content from
+        """
+        content = text[meta.start:meta.end]
+        return cls(content=content, meta=meta)
+
+    def __repr__(self) -> str:
+        content_preview = self.content[:20] if len(self.content) <= 20 else self.content[:17] + "..."
+        parts = [f"content={content_preview!r}"]
+        if self.logprob is not None:
+            parts.append(f"logprob={self.logprob:.3f}")
+        if self.style:
+            parts.append(f"style={self.style!r}")
+        return f"Chunk({', '.join(parts)})"

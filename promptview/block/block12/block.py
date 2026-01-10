@@ -17,7 +17,9 @@ from __future__ import annotations
 from typing import Any, Iterator, TYPE_CHECKING, Union
 import re
 
-from .chunk import ChunkMeta
+from promptview.utils.function_utils import is_overridden
+
+from .chunk import ChunkMeta, Chunk
 
 if TYPE_CHECKING:
     from .mutator import Mutator
@@ -215,6 +217,14 @@ class Block:
         elif not isinstance(content, str):
             content = str(content)
         return self.mutator.prepend(content, logprob=logprob, style=style)
+    
+    def _should_use_mutator(self, method: str) -> bool:
+        from .mutator import Mutator
+        if type(self.mutator) is Mutator:
+            return False
+        if is_overridden(self.mutator.__class__, method, Mutator):
+            return True
+        return False
 
     def append_child(
         self,
@@ -234,7 +244,14 @@ class Block:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
-        return self.mutator.append_child(child=child)
+        events = []
+        # if self.mutator and is_overridden(self.mutator.__class__, "on_append", Mutator):
+        child = self._raw_append_child(child)
+        if self._should_use_mutator("on_append_child"):
+            for event in self.mutator.on_append_child(child=child):
+                events.append(event)        
+        
+        return child
 
     def prepend_child(
         self,
@@ -325,28 +342,30 @@ class Block:
         content: str,
         logprob: float | None = None,
         style: str | None = None
-    ) -> ChunkMeta:
+    ) -> Chunk:
         """
         Low-level append without mutator interception.
 
         Appends content at the end of this block's text region.
         Creates chunk metadata with relative position.
         Shifts positions of subsequent blocks.
+
+        Returns a Chunk with the content and metadata.
         """
         if not content:
             # Empty content - create empty chunk for metadata tracking
             rel_start = self.end - self.start
-            chunk = ChunkMeta(start=rel_start, end=rel_start, logprob=logprob, style=style)
-            self.chunks.append(chunk)
-            return chunk
+            chunk_meta = ChunkMeta(start=rel_start, end=rel_start, logprob=logprob, style=style)
+            self.chunks.append(chunk_meta)
+            return Chunk(content="", meta=chunk_meta)
 
         root = self.root
 
         # Create chunk metadata with relative position
         rel_start = self.end - self.start
         rel_end = rel_start + len(content)
-        chunk = ChunkMeta(start=rel_start, end=rel_end, logprob=logprob, style=style)
-        self.chunks.append(chunk)
+        chunk_meta = ChunkMeta(start=rel_start, end=rel_end, logprob=logprob, style=style)
+        self.chunks.append(chunk_meta)
 
         # Insert into shared string
         insert_pos = self.end
@@ -359,38 +378,37 @@ class Block:
         # Shift all blocks after insertion point
         self._shift_positions_after(insert_pos, delta)
 
-        # Update ancestor ends (they contain this block)
-        self._extend_ancestors(delta)
-
-        return chunk
+        return Chunk(content=content, meta=chunk_meta)
 
     def _raw_prepend(
         self,
         content: str,
         logprob: float | None = None,
         style: str | None = None
-    ) -> ChunkMeta:
+    ) -> Chunk:
         """
         Low-level prepend without mutator interception.
 
         Prepends content at the start of this block's text region.
+
+        Returns a Chunk with the content and metadata.
         """
         if not content:
-            chunk = ChunkMeta(start=0, end=0, logprob=logprob, style=style)
-            self.chunks.insert(0, chunk)
-            return chunk
+            chunk_meta = ChunkMeta(start=0, end=0, logprob=logprob, style=style)
+            self.chunks.insert(0, chunk_meta)
+            return Chunk(content="", meta=chunk_meta)
 
         root = self.root
 
         # Create chunk metadata at start (relative position 0)
-        chunk = ChunkMeta(start=0, end=len(content), logprob=logprob, style=style)
+        chunk_meta = ChunkMeta(start=0, end=len(content), logprob=logprob, style=style)
 
         # Shift existing chunks in this block
         delta = len(content)
         for existing_chunk in self.chunks:
             existing_chunk.shift(delta)
 
-        self.chunks.insert(0, chunk)
+        self.chunks.insert(0, chunk_meta)
 
         # Insert into shared string
         insert_pos = self.start
@@ -402,10 +420,7 @@ class Block:
         # Shift all blocks after insertion point
         self._shift_positions_after(insert_pos, delta)
 
-        # Update ancestor ends
-        self._extend_ancestors(delta)
-
-        return chunk
+        return Chunk(content=content, meta=chunk_meta)
 
     def _raw_insert(
         self,
@@ -413,7 +428,7 @@ class Block:
         content: str,
         logprob: float | None = None,
         style: str | None = None
-    ) -> ChunkMeta:
+    ) -> Chunk:
         """
         Low-level insert at a relative position within this block.
 
@@ -424,18 +439,20 @@ class Block:
             content: Text to insert
             logprob: Optional log probability
             style: Optional chunk style
+
+        Returns a Chunk with the content and metadata.
         """
         if not content:
-            chunk = ChunkMeta(start=rel_position, end=rel_position, logprob=logprob, style=style)
-            self._insert_chunk_sorted(chunk)
-            return chunk
+            chunk_meta = ChunkMeta(start=rel_position, end=rel_position, logprob=logprob, style=style)
+            self._insert_chunk_sorted(chunk_meta)
+            return Chunk(content="", meta=chunk_meta)
 
         root = self.root
         abs_position = self.start + rel_position
         delta = len(content)
 
         # Create chunk metadata
-        chunk = ChunkMeta(start=rel_position, end=rel_position + delta, logprob=logprob, style=style)
+        chunk_meta = ChunkMeta(start=rel_position, end=rel_position + delta, logprob=logprob, style=style)
 
         # Shift existing chunks in this block that are at or after insertion point
         for existing_chunk in self.chunks:
@@ -445,7 +462,7 @@ class Block:
                 # Chunk spans insertion point - extend its end
                 existing_chunk.end += delta
 
-        self._insert_chunk_sorted(chunk)
+        self._insert_chunk_sorted(chunk_meta)
 
         # Insert into shared string
         root._text = root._text[:abs_position] + content + root._text[abs_position:]
@@ -456,10 +473,7 @@ class Block:
         # Shift all blocks after insertion point
         self._shift_positions_after(abs_position, delta)
 
-        # Update ancestor ends
-        self._extend_ancestors(delta)
-
-        return chunk
+        return Chunk(content=content, meta=chunk_meta)
 
     def _insert_chunk_sorted(self, chunk: ChunkMeta) -> None:
         """Insert chunk maintaining sorted order by start position."""
@@ -625,9 +639,6 @@ class Block:
         # Shift blocks after insertion
         self._shift_positions_after(insert_pos, delta)
 
-        # Extend ancestors
-        self._extend_ancestors(delta)
-
     def _remap_subtree(self, block: Block, offset: int) -> None:
         """Remap positions in a subtree by offset."""
         block.start += offset
@@ -666,9 +677,6 @@ class Block:
 
             # Shift blocks after removal
             self._shift_positions_after(child.start, -delta)
-
-            # Contract ancestors
-            self._contract_ancestors(delta)
 
         # Store text locally on child
         child._text = child_text
@@ -768,6 +776,78 @@ class Block:
             return siblings[idx - 1] if idx > 0 else None
         except ValueError:
             return None
+
+    def prev_or_none(self) -> Block | None:
+        """
+        Get previous block in tree order, or None.
+
+        Returns previous sibling if exists, otherwise returns parent.
+        Returns None if this is the root.
+        """
+        prev_sib = self.prev_sibling()
+        if prev_sib is not None:
+            return prev_sib
+        return self.parent
+
+    def prev(self) -> Block:
+        """
+        Get previous block in tree order.
+
+        Returns previous sibling if exists, otherwise returns parent.
+        Raises ValueError if this is the root (no previous block).
+        """
+        result = self.prev_or_none()
+        if result is None:
+            raise ValueError("No previous block: this is the root")
+        return result
+
+    def next_or_none(self) -> Block | None:
+        """
+        Get next block in tree order, or None.
+
+        Returns next sibling if exists, otherwise walks up ancestors
+        to find the next block in the lineage.
+        Returns None if at the end of the tree.
+        """
+        # First check for next sibling
+        next_sib = self.next_sibling()
+        if next_sib is not None:
+            return next_sib
+
+        # Walk up to find next in lineage
+        node = self.parent
+        while node is not None:
+            next_sib = node.next_sibling()
+            if next_sib is not None:
+                return next_sib
+            node = node.parent
+
+        return None
+
+    def next(self) -> Block:
+        """
+        Get next block in tree order.
+
+        Returns next sibling if exists, otherwise walks up ancestors
+        to find the next block in the lineage.
+        Raises ValueError if at the end of the tree.
+        """
+        result = self.next_or_none()
+        if result is None:
+            raise ValueError("No next block: at the end of the tree")
+        return result
+
+    def has_newline(self) -> bool:
+        """Check if this block's text ends with a newline."""
+        return self.text.endswith("\n")
+
+    def add_newline(self, style: str | None = None) -> Chunk:
+        """
+        Add a newline to the end of this block.
+
+        Returns a Chunk for the added newline.
+        """
+        return self._raw_append("\n", style=style)
 
     # =========================================================================
     # String Operations
@@ -943,6 +1023,27 @@ class Block:
             block.children.append(child)
 
         return block
+    
+    # =========================================================================
+    # Rendering
+    # =========================================================================
+    
+    
+    def commit(self, content: str | None = None) -> Block | None:
+        post_block = self.mutator.commit(self, content)
+        return post_block
+        
+    
+    def transform(self) -> Block:
+        from .transform import transform
+        return transform(self)
+    
+    def render(self) -> str:
+        tran_block = self.transform()
+        return tran_block._text
+    
+    def print(self) -> None:
+        print(self.render())
 
     # =========================================================================
     # Debug
