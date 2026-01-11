@@ -69,7 +69,7 @@ class Block:
 
     __slots__ = [
         "parent", "children", "start", "end", "chunks",
-        "role", "tags", "style", "attrs", "_text", "id", "_mutator"
+        "role", "tags", "style", "attrs", "_text", "id", "mutator"
     ]
 
     def __init__(
@@ -91,6 +91,7 @@ class Block:
             style: Style string or list of styles
             attrs: Arbitrary attributes
         """
+        from .mutator import Mutator
         # Tree structure
         self.parent: Block | None = None
         self.children: list[Block] = []
@@ -115,7 +116,7 @@ class Block:
         self.id: str = _generate_id()
 
         # Mutator (lazy initialized)
-        self._mutator: Mutator | None = None
+        self.mutator: Mutator = Mutator(self)
 
         # Handle initial content
         if content is not None:
@@ -141,6 +142,25 @@ class Block:
     def text(self) -> str:
         """Get this block's text content."""
         return self.root._text[self.start:self.end]
+
+    @property
+    def content(self) -> str:
+        """
+        Get text from unstyled chunks only.
+
+        Returns text from chunks that have style=None, excluding any
+        styled chunks (e.g., prefixes, postfixes, formatting markers).
+        This gives you the "pure content" without style decorations.
+        """
+        if not self.chunks:
+            return self.text
+
+        text = self.text
+        content_parts = []
+        for chunk in self.chunks:
+            if chunk.style is None:
+                content_parts.append(text[chunk.start:chunk.end])
+        return "".join(content_parts)
 
     @property
     def is_root(self) -> bool:
@@ -171,15 +191,15 @@ class Block:
     # Mutator Access
     # =========================================================================
 
-    @property
-    def mutator(self) -> Mutator:
-        """Get mutator for this block's style."""
-        if self._mutator is None:
-            from .mutator import Mutator, MutatorMeta
-            style = self.style[0] if self.style else "default"
-            mutator_cls = MutatorMeta.get_mutator(style)
-            self._mutator = mutator_cls(self)
-        return self._mutator
+    # @property
+    # def mutator(self) -> Mutator:
+    #     """Get mutator for this block's style."""
+    #     if self._mutator is None:
+    #         from .mutator import Mutator, MutatorMeta
+    #         style = self.style[0] if self.style else "default"
+    #         mutator_cls = MutatorMeta.get_mutator(style)
+    #         self._mutator = mutator_cls(self)
+    #     return self._mutator
 
     # =========================================================================
     # Public API (delegates to mutator)
@@ -188,9 +208,9 @@ class Block:
     def append(
         self,
         content: ContentType,
-        logprob: float | None = None,
-        style: str | None = None
-    ) -> ChunkMeta:
+        style: str | None = None,
+        logprob: float | None = None,        
+    ) -> list[Block | Chunk]:
         """
         Append content to this block.
 
@@ -200,14 +220,20 @@ class Block:
             content = content.text
         elif not isinstance(content, str):
             content = str(content)
-        return self.mutator.append(content, logprob=logprob, style=style)
+        events = []
+        if self._should_use_mutator("on_append"):
+            for event in self.mutator.on_append(content):
+                events.append(event)
+        event = self._raw_append(content, style=style, logprob=logprob)
+        events.append(event)
+        return events
 
     def prepend(
         self,
         content: ContentType,
-        logprob: float | None = None,
-        style: str | None = None
-    ) -> ChunkMeta:
+        style: str | None = None,
+        logprob: float | None = None,        
+    ) -> Chunk:
         """
         Prepend content to this block.
 
@@ -217,7 +243,7 @@ class Block:
             content = content.text
         elif not isinstance(content, str):
             content = str(content)
-        return self.mutator.prepend(content, logprob=logprob, style=style)
+        return self._raw_prepend(content, style=style, logprob=logprob)
     
     def _should_use_mutator(self, method: str) -> bool:
         from .mutator import Mutator
@@ -341,8 +367,8 @@ class Block:
     def _raw_append(
         self,
         content: str,
-        logprob: float | None = None,
-        style: str | None = None
+        style: str | None = None,
+        logprob: float | None = None,        
     ) -> Chunk:
         """
         Low-level append without mutator interception.
@@ -384,8 +410,8 @@ class Block:
     def _raw_prepend(
         self,
         content: str,
-        logprob: float | None = None,
-        style: str | None = None
+        style: str | None = None,
+        logprob: float | None = None,        
     ) -> Chunk:
         """
         Low-level prepend without mutator interception.
@@ -427,8 +453,8 @@ class Block:
         self,
         rel_position: int,
         content: str,
+        style: str | None = None,
         logprob: float | None = None,
-        style: str | None = None
     ) -> Chunk:
         """
         Low-level insert at a relative position within this block.
@@ -918,13 +944,21 @@ class Block:
     # =========================================================================
     # Tag-based Search
     # =========================================================================
+    
+    def __getitem__(self, key: str | int) -> Block:
+        if isinstance(key, int):
+            return self.children[key]
+        elif isinstance(key, str):
+            return self.get_by_tag(key)
+        else:
+            raise ValueError(f"Invalid key: {key}")
 
-    def get_by_tag(self, tag: str) -> Block | None:
+    def get_by_tag(self, tag: str) -> Block:
         """Get first descendant with the given tag."""
         for block in self.iter_depth_first():
             if tag in block.tags:
                 return block
-        return None
+        raise ValueError(f"Block with tag {tag} not found")
 
     def get_all_by_tag(self, tag: str) -> list[Block]:
         """Get all descendants with the given tag."""

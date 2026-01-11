@@ -162,7 +162,7 @@ class Mutator(metaclass=MutatorMeta):
         block = Block(content)
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
-        block._mutator = cls(block)
+        block.mutator = cls(block)
         return block
     
     @classmethod
@@ -204,7 +204,7 @@ class BlockMutator(Mutator):
         
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         if not child.prev().has_newline():
-            yield child.prev().add_newline()
+            yield child.prev().add_newline(style="block")
         
         
         
@@ -216,17 +216,20 @@ class XmlMutator(Mutator):
     @classmethod
     def init(cls, block: Block) -> Block:
         with Block() as blk:
-            blk /= "<" + block.text + ">"
+            # blk /= "<" + block.text + ">"
+            blk /= block.text
+            blk[0].prepend("<", style="xml")
+            blk[0].append(">", style="xml")
         return blk
     
     
     def commit(self, block: Block) -> Block:
-        block /= "</" + block.text + ">"
+        block /= "</" + block[0].text + ">"
         return block.children[-1]
     
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         if not child.prev().has_newline():
-            yield child.prev().add_newline()
+            yield child.prev().add_newline(style="xml")
         
         
         
