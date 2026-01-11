@@ -16,10 +16,11 @@ Junction Table Benefits:
 - Block usage counting (for garbage collection)
 - Explicit ordering via position column
 
-Block12 Simplifications vs Block11:
-- No prefix/content/postfix separation - just text and chunks
-- Chunks store style instead of region type
-- Position-based text (start/end) stored per block
+Block12 Architecture:
+- Each block owns its local text string (no shared root string)
+- Chunks store positions relative to block's local text
+- Tree structure determines rendering order (depth-first concatenation)
+- No start/end position management needed
 """
 
 import hashlib
@@ -217,11 +218,7 @@ def load_block(
     Creates proper Block/BlockSchema instances based on block_type.
     Reconstructs chunks from stored data.
 
-    Block12 stores text on the root block only, with all descendants
-    referencing positions within that shared text. We rebuild this by:
-    1. Creating block instances with their metadata
-    2. Building the complete text in depth-first order
-    3. Setting start/end positions as we go
+    Each block gets its own local text from its span. No shared string.
     """
     from ...block.block12 import Block, BlockSchema, ChunkMeta
 
@@ -244,7 +241,7 @@ def load_block(
         return "", []
 
     def create_block_instance(block_data: dict) -> "Block":
-        """Create a Block/BlockSchema instance with metadata (no text yet)."""
+        """Create a Block/BlockSchema instance with metadata."""
         block_type = block_data.get("block_type", "block")
         styles = block_data.get("styles") or []
         tags = block_data.get("tags") or []
@@ -267,17 +264,17 @@ def load_block(
                 attrs=attrs,
             )
 
-    def build_tree(block_id: str, root_text: list[str], position: list[int]) -> "Block":
+    def build_tree(block_id: str) -> "Block":
         """
-        Recursively build the block tree while accumulating text.
+        Recursively build the block tree.
+
+        Each block gets its own local text from its span.
 
         Args:
             block_id: ID of block to build
-            root_text: List with single string element (mutable accumulator)
-            position: List with single int element (current position, mutable)
 
         Returns:
-            Block instance with correct positions
+            Block instance with local text
         """
         block_data = blocks[block_id]
         blk = create_block_instance(block_data)
@@ -285,44 +282,28 @@ def load_block(
         # Get this block's text and chunks
         text, chunks_data = get_span_data(block_data)
 
-        # Record start position
-        blk.start = position[0]
+        # Set local text
+        blk._text = text
 
-        # Append this block's text to root
-        if text:
-            root_text[0] += text
-            position[0] += len(text)
-
-            # Create chunk metadata (positions are relative to block start)
-            for chunk_data in chunks_data:
-                blk.chunks.append(ChunkMeta(
-                    start=chunk_data["start"],
-                    end=chunk_data["end"],
-                    logprob=chunk_data.get("logprob"),
-                    style=chunk_data.get("style"),
-                    id=chunk_data.get("id", ""),
-                ))
-
-        # Record end position (before children)
-        blk.end = position[0]
+        # Create chunk metadata (positions are relative to local text)
+        for chunk_data in chunks_data:
+            blk.chunks.append(ChunkMeta(
+                start=chunk_data["start"],
+                end=chunk_data["end"],
+                logprob=chunk_data.get("logprob"),
+                style=chunk_data.get("style"),
+                id=chunk_data.get("id", ""),
+            ))
 
         # Recursively build children
         for child_id in block_data.get("children", []):
-            child = build_tree(child_id, root_text, position)
+            child = build_tree(child_id)
             child.parent = blk
             blk.children.append(child)
 
         return blk
 
-    # Build the tree, accumulating text as we go
-    root_text = [""]  # Mutable accumulator
-    position = [0]    # Current position
-    root_block = build_tree(root_id, root_text, position)
-
-    # Set the accumulated text on root
-    root_block._text = root_text[0]
-
-    return root_block
+    return build_tree(root_id)
 
 
 def parse_block_tree_query_result(trees: list[dict]) -> list["Block"]:

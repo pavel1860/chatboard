@@ -183,8 +183,6 @@ class Mutator(metaclass=MutatorMeta):
     def tail(self) -> Block:
         """
         Get the tail block (e.g., closing tag in structured mutators).
-
-        Base implementation returns None (no separate tail).
         Override in subclasses that create closing structures.
         """
         if self.body:
@@ -320,16 +318,19 @@ class XmlMutator(Mutator):
 
     @classmethod
     def init(cls, block: Block) -> Block:
-        with Block() as blk:
-            blk /= block.text
-            blk[0].prepend("<", style="xml")
-            blk[0].append(">", style="xml")
+        with Block(tags=["xml-container"]) as blk:
+            with blk(block.text, tags=["xml-opening-tag"]) as opening_tag:
+                opening_tag.prepend("<", style="xml")
+                opening_tag.append(">", style="xml")
+            # blk /= block.text
+            # blk[0].prepend("<", style="xml")
+            # blk[0].append(">", style="xml")
         return blk
 
     def commit(self, block: Block) -> Block:
         if not self.tail.has_newline():       
             self.tail.add_newline(style="xml")
-        post_fix = Block("</" + self.content + ">")
+        post_fix = Block("</" + self.content + ">", tags=["xml-closing-tag"])
         block._raw_append_child(post_fix, to_body=False)
         return post_fix
 

@@ -1,10 +1,10 @@
 """
-Block - Unified tree node with text positions and chunk metadata.
+Block - Unified tree node with local text and chunk metadata.
 
 Block12 simplifies the block system by:
-1. Storing the entire document as a single string (on root)
-2. Using the block tree for structure (no separate span chain)
-3. Using relative chunk positions (no shifting on block moves)
+1. Each block owns its own text string (local, not shared)
+2. Using the block tree for structure
+3. Chunk positions are relative to the block's local text
 4. Delegating style-aware operations to Mutators
 
 Usage:
@@ -37,25 +37,18 @@ def _generate_id() -> str:
 ContentType = Union[str, int, float, bool, "Block", None]
 
 
-
 class BlockChildren(UserList["Block"]):
-    
+
     def __init__(self, parent: Block, items: list[Block] | None = None):
         self.parent: Block = parent
         UserList.__init__(self, items)
-        
-        
-    # def __getitem__(self, key: SupportsIndex | slice) -> Block | BlockChildren:
-    #     result = UserList.__getitem__(self, key)
-    #     if isinstance(key, slice):
-    #         return BlockChildren(parent=self.parent, items=result)
-    #     return result
+
     @overload
     def __getitem__(self, index: SupportsIndex) -> 'Block': ...
-    
+
     @overload
     def __getitem__(self, index: slice) -> Self: ...
-    
+
     def __getitem__(self, index: SupportsIndex | slice) -> 'Block | Self':
         result = self.data[index]
         if isinstance(index, slice):
@@ -65,13 +58,12 @@ class BlockChildren(UserList["Block"]):
 
 class Block:
     """
-    Tree node with text positions and chunk metadata.
+    Tree node with local text and chunk metadata.
 
-    The root block owns the shared string (_text). All other blocks
-    reference positions within that string via start/end.
+    Each block owns its own text string. When rendering, text is
+    concatenated depth-first through the tree.
 
-    Chunk metadata uses positions relative to the block's start,
-    so chunks don't need updating when the block moves.
+    Chunk metadata uses positions relative to the block's local text.
 
     Public operations (append, append_child) delegate to the mutator
     for style-aware behavior. Raw operations (_raw_*) bypass the mutator.
@@ -84,18 +76,16 @@ class Block:
     Attributes:
         parent: Parent block (None for root)
         children: Child blocks
-        start: Start position in root._text (absolute)
-        end: End position in root._text (absolute)
-        chunks: Chunk metadata (positions relative to self.start)
+        chunks: Chunk metadata (positions relative to local _text)
         role: Role identifier (e.g., "user", "assistant")
         tags: Tag list for querying
         style: Style list for rendering/mutator selection
         attrs: Arbitrary attributes
-        _text: The shared string (only meaningful on root)
+        _text: This block's local text content
     """
 
     __slots__ = [
-        "parent", "children", "start", "end", "chunks",
+        "parent", "children", "chunks",
         "role", "tags", "style", "attrs", "_text", "id", "mutator"
     ]
 
@@ -123,11 +113,7 @@ class Block:
         self.parent: Block | None = None
         self.children: BlockChildren = BlockChildren(parent=self)
 
-        # Position in shared string (absolute)
-        self.start: int = 0
-        self.end: int = 0
-
-        # Chunk metadata (relative positions)
+        # Chunk metadata (relative to local _text)
         self.chunks: list[ChunkMeta] = []
 
         # Block metadata
@@ -136,7 +122,7 @@ class Block:
         self.style = _parse_style(style)
         self.attrs = attrs or {}
 
-        # Shared string (only root)
+        # Local text for this block
         self._text: str = ""
 
         # ID
@@ -167,8 +153,8 @@ class Block:
 
     @property
     def text(self) -> str:
-        """Get this block's text content."""
-        return self.root._text[self.start:self.end]
+        """Get this block's local text content."""
+        return self._text
 
     @property
     def content(self) -> str:
@@ -180,25 +166,24 @@ class Block:
         This gives you the "pure content" without style decorations.
         """
         if not self.chunks:
-            return self.text
+            return self._text
 
-        text = self.text
         content_parts = []
         for chunk in self.chunks:
             if chunk.style is None:
-                content_parts.append(text[chunk.start:chunk.end])
+                content_parts.append(self._text[chunk.start:chunk.end])
         return "".join(content_parts)
 
     @property
     def is_root(self) -> bool:
         """True if this is the root block."""
         return self.parent is None
-    
+
     @property
     def is_wrapper(self) -> bool:
-        """True if this block is a wrapper."""
+        """True if this block is a wrapper (has no local text)."""
         return self.is_empty
-    
+
     @property
     def is_rendered(self) -> bool:
         """True if this block has been rendered."""
@@ -217,13 +202,13 @@ class Block:
 
     @property
     def length(self) -> int:
-        """Length of this block's text."""
-        return self.end - self.start
+        """Length of this block's local text."""
+        return len(self._text)
 
     @property
     def is_empty(self) -> bool:
-        """True if block has no text content."""
-        return self.start == self.end
+        """True if block has no local text content."""
+        return len(self._text) == 0
 
     # =========================================================================
     # Mutator Structure Properties
@@ -254,7 +239,7 @@ class Block:
         """
         Get the tail block via mutator.
 
-        For simple blocks, returns None.
+        Returns the last block in the entire block tree (not just the body).
         For structured blocks (e.g., XML), returns the closing tag block after commit.
         """
         return self.mutator.tail
@@ -267,7 +252,7 @@ class Block:
         self,
         content: ContentType,
         style: str | None = None,
-        logprob: float | None = None,        
+        logprob: float | None = None,
     ) -> list[Block | Chunk]:
         """
         Append content to this block.
@@ -290,7 +275,7 @@ class Block:
         self,
         content: ContentType,
         style: str | None = None,
-        logprob: float | None = None,        
+        logprob: float | None = None,
     ) -> Chunk:
         """
         Prepend content to this block.
@@ -302,7 +287,7 @@ class Block:
         elif not isinstance(content, str):
             content = str(content)
         return self._raw_prepend(content, style=style, logprob=logprob)
-    
+
     def _should_use_mutator(self, method: str) -> bool:
         from .mutator import Mutator
         if type(self.mutator) is Mutator:
@@ -317,7 +302,7 @@ class Block:
         **kwargs
     ) -> Block:
         """
-        Append a child block.
+        Append a child block to the body.
 
         Delegates to mutator for style-aware placement.
 
@@ -329,13 +314,12 @@ class Block:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
-        events = []
-        # if self.mutator and is_overridden(self.mutator.__class__, "on_append", Mutator):
+
         child = self._raw_append_child(child)
         if self._should_use_mutator("on_append_child"):
             for event in self.mutator.on_append_child(child=child):
-                events.append(event)        
-        
+                pass  # Events handled by mutator
+
         return child
 
     def prepend_child(
@@ -344,7 +328,7 @@ class Block:
         **kwargs
     ) -> Block:
         """
-        Prepend a child block.
+        Prepend a child block to the body.
 
         Delegates to mutator for style-aware placement.
         """
@@ -352,7 +336,7 @@ class Block:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
-        return self.mutator.prepend_child(child=child)
+        return self._raw_prepend_child(child)
 
     def insert_child(
         self,
@@ -361,7 +345,7 @@ class Block:
         **kwargs
     ) -> Block:
         """
-        Insert a child block at the given index.
+        Insert a child block at the given index in the body.
 
         Delegates to mutator for style-aware placement.
         """
@@ -369,7 +353,7 @@ class Block:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
-        return self.mutator.insert_child(index, child=child)
+        return self._raw_insert_child(index, child)
 
     # =========================================================================
     # Operator Overloads
@@ -426,43 +410,26 @@ class Block:
         self,
         content: str,
         style: str | None = None,
-        logprob: float | None = None,        
+        logprob: float | None = None,
     ) -> Chunk:
         """
-        Low-level append without mutator interception.
+        Low-level append to this block's local text.
 
-        Appends content at the end of this block's text region.
+        Appends content at the end of this block's text.
         Creates chunk metadata with relative position.
-        Shifts positions of subsequent blocks.
 
         Returns a Chunk with the content and metadata.
         """
         target = self.head
-        if not content:
-            # Empty content - create empty chunk for metadata tracking
-            rel_start = target.end - target.start
-            chunk_meta = ChunkMeta(start=rel_start, end=rel_start, logprob=logprob, style=style)
-            target.chunks.append(chunk_meta)
-            return Chunk(content="", meta=chunk_meta)
-
-        root = target.root
 
         # Create chunk metadata with relative position
-        rel_start = target.end - target.start
+        rel_start = len(target._text)
         rel_end = rel_start + len(content)
         chunk_meta = ChunkMeta(start=rel_start, end=rel_end, logprob=logprob, style=style)
         target.chunks.append(chunk_meta)
 
-        # Insert into shared string
-        insert_pos = target.end
-        root._text = root._text[:insert_pos] + content + root._text[insert_pos:]
-
-        # Update this block's end
-        delta = len(content)
-        target.end += delta
-
-        # Shift all blocks after insertion point
-        target._shift_positions_after(insert_pos, delta)
+        # Append to local text
+        target._text += content
 
         return Chunk(content=content, meta=chunk_meta)
 
@@ -470,22 +437,21 @@ class Block:
         self,
         content: str,
         style: str | None = None,
-        logprob: float | None = None,        
+        logprob: float | None = None,
     ) -> Chunk:
         """
-        Low-level prepend without mutator interception.
+        Low-level prepend to this block's local text.
 
-        Prepends content at the start of this block's text region.
+        Prepends content at the start of this block's text.
 
         Returns a Chunk with the content and metadata.
         """
         target = self.head
+
         if not content:
             chunk_meta = ChunkMeta(start=0, end=0, logprob=logprob, style=style)
             target.chunks.insert(0, chunk_meta)
             return Chunk(content="", meta=chunk_meta)
-
-        root = target.root
 
         # Create chunk metadata at start (relative position 0)
         chunk_meta = ChunkMeta(start=0, end=len(content), logprob=logprob, style=style)
@@ -497,15 +463,8 @@ class Block:
 
         target.chunks.insert(0, chunk_meta)
 
-        # Insert into shared string
-        insert_pos = target.start
-        root._text = root._text[:insert_pos] + content + root._text[insert_pos:]
-
-        # Update this block's end (start stays same, content inserted at start)
-        target.end += delta
-
-        # Shift all blocks after insertion point
-        target._shift_positions_after(insert_pos, delta)
+        # Prepend to local text
+        target._text = content + target._text
 
         return Chunk(content=content, meta=chunk_meta)
 
@@ -519,10 +478,8 @@ class Block:
         """
         Low-level insert at a relative position within this block.
 
-        Used by mutators for style-aware insertion (e.g., before postfix).
-
         Args:
-            rel_position: Position relative to self.start
+            rel_position: Position relative to start of local text
             content: Text to insert
             logprob: Optional log probability
             style: Optional chunk style
@@ -530,13 +487,12 @@ class Block:
         Returns a Chunk with the content and metadata.
         """
         target = self.head
+
         if not content:
             chunk_meta = ChunkMeta(start=rel_position, end=rel_position, logprob=logprob, style=style)
             target._insert_chunk_sorted(chunk_meta)
             return Chunk(content="", meta=chunk_meta)
 
-        root = target.root
-        abs_position = self.start + rel_position
         delta = len(content)
 
         # Create chunk metadata
@@ -552,14 +508,8 @@ class Block:
 
         target._insert_chunk_sorted(chunk_meta)
 
-        # Insert into shared string
-        root._text = root._text[:abs_position] + content + root._text[abs_position:]
-
-        # Update this block's end
-        target.end += delta
-
-        # Shift all blocks after insertion point
-        target._shift_positions_after(abs_position, delta)
+        # Insert into local text
+        target._text = target._text[:rel_position] + content + target._text[rel_position:]
 
         return Chunk(content=content, meta=chunk_meta)
 
@@ -572,219 +522,85 @@ class Block:
         self.chunks.append(chunk)
 
     # =========================================================================
-    # Position Shifting
-    # =========================================================================
-
-    def _shift_positions_after(self, position: int, delta: int) -> None:
-        """
-        Shift start/end of all blocks with positions after position.
-
-        Called after inserting text to update subsequent blocks.
-        Does NOT update ancestors (caller handles that separately).
-        Does NOT update self.
-        """
-        for block in self.root._iter_all_blocks():
-            if block is self:
-                continue
-            # Skip ancestors (handled separately)
-            if self._is_ancestor(block):
-                continue
-
-            if block.start >= position:
-                block.start += delta
-            if block.end > position:
-                block.end += delta
-
-    def _extend_ancestors(self, delta: int) -> None:
-        """Extend all ancestor blocks' end positions."""
-        node = self.parent
-        while node is not None:
-            node.end += delta
-            node = node.parent
-
-    def _contract_ancestors(self, delta: int) -> None:
-        """Contract all ancestor blocks' end positions."""
-        self._extend_ancestors(-delta)
-
-    def _is_ancestor(self, block: Block) -> bool:
-        """Check if block is an ancestor of self."""
-        node = self.parent
-        while node is not None:
-            if node is block:
-                return True
-            node = node.parent
-        return False
-
-    # =========================================================================
     # Raw Tree Operations (used by mutators)
     # =========================================================================
 
     def _raw_append_child(self, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
         """
-        Low-level append child without mutator interception.
+        Low-level append child.
+
+        Args:
+            child: Block to append, or None to create new block
+            content: Content for new block if child is None
+            to_body: If True, append to body. If False, append to children.
         """
-        children = self.body if to_body else self.children
         if child is None:
             child = Block()
             if content:
                 child._raw_append(content)
 
-        # Determine insertion position
-        # Use subtree_end() to find the rightmost position including all descendants
-        if children:
-            insert_pos = children[-1].subtree_end()
-        else:
-            insert_pos = children.parent.end
-
-        # Merge child's text if it has any
-        if child._text:
-            children.parent._merge_child_text(child, insert_pos)
-        else:
-            # Child has no text yet, just set its position
-            child.start = insert_pos
-            child.end = insert_pos
-
-        # Set up tree relationship
-        child.parent = children.parent
-        children.append(child)
+        target = self.body if to_body else self.children
+        child.parent = target.parent
+        target.append(child)
 
         return child
 
     def _raw_prepend_child(self, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
         """
-        Low-level prepend child without mutator interception.
+        Low-level prepend child.
+
+        Args:
+            child: Block to prepend, or None to create new block
+            content: Content for new block if child is None
+            to_body: If True, prepend to body. If False, prepend to children.
         """
-        children = self.body if to_body else self.children
         if child is None:
             child = Block()
             if content:
                 child._raw_append(content)
 
-        # Insertion position is at this block's start
-        insert_pos = children.parent.start
-
-        # Merge child's text if it has any
-        if child._text:
-            children.parent._merge_child_text(child, insert_pos)
-        else:
-            child.start = insert_pos
-            child.end = insert_pos
-
-        # Set up tree relationship
-        child.parent = children.parent
-        children.insert(0, child)
+        target = self.body if to_body else self.children
+        child.parent = target.parent
+        target.insert(0, child)
 
         return child
 
     def _raw_insert_child(self, index: int, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
         """
-        Low-level insert child at index without mutator interception.
+        Low-level insert child at index.
+
+        Args:
+            index: Index in body (if to_body=True) or children (if to_body=False)
+            child: Block to insert, or None to create new block
+            content: Content for new block if child is None
+            to_body: If True, index is relative to body. If False, index is relative to children.
         """
-        children = self.body if to_body else self.children
         if child is None:
             child = Block()
             if content:
                 child._raw_append(content)
 
-        # Determine insertion position
+        target = self.body if to_body else self.children
+
         if index <= 0:
-            return self._raw_prepend_child(child)
-        elif index >= len(children):
-            return self._raw_append_child(child)
-        else:
-            insert_pos = children[index - 1].subtree_end()
+            return self._raw_prepend_child(child, to_body=to_body)
+        if index >= len(target):
+            return self._raw_append_child(child, to_body=to_body)
 
-        # Merge child's text if it has any
-        if child._text:
-            children.parent._merge_child_text(child, insert_pos)
-        else:
-            child.start = insert_pos
-            child.end = insert_pos
-
-        # Set up tree relationship
-        child.parent = children.parent
-        children.insert(index, child)
+        child.parent = target.parent
+        target.insert(index, child)
 
         return child
-
-    def _merge_child_text(self, child: Block, insert_pos: int) -> None:
-        """Merge a child's text into the root's shared string."""
-        root = self.root
-        child_text = child._text
-        delta = len(child_text)
-
-        if not child_text:
-            return
-
-        # Insert child's text into shared string
-        root._text = root._text[:insert_pos] + child_text + root._text[insert_pos:]
-
-        # Calculate offset for remapping child positions
-        offset = insert_pos - child.start
-
-        # Remap child and all its descendants
-        self._remap_subtree(child, offset)
-
-        # Clear child's local text (now using root's)
-        child._text = ""
-
-        # Shift blocks after insertion
-        self._shift_positions_after(insert_pos, delta)
-
-    def _remap_subtree(self, block: Block, offset: int) -> None:
-        """Remap positions in a subtree by offset."""
-        block.start += offset
-        block.end += offset
-        for child in block.children:
-            self._remap_subtree(child, offset)
 
     def remove_child(self, child: Block) -> Block:
         """
         Remove a child block from the tree.
-
-        Note: This removes the block from the tree but does NOT remove
-        its text from the shared string (text becomes orphaned).
         """
         if child not in self.children:
             raise ValueError("Block is not a child of this block")
 
         child.parent = None
         self.children.remove(child)
-        return child
-
-    def remove_child_with_text(self, child: Block) -> Block:
-        """
-        Remove a child block and its text from the shared string.
-        """
-        if child not in self.children:
-            raise ValueError("Block is not a child of this block")
-
-        root = self.root
-        child_text = root._text[child.start:child.end]
-        delta = len(child_text)
-
-        if delta > 0:
-            # Remove text from shared string
-            root._text = root._text[:child.start] + root._text[child.end:]
-
-            # Shift blocks after removal
-            self._shift_positions_after(child.start, -delta)
-
-        # Store text locally on child
-        child._text = child_text
-        child.start = 0
-        child.end = len(child_text)
-
-        # Remap child's chunks (they're already relative, but subtree positions need reset)
-        for descendant in child._iter_all_blocks():
-            if descendant is not child:
-                descendant.start -= child.start
-                descendant.end -= child.start
-
-        # Remove from tree
-        child.parent = None
-        self.children.remove(child)
-
         return child
 
     # =========================================================================
@@ -793,7 +609,7 @@ class Block:
 
     def get_chunk_text(self, chunk: ChunkMeta) -> str:
         """Get the text for a specific chunk."""
-        return self.text[chunk.start:chunk.end]
+        return self._text[chunk.start:chunk.end]
 
     def get_chunk_at_position(self, rel_position: int) -> ChunkMeta | None:
         """Get the chunk containing the given relative position."""
@@ -820,8 +636,7 @@ class Block:
         chunks = self.get_chunks_by_style(style)
         if not chunks:
             return ""
-        # Chunks should be contiguous for a region, but handle gaps
-        parts = [self.text[c.start:c.end] for c in chunks]
+        parts = [self._text[c.start:c.end] for c in chunks]
         return "".join(parts)
 
     # =========================================================================
@@ -829,13 +644,13 @@ class Block:
     # =========================================================================
 
     def _iter_all_blocks(self) -> Iterator[Block]:
-        """Iterate all blocks in tree from root (depth-first)."""
+        """Iterate all blocks in tree (depth-first)."""
         yield self
         for child in self.children:
             yield from child._iter_all_blocks()
 
     def iter_depth_first(self) -> Iterator[Block]:
-        """Iterate this subtree in depth-first order (text order)."""
+        """Iterate this subtree in depth-first order."""
         yield self
         for child in self.children:
             yield from child.iter_depth_first()
@@ -847,41 +662,6 @@ class Block:
             yield node
             node = node.parent
 
-    def subtree_end(self) -> int:
-        """
-        Get the rightmost end position in this block's subtree.
-
-        This is the maximum end position among this block and all its descendants.
-        Used to find the correct insertion point after a sibling.
-        """
-        max_end = self.end
-        for child in self.children:
-            child_end = child.subtree_end()
-            if child_end > max_end:
-                max_end = child_end
-        return max_end
-
-    # def next_sibling(self) -> Block | None:
-    #     """Get next sibling or None."""
-    #     if self.parent is None:
-    #         return None
-    #     siblings = self.parent.children
-    #     try:
-    #         idx = siblings.index(self)
-    #         return siblings[idx + 1] if idx + 1 < len(siblings) else None
-    #     except ValueError:
-    #         return None
-
-    # def prev_sibling(self) -> Block | None:
-    #     """Get previous sibling or None."""
-    #     if self.parent is None:
-    #         return None
-    #     siblings = self.parent.children
-    #     try:
-    #         idx = siblings.index(self)
-    #         return siblings[idx - 1] if idx > 0 else None
-    #     except ValueError:
-    #         return None
     def next_sibling(self) -> Block | None:
         """Get next sibling or None."""
         if self.parent is None:
@@ -909,59 +689,34 @@ class Block:
         Get the rightmost (deepest last) descendant of this block.
 
         If this block has no children, returns self.
-        Otherwise, recursively finds the last child's rightmost descendant.
         """
         if not self.children:
             return self
         return self.children[-1].rightmost_descendant()
 
     def prev_or_none(self) -> Block | None:
-        """
-        Get previous block in text order, or None.
-
-        If there's a previous sibling, returns its rightmost descendant
-        (the block immediately before this one in text order).
-        Otherwise returns parent.
-        Returns None if this is the root.
-        """
+        """Get previous block in tree order, or None."""
         prev_sib = self.prev_sibling()
         if prev_sib is not None:
-            # Return the rightmost descendant of the previous sibling
             return prev_sib.rightmost_descendant()
         return self.parent
 
     def prev(self) -> Block:
-        """
-        Get previous block in text order.
-
-        If there's a previous sibling, returns its rightmost descendant.
-        Otherwise returns parent.
-        Raises ValueError if this is the root (no previous block).
-        """
+        """Get previous block in tree order."""
         result = self.prev_or_none()
         if result is None:
             raise ValueError("No previous block: this is the root")
         return result
 
     def next_or_none(self) -> Block | None:
-        """
-        Get next block in text order, or None.
-
-        If block has children, returns first child.
-        Otherwise returns next sibling, or walks up ancestors
-        to find the next block in the lineage.
-        Returns None if at the end of the tree.
-        """
-        # First check for children
+        """Get next block in tree order, or None."""
         if self.children:
             return self.children[0]
 
-        # Then check for next sibling
         next_sib = self.next_sibling()
         if next_sib is not None:
             return next_sib
 
-        # Walk up to find next in lineage
         node = self.parent
         while node is not None:
             next_sib = node.next_sibling()
@@ -972,14 +727,7 @@ class Block:
         return None
 
     def next(self) -> Block:
-        """
-        Get next block in text order.
-
-        If block has children, returns first child.
-        Otherwise returns next sibling, or walks up ancestors
-        to find the next block in the lineage.
-        Raises ValueError if at the end of the tree.
-        """
+        """Get next block in tree order."""
         result = self.next_or_none()
         if result is None:
             raise ValueError("No next block: at the end of the tree")
@@ -987,14 +735,10 @@ class Block:
 
     def has_newline(self) -> bool:
         """Check if this block's text ends with a newline."""
-        return self.text.endswith("\n")
+        return self._text.endswith("\n")
 
     def add_newline(self, style: str | None = None) -> Chunk:
-        """
-        Add a newline to the end of this block.
-
-        Returns a Chunk for the added newline.
-        """
+        """Add a newline to the end of this block."""
         return self._raw_append("\n", style=style)
 
     # =========================================================================
@@ -1002,16 +746,15 @@ class Block:
     # =========================================================================
 
     def find(self, pattern: str) -> int:
-        """Find pattern in this block's text. Returns relative position or -1."""
-        return self.text.find(pattern)
+        """Find pattern in this block's text. Returns position or -1."""
+        return self._text.find(pattern)
 
     def find_all(self, pattern: str) -> list[int]:
-        """Find all occurrences of pattern. Returns relative positions."""
-        text = self.text
+        """Find all occurrences of pattern. Returns positions."""
         positions = []
         start = 0
         while True:
-            pos = text.find(pattern, start)
+            pos = self._text.find(pattern, start)
             if pos == -1:
                 break
             positions.append(pos)
@@ -1020,18 +763,15 @@ class Block:
 
     def regex_search(self, pattern: str) -> re.Match | None:
         """Search for regex pattern. Returns first match or None."""
-        return re.search(pattern, self.text)
+        return re.search(pattern, self._text)
 
     def regex_find_all(self, pattern: str) -> list[re.Match]:
         """Find all regex matches in this block's text."""
-        return list(re.finditer(pattern, self.text))
-    
-    
-    def indent(self, spaces: int = 2, style: str | None = None):        
-        if not self.is_wrapper:            
-            # spaces_chunk = BlockChunk(content=" " * spaces, style=style or "tab")            
+        return list(re.finditer(pattern, self._text))
+
+    def indent(self, spaces: int = 2, style: str | None = None):
+        if not self.is_wrapper:
             self.prepend(" " * spaces, style=style or "tab")
-            # self.mutator.head.prepend([spaces_chunk])
         for child in self.children:
             child.indent(spaces, style=style)
         return self
@@ -1039,10 +779,10 @@ class Block:
     # =========================================================================
     # Tag-based Search
     # =========================================================================
-    
+
     def __getitem__(self, key: str | int) -> Block:
         if isinstance(key, int):
-            return self.body[key]  # Use body to respect mutator structure
+            return self.body[key]
         elif isinstance(key, str):
             return self.get_by_tag(key)
         else:
@@ -1096,8 +836,7 @@ class Block:
             attrs=attrs,
         )
         return self._raw_append_child(child)
-    
-    
+
     def view(
         self,
         name: str,
@@ -1111,7 +850,7 @@ class Block:
         schema = BlockSchema(name, type=type, role=role, tags=tags, style=style, attrs=attrs)
         self._raw_append_child(schema)
         return schema
-             
+
 
     # =========================================================================
     # Copy Operations
@@ -1125,7 +864,7 @@ class Block:
             deep: If True, copy entire subtree. If False, just this block.
 
         Returns:
-            New block with copied text stored locally
+            New block with copied content
         """
         new_block = Block(
             role=self.role,
@@ -1133,15 +872,13 @@ class Block:
             style=list(self.style),
             attrs=dict(self.attrs),
         )
-        new_block._text = self.text
-        new_block.start = 0
-        new_block.end = len(self.text)
+        new_block._text = self._text
         new_block.chunks = [c.copy() for c in self.chunks]
 
         if deep:
             for child in self.children:
                 child_copy = child.copy(deep=True)
-                new_block._raw_append_child(child_copy)
+                new_block._raw_append_child(child_copy, to_body=False)
 
         return new_block
 
@@ -1149,12 +886,11 @@ class Block:
     # Serialization
     # =========================================================================
 
-    def model_dump(self, include_text: bool = True) -> dict[str, Any]:
+    def model_dump(self) -> dict[str, Any]:
         """Serialize block to dictionary."""
-        data = {
+        return {
             "id": self.id,
-            "start": self.start,
-            "end": self.end,
+            "text": self._text,
             "role": self.role,
             "tags": self.tags,
             "style": self.style,
@@ -1169,11 +905,8 @@ class Block:
                 }
                 for c in self.chunks
             ],
-            "children": [c.model_dump(include_text=False) for c in self.children],
+            "children": [c.model_dump() for c in self.children],
         }
-        if include_text and self.is_root:
-            data["_text"] = self._text
-        return data
 
     @classmethod
     def model_load(cls, data: dict[str, Any]) -> Block:
@@ -1185,9 +918,7 @@ class Block:
             attrs=data.get("attrs", {}),
         )
         block.id = data.get("id", _generate_id())
-        block.start = data.get("start", 0)
-        block.end = data.get("end", 0)
-        block._text = data.get("_text", "")
+        block._text = data.get("text", "")
         block.chunks = [
             ChunkMeta(
                 id=c.get("id", _generate_id()),
@@ -1205,28 +936,29 @@ class Block:
             block.children.append(child)
 
         return block
-    
+
     # =========================================================================
     # Rendering
     # =========================================================================
-    
-    
+
     def commit(self) -> Block | None:
         post_block = self.mutator.commit(self)
         self.mutator._committed = True
         return post_block
-        
-    
+
     def transform(self) -> Block:
         from .transform import transform
         return transform(self)
-    
+
     def render(self) -> str:
-        tran_block = self.transform()
-        return tran_block._text
-    
+        """Render this block tree to a string by concatenating all text depth-first."""
+        parts = []
+        for block in self.iter_depth_first():
+            parts.append(block._text)
+        return "".join(parts)
+
     def print(self) -> None:
-        print(self.render())
+        print(self.transform().render())
 
     # =========================================================================
     # Debug
@@ -1235,7 +967,7 @@ class Block:
     def debug_tree(self, indent: int = 0) -> str:
         """Generate debug representation of block tree."""
         prefix = "  " * indent
-        parts = [f"{prefix}Block[{self.start}:{self.end}]"]
+        parts = [f"{prefix}Block"]
 
         if self.tags:
             parts.append(f" tags={self.tags}")
@@ -1244,8 +976,8 @@ class Block:
         if self.style:
             parts.append(f" style={self.style}")
 
-        content_preview = self.text[:30]
-        if len(self.text) > 30:
+        content_preview = self._text[:30]
+        if len(self._text) > 30:
             content_preview += "..."
         parts.append(f" text={content_preview!r}")
 
@@ -1266,10 +998,10 @@ class Block:
         print(self.debug_tree())
 
     def __repr__(self) -> str:
-        content_preview = self.text[:20] if self.text else ""
-        if len(self.text) > 20:
+        content_preview = self._text[:20] if self._text else ""
+        if len(self._text) > 20:
             content_preview += "..."
-        return f"Block[{self.start}:{self.end}]({content_preview!r}, children={len(self.children)})"
+        return f"Block({content_preview!r}, children={len(self.children)})"
 
 
 def _parse_style(style: str | list[str] | None) -> list[str]:
