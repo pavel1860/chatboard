@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generator, Type
 
 
-from .block import Block
+from .block import Block, BlockChildren
 from .chunk import Chunk
 # if TYPE_CHECKING:
 #     from .block import Block
@@ -149,11 +149,56 @@ class Mutator(metaclass=MutatorMeta):
     """
 
     styles: tuple[str, ...] = ()
-    
-    
-    
+    _committed: bool = False
+
+
     def __init__(self, block: Block):
         self.block = block
+
+    # =========================================================================
+    # Structure Access Properties
+    # =========================================================================
+
+    @property
+    def head(self) -> Block:
+        """
+        Get the head block (e.g., opening tag in structured mutators).
+
+        Base implementation returns the block itself.
+        Override in subclasses that create wrapper structures.
+        """
+        return self.block
+
+    @property
+    def body(self) -> BlockChildren:
+        """
+        Get the body blocks (content children).
+
+        Base implementation returns all children.
+        Override in subclasses that separate head/body/tail.
+        """
+        return self.block.children
+
+    @property
+    def tail(self) -> Block:
+        """
+        Get the tail block (e.g., closing tag in structured mutators).
+
+        Base implementation returns None (no separate tail).
+        Override in subclasses that create closing structures.
+        """
+        if self.body:
+            return self.body[-1].tail
+        return self.head
+
+    @property
+    def content(self) -> str:
+        """
+        Get the content text (unstyled chunks only).
+
+        Delegates to block.content property.
+        """
+        return self.block.content
         
 
     
@@ -211,25 +256,87 @@ class BlockMutator(Mutator):
         
         
 class XmlMutator(Mutator):
+    """
+    Mutator for XML-style block structures.
+
+    Creates blocks with:
+    - head: Opening tag block (<tag>)
+    - body: Content children between tags
+    - tail: Closing tag block (</tag>) after commit
+
+    Structure after init:
+        block
+        └── children[0]: opening tag (head)
+
+    Structure after commit:
+        block
+        ├── children[0]: opening tag (head)
+        ├── children[1:-1]: body content
+        └── children[-1]: closing tag (tail)
+    """
     styles = ("xml",)
+
+    # =========================================================================
+    # Structure Access Properties
+    # =========================================================================
+
+    @property
+    def head(self) -> Block:
+        """Opening tag block."""
+        return self.block.children[0]
+
+    # @property
+    # def body(self) -> BlockChildren:
+    #     """Content blocks between opening and closing tags."""
+    #     # if not self.block.children:
+    #     #     return []
+    #     if self._committed and len(self.block.children) > 1:
+    #         # Exclude head (first) and tail (last)
+    #         return self.block.children[1:-1]
+    #     # Before commit: everything after head is body
+    #     return self.block.children[1:]
     
+    @property
+    def body(self) -> BlockChildren:
+        return self.block.children[0].children
+
+    @property
+    def tail(self) -> Block:
+        """Closing tag block (only after commit)."""
+        if self._committed:
+            return self.block.children[-1]
+        return super().tail
+
+    @property
+    def content(self) -> str:
+        """Get the tag name (unstyled content of head block)."""
+        if self.head:
+            return self.head.content
+        return ""
+
+    # =========================================================================
+    # Lifecycle Methods
+    # =========================================================================
+
     @classmethod
     def init(cls, block: Block) -> Block:
         with Block() as blk:
-            # blk /= "<" + block.text + ">"
             blk /= block.text
             blk[0].prepend("<", style="xml")
             blk[0].append(">", style="xml")
         return blk
-    
-    
+
     def commit(self, block: Block) -> Block:
-        block /= "</" + block[0].text + ">"
-        return block.children[-1]
-    
+        if not self.tail.has_newline():       
+            self.tail.add_newline(style="xml")
+        post_fix = Block("</" + self.content + ">")
+        block._raw_append_child(post_fix, to_body=False)
+        return post_fix
+
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         if not child.prev().has_newline():
             yield child.prev().add_newline(style="xml")
+        yield child.indent(style="xml")
         
         
         

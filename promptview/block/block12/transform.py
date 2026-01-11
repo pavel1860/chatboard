@@ -6,6 +6,8 @@ from .mutator import BlockMutator
 
 
 def transform(block: Block, depth: int = 0) -> Block:
+    if block.is_rendered:
+        return block
     config = MutatorMeta.resolve(block.style, default=BlockMutator)
     tran_block = config.mutator.create_block(block.text, tags=block.tags, role=block.role, style=block.style, attrs=block.attrs)
     
