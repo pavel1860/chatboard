@@ -961,25 +961,6 @@ class BlockModel(Model):
     )
 
 
-# class BlockTreeBlock(Model):
-#     """
-#     Junction table for BlockTree ↔ BlockModel many-to-many relationship.
-
-#     Enables:
-#     - A BlockTree to contain multiple BlockModels
-#     - A BlockModel to appear in multiple BlockTrees (deduplication)
-#     - Ordered blocks within a tree via position
-#     - Efficient reverse lookups ("which trees contain this block?")
-#     """
-#     _namespace_name: str = "block_tree_blocks"
-
-#     id: int = KeyField(primary_key=True)
-#     tree_id: int = ModelField(foreign_key=True, index="btb_tree_idx")
-#     block_id: str = ModelField(foreign_key=True, foreign_cls=BlockModel, index="btb_block_idx")
-#     position: int = ModelField(default=0, order_by=True)  # Order within the tree
-#     is_root: bool = ModelField(default=False)  # Marks the root block of the tree
-#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-
 
 class BlockTree(VersionedModel):
     """
@@ -989,14 +970,9 @@ class BlockTree(VersionedModel):
     _artifact_kind: ArtifactKind = "block"
 
     id: int = KeyField(primary_key=True)
-    # root_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=BlockModel)  # Legacy: direct root reference
     span_id: int | None = ModelField(default=None, foreign_key=True)  # Execution span
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now, order_by=True)
 
-    # Legacy one-to-one relation
-    # root: BlockModel | None = RelationField(primary_key="root_id", foreign_key="id")
-
-    # New many-to-many via junction table
     blocks: List[BlockModel] = RelationField(
         primary_key="id",
         foreign_key="id",

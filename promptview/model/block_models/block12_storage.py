@@ -32,6 +32,7 @@ from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
     from ...block.block12 import Block, BlockSchema, ChunkMeta
+    from ..sql2.pg_query_builder import PgQueryBuilder
 
 
 # =============================================================================
@@ -780,7 +781,69 @@ async def get_block_usage_count(block_id: str) -> int:
 # High-Level API
 # =============================================================================
 
-class Block12Log:
+class BlockLogQuery:
+    
+    def __init__(self, *args, **kwargs):
+        self._query = None
+        self._limit = None
+        self._offset = None
+        self._order_by = "created_at"
+        self._filters = {}
+        
+        
+    def __await__(self):
+        return self.execute().__await__()
+    
+    def tail(self, limit: int) -> "BlockLogQuery":
+        self._limit = limit
+        self._order_by = "-created_at"
+        return self
+    
+    def head(self, limit: int) -> "BlockLogQuery":
+        self._limit = limit
+        self._order_by = "created_at"
+        return self
+    
+    
+    def print(self):
+        query = self.build_query()
+        query.print()
+        return self
+    
+    def where(
+        self, 
+        role: str | None = None, 
+    ) -> "BlockLogQuery":
+        if role is not None:
+            self._filters["role"] = role
+        if not self._filters:
+            raise ValueError("No filters provided")
+        return self
+    
+    
+    def build_query(self) -> "PgQueryBuilder[BlockTree]":
+        from ..versioning.models import BlockTree, BlockModel, BlockSpan, BlockTreeBlock
+        
+        block_model_query = BlockModel.query().include(BlockSpan)
+        if self._filters:
+            block_model_query = block_model_query.where(**self._filters)
+            
+        block_tree_query = BlockTree.query().include(block_model_query)
+        if self._limit is not None:
+            block_tree_query = block_tree_query.limit(self._limit)
+        if self._offset is not None:
+            block_tree_query = block_tree_query.offset(self._offset)
+        if self._order_by is not None:
+            block_tree_query = block_tree_query.order_by(self._order_by)
+        return block_tree_query
+    
+    async def execute(self) -> list["Block"]:
+        query = self.build_query()
+        blocks = await query.json_parse(parse_block_tree_query_result)
+        return blocks
+
+
+class BlockLog:
     """High-level API for Block12 storage operations."""
 
     @classmethod
@@ -808,6 +871,10 @@ class Block12Log:
                 span_id = curr_span.id
 
         return await insert_block(block, branch_id, turn_id, span_id)
+    
+    @classmethod
+    def query(cls, *args, **kwargs) -> "BlockLogQuery":
+        return BlockLogQuery(*args, **kwargs)
 
     @classmethod
     async def get(cls, tree_id: int) -> "Block | None":
