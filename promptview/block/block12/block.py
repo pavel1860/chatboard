@@ -24,7 +24,7 @@ from .chunk import ChunkMeta, Chunk
 
 if TYPE_CHECKING:
     from .mutator import Mutator
-    from .schema import BlockSchema
+    from .schema import BlockSchema, BlockListSchema
 
 
 def _generate_id() -> str:
@@ -794,10 +794,25 @@ class Block:
             if tag in block.tags:
                 return block
         raise ValueError(f"Block with tag {tag} not found")
+    
+    def get_schema(self, tag: str) -> "BlockSchema":
+        from .schema import BlockSchema
+        res = self.get_by_tag(tag)
+        if not isinstance(res, BlockSchema):
+            raise ValueError(f"Block {res} is not a BlockSchema")
+        return res
 
     def get_all_by_tag(self, tag: str) -> list[Block]:
         """Get all descendants with the given tag."""
         return [b for b in self.iter_depth_first() if tag in b.tags]
+    
+    
+    def get_all_schemas(self, tag: str) -> list["BlockSchema"]:
+        from .schema import BlockSchema
+        res = self.get_all_by_tag(tag)
+        if not all(isinstance(b, BlockSchema) for b in res):
+            raise ValueError(f"Blocks {res} are not all BlockSchemas")
+        return res
 
     def get_children_by_tag(self, tag: str) -> list[Block]:
         """Get direct children with the given tag."""
@@ -807,7 +822,7 @@ class Block:
     # Context Manager
     # =========================================================================
 
-    def __enter__(self) -> Block:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -845,11 +860,35 @@ class Block:
         tags: list[str] | None = None,
         style: str | list[str] | None = None,
         attrs: dict[str, Any] | None = None,
+        is_required: bool = True,
     ) -> "BlockSchema":
         from .schema import BlockSchema
-        schema = BlockSchema(name, type=type, role=role, tags=tags, style=style, attrs=attrs)
+        schema = BlockSchema(name, type=type, role=role, tags=tags, style=style, attrs=attrs, is_required=is_required)
         self._raw_append_child(schema)
         return schema
+    
+    
+    
+    def view_list(
+        self,
+        item_name: str,
+        key: str | None = None,
+        name: str | None = None,
+        tags: list[str] | None = None,        
+        style: str | None = None,
+        attrs: dict[str, Any] | None = None,
+    ) -> "BlockListSchema":
+        from .schema import BlockListSchema
+        schema_block = BlockListSchema(
+            item_name=item_name,
+            key=key,
+            name=name,
+            tags=tags,
+            attrs=attrs,
+            style=style,
+        )
+        self._raw_append_child(schema_block)
+        return schema_block
 
 
     # =========================================================================
@@ -959,6 +998,100 @@ class Block:
 
     def print(self) -> None:
         print(self.transform().render())
+
+    # =========================================================================
+    # Schema Extraction
+    # =========================================================================
+
+    def extract_schema(self, style: str | list[str] | None = None) -> "BlockSchema | None":
+        """
+        Extract a new BlockSchema tree containing only BlockSchema nodes.
+
+        Traverses this block's subtree and creates a new BlockSchema with
+        only BlockSchema children, preserving the schema hierarchy while
+        filtering out regular Block nodes.
+
+        Args:
+            style: Optional style(s) to apply to the extracted schema tree
+
+        Returns:
+            A new BlockSchema tree with only schema nodes, or None if no schemas found
+        """
+        from .schema import BlockSchema, BlockListSchema
+
+        # Create a schema from this block
+        if isinstance(self, BlockSchema):
+            # Already a schema - copy without children
+            new_schema = self.copy(deep=False)
+
+            # Apply style if provided
+            if style:
+                styles = _parse_style(style)
+                for s in styles:
+                    if s not in new_schema.style:
+                        new_schema.style.append(s)
+        else:
+            # Regular block - don't create a schema, just collect children
+            new_schema = None
+
+        # Collect schema children
+        schema_children = []
+        for child in self.children:
+            if isinstance(child, (BlockSchema, BlockListSchema)):
+                child_schema = child.extract_schema(style=style)
+                if child_schema is not None:
+                    schema_children.append(child_schema)
+            else:
+                # For regular blocks, search their children for nested schemas
+                self._collect_nested_schemas(child, schema_children, style=style)
+
+        if new_schema is not None:
+            # Add collected children to the schema
+            for child_schema in schema_children:
+                new_schema._raw_append_child(child_schema)
+            return new_schema
+        else:
+            # No parent schema - return based on number of children found
+            if len(schema_children) == 0:
+                return None
+            elif len(schema_children) == 1:
+                return schema_children[0]
+            else:
+                # Multiple schemas at root level - create a virtual wrapper
+                wrapper_schema = BlockSchema(
+                    name=None,  # No name makes it a wrapper
+                    style=["root"],
+                )
+                for child_schema in schema_children:
+                    wrapper_schema._raw_append_child(child_schema)
+                return wrapper_schema
+
+    def _collect_nested_schemas(
+        self,
+        block: "Block",
+        result: list,
+        style: str | list[str] | None = None
+    ) -> None:
+        """
+        Recursively search a Block's children for BlockSchema nodes.
+
+        Collects found BlockSchema nodes into the result list.
+
+        Args:
+            block: Block to search
+            result: List to append found schemas to
+            style: Style to apply to extracted schemas
+        """
+        from .schema import BlockSchema, BlockListSchema
+
+        for child in block.children:
+            if isinstance(child, (BlockSchema, BlockListSchema)):
+                child_schema = child.extract_schema(style=style)
+                if child_schema is not None:
+                    result.append(child_schema)
+            else:
+                # Keep searching deeper
+                self._collect_nested_schemas(child, result, style=style)
 
     # =========================================================================
     # Debug
