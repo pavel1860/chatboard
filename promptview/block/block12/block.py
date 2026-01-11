@@ -1003,7 +1003,11 @@ class Block:
     # Schema Extraction
     # =========================================================================
 
-    def extract_schema(self, style: str | list[str] | None = None) -> "BlockSchema | None":
+    def extract_schema(
+        self,
+        style: str | list[str] | None = None,
+        root: str | None = None,
+    ) -> "BlockSchema | None":
         """
         Extract a new BlockSchema tree containing only BlockSchema nodes.
 
@@ -1013,6 +1017,9 @@ class Block:
 
         Args:
             style: Optional style(s) to apply to the extracted schema tree
+            root: Optional root tag name. Only used when extracting from a
+                  regular Block with multiple schema children. If not provided
+                  and multiple schemas exist at root level, returns None.
 
         Returns:
             A new BlockSchema tree with only schema nodes, or None if no schemas found
@@ -1021,7 +1028,7 @@ class Block:
 
         # Create a schema from this block
         if isinstance(self, BlockSchema):
-            # Already a schema - copy without children
+            # Already a schema - copy without children (this IS the root)
             new_schema = self.copy(deep=False)
 
             # Apply style if provided
@@ -1046,7 +1053,7 @@ class Block:
                 self._collect_nested_schemas(child, schema_children, style=style)
 
         if new_schema is not None:
-            # Add collected children to the schema
+            # Already have a root schema - add collected children
             for child_schema in schema_children:
                 new_schema._raw_append_child(child_schema)
             return new_schema
@@ -1055,12 +1062,16 @@ class Block:
             if len(schema_children) == 0:
                 return None
             elif len(schema_children) == 1:
+                # Single schema child becomes the root
                 return schema_children[0]
             else:
-                # Multiple schemas at root level - create a virtual wrapper
+                # Multiple schemas at root level - need a wrapper
+                if root is None:
+                    # No root name provided - can't create proper wrapper
+                    return None
                 wrapper_schema = BlockSchema(
-                    name=None,  # No name makes it a wrapper
-                    style=["root"],
+                    name=root,
+                    style=_parse_style(style) if style else [],
                 )
                 for child_schema in schema_children:
                     wrapper_schema._raw_append_child(child_schema)

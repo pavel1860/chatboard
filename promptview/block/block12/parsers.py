@@ -68,7 +68,16 @@ class XmlParser(Process):
 
     def __init__(self, schema: "BlockSchema", upstream: Process | None = None, verbose: bool = False):
         super().__init__(upstream)
-        self.schema = schema
+
+        # Synthetic root tag handling
+        self._root_tag = "_root_"
+        self._has_synthetic_root = True
+
+        # Extract schema with root tag for wrapping multiple schemas
+        self.schema = schema.extract_schema(style="xml", root=self._root_tag)
+        if self.schema is None:
+            raise ParserError("No schema found to parse against")
+
         self._root: Block | None = None
         self._stack: list[tuple["BlockSchema", Block]] = []
         self._verbose = verbose
@@ -90,20 +99,22 @@ class XmlParser(Process):
         # Output queue for events
         self._output_queue: list[ParserEvent] = []
 
-        # Synthetic root tag handling
-        self._root_tag = "_root_"
-        self._has_synthetic_root = True
-
         # Stream exhausted flag
         self._is_stream_exhausted = False
 
         # Parser closed flag
         self._is_closed = False
 
-        # Create wrapper schema
+        # Create wrapper schema - if extracted schema already has _root_tag as name,
+        # use it directly; otherwise wrap it
         from .schema import BlockSchema
-        self._wrapper_schema = BlockSchema(name=self._root_tag)
-        self._wrapper_schema._raw_append_child(schema.copy())
+        if self.schema.name == self._root_tag:
+            # extract_schema created the wrapper for us
+            self._wrapper_schema = self.schema
+        else:
+            # Single schema - wrap it
+            self._wrapper_schema = BlockSchema(name=self._root_tag)
+            self._wrapper_schema._raw_append_child(self.schema)
         self._index = 0
 
         # Start with synthetic root
