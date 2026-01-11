@@ -899,11 +899,31 @@ class BlockSpan(Model):
     prefix_text: str = ModelField(default="")
     content_text: str = ModelField(default="")
     postfix_text: str = ModelField(default="")
-    prefix_chunks: dict = ModelField(default_factory=list)  # [{content, logprob}, ...]
-    content_chunks: dict = ModelField(default_factory=list)
-    postfix_chunks: dict = ModelField(default_factory=list)
+    prefix_chunks: list[dict] = ModelField(default_factory=list)  # [{content, logprob}, ...]
+    content_chunks: list[dict] = ModelField(default_factory=list)
+    postfix_chunks: list[dict] = ModelField(default_factory=list)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
+
+
+class BlockTreeBlock(Model):
+    """
+    Junction table for BlockTree ↔ BlockModel many-to-many relationship.
+
+    Enables:
+    - A BlockTree to contain multiple BlockModels
+    - A BlockModel to appear in multiple BlockTrees (deduplication)
+    - Ordered blocks within a tree via position
+    - Efficient reverse lookups ("which trees contain this block?")
+    """
+    _namespace_name: str = "block_tree_blocks"
+
+    id: int = KeyField(primary_key=True)
+    tree_id: int = ModelField(foreign_key=True, index="btb_tree_idx")
+    block_id: str = ModelField(foreign_key=True, index="btb_block_idx")
+    position: int = ModelField(default=0, order_by=True)  # Order within the tree
+    is_root: bool = ModelField(default=False)  # Marks the root block of the tree
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
 class BlockModel(Model):
     """
@@ -931,6 +951,35 @@ class BlockModel(Model):
 
     span: BlockSpan | None = RelationField(primary_key="span_id", foreign_key="id")
 
+    # Reverse relation: which trees contain this block (via junction table)
+    # Note: BlockTreeBlock and BlockTree defined below, uses forward reference
+    trees: List["BlockTree"] = RelationField(
+        primary_key="id",
+        foreign_key="id",
+        junction_keys=["block_id", "tree_id"],
+        junction_model=BlockTreeBlock  # Forward reference as string
+    )
+
+
+# class BlockTreeBlock(Model):
+#     """
+#     Junction table for BlockTree ↔ BlockModel many-to-many relationship.
+
+#     Enables:
+#     - A BlockTree to contain multiple BlockModels
+#     - A BlockModel to appear in multiple BlockTrees (deduplication)
+#     - Ordered blocks within a tree via position
+#     - Efficient reverse lookups ("which trees contain this block?")
+#     """
+#     _namespace_name: str = "block_tree_blocks"
+
+#     id: int = KeyField(primary_key=True)
+#     tree_id: int = ModelField(foreign_key=True, index="btb_tree_idx")
+#     block_id: str = ModelField(foreign_key=True, foreign_cls=BlockModel, index="btb_block_idx")
+#     position: int = ModelField(default=0, order_by=True)  # Order within the tree
+#     is_root: bool = ModelField(default=False)  # Marks the root block of the tree
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
 
 class BlockTree(VersionedModel):
     """
@@ -940,11 +989,20 @@ class BlockTree(VersionedModel):
     _artifact_kind: ArtifactKind = "block"
 
     id: int = KeyField(primary_key=True)
-    root_id: str = ModelField(foreign_key=True, foreign_cls=BlockModel)  # FK to blocks
+    # root_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=BlockModel)  # Legacy: direct root reference
     span_id: int | None = ModelField(default=None, foreign_key=True)  # Execution span
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
-    root: BlockModel | None = RelationField(primary_key="root_id", foreign_key="id")
+    # Legacy one-to-one relation
+    # root: BlockModel | None = RelationField(primary_key="root_id", foreign_key="id")
+
+    # New many-to-many via junction table
+    blocks: List[BlockModel] = RelationField(
+        primary_key="id",
+        foreign_key="id",
+        junction_keys=["tree_id", "block_id"],
+        junction_model=BlockTreeBlock
+    )
 
 
     @classmethod
@@ -990,7 +1048,7 @@ class BlockTree(VersionedModel):
                         BlockSpan.query(alias="bs").include(BlockModel)
                     )
                 ).order_by("created_at")
-            .parse(to_block, target="models")
+            # .parse(to_block, target="models")
         )
         return query
 

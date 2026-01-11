@@ -4,10 +4,17 @@ Block12 Merkle Tree Storage Layer.
 Stores Block12 structures with content-addressed Merkle tree deduplication.
 Identical subtrees automatically share storage.
 
-Schema (reuses existing tables):
+Schema:
 - block_spans: Content-addressed text+chunks storage
-- blocks: Merkle tree nodes
-- block_trees: Root references with versioning
+- blocks: Merkle tree nodes (content-addressed by Merkle hash)
+- block_trees: Tree containers with versioning
+- block_tree_blocks: Junction table for tree ↔ block many-to-many relationship
+
+Junction Table Benefits:
+- Efficient batch loading (3 queries instead of N recursive queries)
+- Reverse lookups ("which trees contain this block?")
+- Block usage counting (for garbage collection)
+- Explicit ordering via position column
 
 Block12 Simplifications vs Block11:
 - No prefix/content/postfix separation - just text and chunks
@@ -20,7 +27,7 @@ import json
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
-from ..versioning.models import BlockTree, BlockModel, BlockSpan
+from ..versioning.models import BlockTree, BlockModel, BlockSpan, BlockTreeBlock
 from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
@@ -208,30 +215,35 @@ def load_block(
 
     Creates proper Block/BlockSchema instances based on block_type.
     Reconstructs chunks from stored data.
+
+    Block12 stores text on the root block only, with all descendants
+    referencing positions within that shared text. We rebuild this by:
+    1. Creating block instances with their metadata
+    2. Building the complete text in depth-first order
+    3. Setting start/end positions as we go
     """
     from ...block.block12 import Block, BlockSchema, ChunkMeta
 
-    def load_block_data(block_id: str, parent_text: str = "", parent_offset: int = 0) -> "Block":
-        """Recursively load a block and its children."""
-        block_data = blocks[block_id]
+    def get_span_data(block_data: dict) -> tuple[str, list[dict]]:
+        """Extract text and chunks from a block's span."""
+        span_id = block_data.get("span_id")
+        if not span_id:
+            return "", []
 
-        # Load text and chunks from span
-        text = ""
-        chunks: list[ChunkMeta] = []
-        if block_data.get("span_id"):
-            span_data = spans.get(block_data["span_id"])
-            if span_data:
-                text = span_data.get("content_text", "")
-                for chunk_data in span_data.get("content_chunks", []):
-                    chunks.append(ChunkMeta(
-                        start=chunk_data["start"],
-                        end=chunk_data["end"],
-                        logprob=chunk_data.get("logprob"),
-                        style=chunk_data.get("style"),
-                        id=chunk_data.get("id", ""),
-                    ))
+        # Check for inline span (from include query)
+        span_data = block_data.get("span")
+        if span_data and isinstance(span_data, dict):
+            return span_data.get("content_text", ""), span_data.get("content_chunks", [])
 
-        # Determine block type and create appropriate class
+        # Look up in spans dict
+        span_data = spans.get(span_id)
+        if span_data:
+            return span_data.get("content_text", ""), span_data.get("content_chunks", [])
+
+        return "", []
+
+    def create_block_instance(block_data: dict) -> "Block":
+        """Create a Block/BlockSchema instance with metadata (no text yet)."""
         block_type = block_data.get("block_type", "block")
         styles = block_data.get("styles") or []
         tags = block_data.get("tags") or []
@@ -239,7 +251,7 @@ def load_block(
         attrs = block_data.get("attrs") or {}
 
         if block_type == "schema":
-            blk = BlockSchema(
+            return BlockSchema(
                 name=block_data.get("name"),
                 role=role,
                 tags=tags,
@@ -247,38 +259,213 @@ def load_block(
                 attrs=attrs,
             )
         else:
-            blk = Block(
+            return Block(
                 role=role,
                 tags=tags,
                 style=styles,
                 attrs=attrs,
             )
 
-        # Set text and chunks directly (bypass normal append)
-        if text:
-            blk._text = text
-            blk.start = 0
-            blk.end = len(text)
-            blk.chunks = chunks
+    def build_tree(block_id: str, root_text: list[str], position: list[int]) -> "Block":
+        """
+        Recursively build the block tree while accumulating text.
 
-        # Load children recursively
+        Args:
+            block_id: ID of block to build
+            root_text: List with single string element (mutable accumulator)
+            position: List with single int element (current position, mutable)
+
+        Returns:
+            Block instance with correct positions
+        """
+        block_data = blocks[block_id]
+        blk = create_block_instance(block_data)
+
+        # Get this block's text and chunks
+        text, chunks_data = get_span_data(block_data)
+
+        # Record start position
+        blk.start = position[0]
+
+        # Append this block's text to root
+        if text:
+            root_text[0] += text
+            position[0] += len(text)
+
+            # Create chunk metadata (positions are relative to block start)
+            for chunk_data in chunks_data:
+                blk.chunks.append(ChunkMeta(
+                    start=chunk_data["start"],
+                    end=chunk_data["end"],
+                    logprob=chunk_data.get("logprob"),
+                    style=chunk_data.get("style"),
+                    id=chunk_data.get("id", ""),
+                ))
+
+        # Record end position (before children)
+        blk.end = position[0]
+
+        # Recursively build children
         for child_id in block_data.get("children", []):
-            child = load_block_data(child_id)
-            # Merge child into parent's text
-            if child._text:
-                insert_pos = blk.end if blk.is_root else len(blk._text)
-                blk._text = blk._text + child._text
-                # Remap child positions
-                offset = insert_pos
-                child.start = offset
-                child.end = offset + len(child._text)
-                child._text = ""  # Clear local text, now using parent's
+            child = build_tree(child_id, root_text, position)
             child.parent = blk
             blk.children.append(child)
 
         return blk
 
-    return load_block_data(root_id)
+    # Build the tree, accumulating text as we go
+    root_text = [""]  # Mutable accumulator
+    position = [0]    # Current position
+    root_block = build_tree(root_id, root_text, position)
+
+    # Set the accumulated text on root
+    root_block._text = root_text[0]
+
+    return root_block
+
+
+def parse_block_tree_query_result(trees: list[dict]) -> list["Block"]:
+    """
+    Parse BlockTree query results with nested blocks into Block structures.
+
+    This function is designed to be used with PgQueryBuilder.parse() to transform
+    query results that include the `blocks` relation via junction table.
+
+    Expected input format (from query with .include(BlockModel)):
+    [
+        {
+            'id': 1,
+            'artifact_id': 1,
+            'blocks': [
+                {
+                    'id': 'hash...',
+                    'path': '',
+                    'span': {'content_text': '...', 'content_chunks': [...]},
+                    'children': ['child_hash1', 'child_hash2'],
+                    ...
+                },
+                ...
+            ]
+        }
+    ]
+
+    Args:
+        trees: List of BlockTree dicts from query result
+
+    Returns:
+        List of reconstructed Block instances
+    """
+    results = []
+
+    for tree_data in trees:
+        blocks_list = tree_data.get("blocks", [])
+        if not blocks_list:
+            continue
+
+        # Transform flat list into dicts keyed by ID
+        blocks: dict[str, dict] = {}
+        spans: dict[str, dict] = {}
+        root_id = None
+
+        for block_data in blocks_list:
+            block_id = block_data["id"]
+            blocks[block_id] = block_data
+
+            # Extract span if nested (from include query)
+            span_data = block_data.get("span")
+            if span_data and isinstance(span_data, dict):
+                span_id = span_data.get("id")
+                if span_id:
+                    spans[span_id] = span_data
+
+            # Find root block (path == "" or empty)
+            path = block_data.get("path", "")
+            if path == "" or path is None:
+                root_id = block_id
+
+        # Fallback: if no root found by path, look for block with is_root flag
+        # or use the block that isn't a child of any other block
+        if root_id is None:
+            all_children = set()
+            for block_data in blocks_list:
+                for child_id in block_data.get("children", []):
+                    all_children.add(child_id)
+
+            for block_data in blocks_list:
+                if block_data["id"] not in all_children:
+                    root_id = block_data["id"]
+                    break
+
+        if root_id is None:
+            continue  # Skip if we can't find a root
+
+        # Reconstruct the block tree
+        block = load_block(root_id, blocks, spans)
+        results.append(block)
+
+    return results
+
+
+async def parse_block_trees(trees: list["BlockTree"]) -> list["Block"]:
+    """
+    Async parser for BlockTree model instances with included blocks relation.
+
+    Use with PgQueryBuilder.parse(parse_block_trees, target="models")
+
+    Args:
+        trees: List of BlockTree model instances (with blocks relation loaded)
+
+    Returns:
+        List of reconstructed Block instances
+    """
+    # Convert model instances to dicts for parsing
+    tree_dicts = []
+    for tree in trees:
+        tree_dict = {
+            "id": tree.id,
+            "artifact_id": getattr(tree, "artifact_id", None),
+            "blocks": [],
+        }
+
+        # Get blocks from the relation (may be list of BlockModel instances)
+        blocks_rel = getattr(tree, "blocks", [])
+        for block_model in blocks_rel:
+            if hasattr(block_model, "model_dump"):
+                block_dict = block_model.model_dump()
+            elif isinstance(block_model, dict):
+                block_dict = block_model
+            else:
+                # Assume it's a model instance with attributes
+                block_dict = {
+                    "id": block_model.id,
+                    "span_id": block_model.span_id,
+                    "path": block_model.path,
+                    "role": block_model.role,
+                    "tags": block_model.tags,
+                    "styles": block_model.styles,
+                    "name": block_model.name,
+                    "attrs": block_model.attrs,
+                    "children": block_model.children,
+                    "block_type": block_model.block_type,
+                }
+                # Include span if loaded
+                if hasattr(block_model, "span") and block_model.span:
+                    span = block_model.span
+                    block_dict["span"] = {
+                        "id": span.id,
+                        "content_text": span.content_text,
+                        "content_chunks": span.content_chunks,
+                        "prefix_text": span.prefix_text,
+                        "prefix_chunks": span.prefix_chunks,
+                        "postfix_text": span.postfix_text,
+                        "postfix_chunks": span.postfix_chunks,
+                    }
+
+            tree_dict["blocks"].append(block_dict)
+
+        tree_dicts.append(tree_dict)
+
+    return parse_block_tree_query_result(tree_dicts)
 
 
 # =============================================================================
@@ -296,6 +483,7 @@ async def insert_block(
 
     Uses INSERT ... ON CONFLICT DO NOTHING for automatic deduplication.
     Only new spans/blocks are inserted; existing ones are reused.
+    Creates junction table entries for BlockTree ↔ BlockModel relationship.
 
     Args:
         block: Root block to insert
@@ -309,7 +497,7 @@ async def insert_block(
     root_data, all_blocks, all_spans = dump_block(block)
     root_id = root_data["id"]
 
-    async def insert_transaction(tx):
+    async def insert_spans_and_blocks(tx):
         # --- Step 1: Insert spans (content deduplication) ---
         if all_spans:
             span_rows = [
@@ -365,13 +553,38 @@ async def insert_block(
 
         return True
 
-    await PGConnectionManager.run_in_transaction(insert_transaction)
+    await PGConnectionManager.run_in_transaction(insert_spans_and_blocks)
 
     # Create tree record
-    tree = await BlockTree(root_id=root_id, span_id=span_id).save(
+    tree = await BlockTree(span_id=span_id).save(
         branch=branch_id,
         turn=turn_id,
     )
+
+    # --- Step 3: Insert junction table entries ---
+    # Build position map: block_id -> position (based on path)
+    junction_rows = []
+    for position, (block_id, blk_data) in enumerate(all_blocks.items()):
+        is_root = (block_id == root_id)
+        junction_rows.append((
+            tree.id,
+            block_id,
+            position,
+            is_root,
+            dt.datetime.now(),
+        ))
+
+    if junction_rows:
+        async def insert_junction(tx):
+            await tx.executemany(
+                """INSERT INTO block_tree_blocks
+                   (tree_id, block_id, position, is_root, created_at)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                junction_rows
+            )
+            return True
+
+        await PGConnectionManager.run_in_transaction(insert_junction)
 
     return tree
 
@@ -380,77 +593,105 @@ async def get_block_tree(tree_id: int) -> "Block | None":
     """
     Retrieve a Block12 tree by tree ID.
 
-    Fetches the tree, then recursively loads all blocks and spans.
+    Uses junction table for efficient batch loading.
+
+    Args:
+        tree_id: The tree ID to fetch
+
+    Returns:
+        Block instance or None if not found
     """
     tree = await BlockTree.get_or_none(tree_id)
     if tree is None:
         return None
 
-    return await load_block_from_db(tree.root_id)
+    return await load_block_from_junction(tree_id)
 
 
-async def load_block_from_db(root_id: str) -> "Block":
+async def load_block_from_junction(tree_id: int) -> "Block | None":
     """
-    Load a block tree from database starting from root_id.
+    Load a block tree using the junction table for efficient fetching.
 
-    Recursively fetches all blocks and their spans.
+    Fetches all blocks and spans for a tree in minimal queries:
+    1. Get all block IDs from junction table
+    2. Batch fetch all blocks
+    3. Batch fetch all spans
+    4. Reconstruct tree in memory
+
+    Args:
+        tree_id: The tree ID to load
+
+    Returns:
+        Block instance or None if no blocks found
     """
-    blocks_to_fetch = {root_id}
-    blocks: dict[str, dict] = {}
-    spans: dict[str, dict] = {}
+    # Step 1: Get all block IDs and their positions from junction table
+    junction_rows = await PGConnectionManager.fetch(
+        """SELECT block_id, position, is_root
+           FROM block_tree_blocks
+           WHERE tree_id = $1
+           ORDER BY position""",
+        tree_id
+    )
 
-    # Iteratively fetch blocks (BFS to get all needed blocks)
-    while blocks_to_fetch:
-        block_ids = list(blocks_to_fetch - set(blocks.keys()))
-        if not block_ids:
+    if not junction_rows:
+        return None
+
+    block_ids = [row["block_id"] for row in junction_rows]
+    root_id = None
+    for row in junction_rows:
+        if row["is_root"]:
+            root_id = row["block_id"]
             break
 
-        rows = await PGConnectionManager.fetch(
-            """SELECT id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, block_type, item_name, path
-               FROM blocks WHERE id = ANY($1)""",
-            block_ids
+    # Fallback: if no is_root flag, use first block (position 0)
+    if root_id is None and block_ids:
+        root_id = block_ids[0]
+
+    # Step 2: Batch fetch all blocks
+    block_rows = await PGConnectionManager.fetch(
+        """SELECT id, span_id, role, tags, styles, name, type_name, attrs,
+                  children, is_rendered, block_type, item_name, path
+           FROM blocks WHERE id = ANY($1)""",
+        block_ids
+    )
+
+    blocks: dict[str, dict] = {}
+    span_ids_to_fetch: set[str] = set()
+
+    for row in block_rows:
+        block_data = dict(row)
+        # Parse JSON strings
+        if isinstance(block_data.get("attrs"), str):
+            block_data["attrs"] = json.loads(block_data["attrs"])
+        if isinstance(block_data.get("children"), str):
+            block_data["children"] = json.loads(block_data["children"])
+        if isinstance(block_data.get("tags"), str):
+            block_data["tags"] = json.loads(block_data["tags"])
+        if isinstance(block_data.get("styles"), str):
+            block_data["styles"] = json.loads(block_data["styles"])
+
+        blocks[block_data["id"]] = block_data
+
+        if block_data.get("span_id"):
+            span_ids_to_fetch.add(block_data["span_id"])
+
+    # Step 3: Batch fetch all spans
+    spans: dict[str, dict] = {}
+    if span_ids_to_fetch:
+        span_rows = await PGConnectionManager.fetch(
+            """SELECT id, prefix_text, content_text, postfix_text,
+                      prefix_chunks, content_chunks, postfix_chunks
+               FROM block_spans WHERE id = ANY($1)""",
+            list(span_ids_to_fetch)
         )
+        for row in span_rows:
+            span_data = dict(row)
+            for key in ("prefix_chunks", "content_chunks", "postfix_chunks"):
+                if isinstance(span_data.get(key), str):
+                    span_data[key] = json.loads(span_data[key])
+            spans[span_data["id"]] = span_data
 
-        span_ids_to_fetch = set()
-        for row in rows:
-            block_data = dict(row)
-            # Parse JSON strings to proper types
-            if isinstance(block_data.get("attrs"), str):
-                block_data["attrs"] = json.loads(block_data["attrs"])
-            if isinstance(block_data.get("children"), str):
-                block_data["children"] = json.loads(block_data["children"])
-            if isinstance(block_data.get("tags"), str):
-                block_data["tags"] = json.loads(block_data["tags"])
-            if isinstance(block_data.get("styles"), str):
-                block_data["styles"] = json.loads(block_data["styles"])
-            blocks[block_data["id"]] = block_data
-
-            # Queue children for fetching
-            for child_id in block_data.get("children") or []:
-                if child_id not in blocks:
-                    blocks_to_fetch.add(child_id)
-
-            # Queue span for fetching
-            if block_data.get("span_id"):
-                span_ids_to_fetch.add(block_data["span_id"])
-
-        # Fetch spans
-        if span_ids_to_fetch:
-            span_rows = await PGConnectionManager.fetch(
-                """SELECT id, prefix_text, content_text, postfix_text,
-                          prefix_chunks, content_chunks, postfix_chunks
-                   FROM block_spans WHERE id = ANY($1)""",
-                list(span_ids_to_fetch)
-            )
-            for row in span_rows:
-                span_data = dict(row)
-                for key in ("prefix_chunks", "content_chunks", "postfix_chunks"):
-                    if isinstance(span_data.get(key), str):
-                        span_data[key] = json.loads(span_data[key])
-                spans[span_data["id"]] = span_data
-
-        blocks_to_fetch -= set(blocks.keys())
-
+    # Step 4: Reconstruct tree
     return load_block(root_id, blocks, spans)
 
 
@@ -477,13 +718,62 @@ async def get_blocks(
 
     result = {}
     for tree in trees:
-        block = await load_block_from_db(tree.root_id)
-        if dump_models:
-            result[tree.artifact_id] = block.model_dump()
-        else:
-            result[tree.artifact_id] = block
+        block = await load_block_from_junction(tree.id)
+        if block is not None:
+            if dump_models:
+                result[tree.artifact_id] = block.model_dump()
+            else:
+                result[tree.artifact_id] = block
 
     return result
+
+
+async def get_trees_containing_block(block_id: str) -> list[BlockTree]:
+    """
+    Find all trees that contain a specific block (reverse lookup).
+
+    Uses the junction table for efficient querying.
+
+    Args:
+        block_id: The Merkle hash ID of the block to search for
+
+    Returns:
+        List of BlockTree instances containing this block
+    """
+    tree_ids = await PGConnectionManager.fetch(
+        """SELECT DISTINCT tree_id
+           FROM block_tree_blocks
+           WHERE block_id = $1""",
+        block_id
+    )
+
+    if not tree_ids:
+        return []
+
+    ids = [row["tree_id"] for row in tree_ids]
+    trees = await BlockTree.query().where(BlockTree.id.isin(ids))
+    return list(trees)
+
+
+async def get_block_usage_count(block_id: str) -> int:
+    """
+    Get the number of trees that use a specific block.
+
+    Useful for determining if a block can be garbage collected.
+
+    Args:
+        block_id: The Merkle hash ID of the block
+
+    Returns:
+        Number of trees referencing this block
+    """
+    result = await PGConnectionManager.fetchval(
+        """SELECT COUNT(DISTINCT tree_id)
+           FROM block_tree_blocks
+           WHERE block_id = $1""",
+        block_id
+    )
+    return result or 0
 
 
 # =============================================================================
@@ -532,3 +822,13 @@ class Block12Log:
     ) -> dict[int, "Block"]:
         """Get blocks by artifact IDs."""
         return await get_blocks(artifact_ids, dump_models)
+
+    @classmethod
+    async def find_trees_with_block(cls, block_id: str) -> list[BlockTree]:
+        """Find all trees containing a specific block."""
+        return await get_trees_containing_block(block_id)
+
+    @classmethod
+    async def get_block_usage(cls, block_id: str) -> int:
+        """Get number of trees using a specific block."""
+        return await get_block_usage_count(block_id)

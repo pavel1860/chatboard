@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 Ts = TypeVar("Ts", bound="Model")
 
+RetModel = TypeVar("RetModel")
+
 
 def json_agg(query: "SelectQuerySet", alias: str):
     from .expressions import Expression
@@ -590,6 +592,10 @@ class PgQueryBuilder(Generic[Ts]):
         rows = await PGConnectionManager.fetch(sql, *params)
         return [self.parse_row(row, return_json=True) for row in rows]
 
+    
+    async def json_parse(self, func: Callable[[list[dict[str, Any]]],  RetModel]) -> RetModel:
+        rows = await self.json()
+        return func(rows)
 
     async def execute(self) -> list[Ts]:
         """

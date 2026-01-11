@@ -20,7 +20,7 @@ import json
 import datetime as dt
 from typing import TYPE_CHECKING, Any, List, Literal
 
-from ..versioning.models import Artifact, Branch, Turn, VersionedModel, TurnStatus, ExecutionSpan, BlockTree, BlockModel, BlockSpan
+from ..versioning.models import Artifact, Branch, Turn, VersionedModel, TurnStatus, ExecutionSpan, BlockTree, BlockModel, BlockSpan, BlockTreeBlock
 from ..model3 import Model
 from ..fields import KeyField, ModelField, RelationField
 from ...utils.db_connections import PGConnectionManager
