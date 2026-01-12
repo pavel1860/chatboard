@@ -10,15 +10,16 @@ Maps XML events to block building operations:
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Generator
+from typing import TYPE_CHECKING, Any, Literal, Generator, TypeVar
 from xml.parsers import expat
 
 from .block import Block
 from .chunk import Chunk, ChunkMeta
 from ...prompt.fbp_process import Process
+from .schema import BlockSchema, BlockListSchema, BlockList
 
-if TYPE_CHECKING:
-    from .schema import BlockSchema
+# if TYPE_CHECKING:
+#     from .schema import BlockSchema, BlockListSchema
 
 
 class ParserError(Exception):
@@ -33,6 +34,123 @@ class ParserEvent:
     type: Literal["block_init", "block_commit", "block_delta"]
     block: Block
     chunks: list[Chunk] | None = None
+
+
+
+
+TxSchema = TypeVar("TxSchema", BlockSchema, BlockListSchema)
+
+class SchemaCtx[TxSchema]:
+    
+    def __init__(self, schema: TxSchema):
+        self.schema: TxSchema = schema
+        self._block: Block | None = None
+        
+    @property
+    def block(self) -> Block:
+        if self._block is None:
+            raise ValueError("Block is not initialized")
+        return self._block
+
+    def init(self, name: str, attrs: dict) -> list[SchemaCtx]:
+        raise NotImplementedError("init not implemented")
+    
+    
+    def append(self, content: str, logprob: float):
+        raise NotImplementedError("append not implemented")
+    
+    def commit(self, name: str):
+        raise NotImplementedError("commit not implemented")
+    
+    
+    def get_child_schema(self, name: str, attrs: dict) -> BlockSchema | BlockListSchema:
+        raise NotImplementedError("get_child_schema not implemented")
+    
+    def build_child_schema(self, name: str, attrs: dict):
+        schema = self.get_child_schema(name, attrs)
+        if schema is None:
+            raise ValueError(f"Unknown tag '{name}' - no matching schema found")
+        if isinstance(schema, BlockListSchema):
+            return BlockListSchemaCtx(schema)
+        elif isinstance(schema, BlockSchema):
+            return BlockSchemaCtx(schema)
+        else:
+            raise ValueError(f"Unknown schema type: {type(schema)}")
+    
+class BlockSchemaCtx(SchemaCtx[BlockSchema]):
+    
+    
+    def get_child_schema(self, name: str, attrs: dict) -> BlockSchema | BlockListSchema:
+        schema = self.schema.get_schema(name)
+        return schema
+           
+    def init(self, name: str, attrs: dict) -> list[SchemaCtx]:
+        self._block = Block(
+            role=self.schema.role,
+            tags=list(self.schema.tags),
+            style=list(self.schema.style),
+            attrs=dict(attrs) if attrs else dict(self.schema.attrs),
+        )
+        return [self]
+    
+    def append(self, content: str, logprob: float):
+        self.block._raw_append(content, logprob=logprob)
+        
+
+class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
+    
+    
+    def _get_key(self, attrs: dict) -> str:
+        if not self.schema.key:
+            raise ValueError("key is required for BlockListSchema")
+        item_name = attrs.get(self.schema.key)
+        if not isinstance(item_name, str):
+            raise ValueError(f"Item name '{item_name}' is not a string")
+        return item_name
+        
+    
+    def get_child_schema(self, name: str, attrs: dict) -> BlockSchema | BlockListSchema:
+        item_name = self._get_key(attrs)
+        schema = self.schema.get_schema(item_name)
+        if schema is None:
+            raise ValueError(f"Unknown item name '{item_name}' - no matching schema found")
+        return schema
+    
+    def init(self, name: str, attrs: dict) -> list[SchemaCtx]:        
+        self._block = BlockList(
+            role=self.schema.role,
+            tags=list(self.schema.tags),
+            style=list(self.schema.style),
+            attrs=dict(attrs) if attrs else dict(self.schema.attrs),
+        )
+        item_name = self._get_key(attrs)
+        item_ctx = self.build_child_schema(item_name, attrs)
+        item_ctx.init(item_name, attrs)
+        return [self, item_ctx]
+
+class ContextStack:
+    
+    def __init__(self, schema: "BlockSchema | BlockListSchema"):
+        self._stack: list[SchemaCtx] = []
+        self._schema = schema
+    
+    
+    def top(self) -> "SchemaCtx":
+        return self._stack[-1]
+        
+    def init(self, name: str, attrs: dict):
+        schema_ctx = self.top().build_child_schema(name, attrs)
+        ctx_list = schema_ctx.init(name, attrs)
+        self._stack.extend(ctx_list)
+    
+    def commit(self, name: str):
+        pass  
+        
+    def append(self, chunks: list[tuple[str, float | None]]):
+        return self.top().append(chunks)
+    
+
+
 
 
 class XmlParser(Process):
@@ -80,6 +198,7 @@ class XmlParser(Process):
 
         self._root: Block | None = None
         self._stack: list[tuple["BlockSchema", Block]] = []
+        self._ctx_stack: ContextStack = ContextStack(self.schema)
         self._verbose = verbose
 
         # Expat parser setup
@@ -315,6 +434,7 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Block building
     # -------------------------------------------------------------------------
+
 
     def _handle_start(self, name: str, attrs: dict, chunks: list[tuple[str, float | None]]):
         """Handle opening tag - instantiate block from schema."""
