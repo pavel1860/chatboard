@@ -208,8 +208,8 @@ class XmlParser(Process):
         self._parser.EndElementHandler = self._on_end
         self._parser.CharacterDataHandler = self._on_chardata
 
-        # Chunk tracking for logprobs
-        self._chunks: list[tuple[int, int, str, float | None]] = []  # (start_byte, end_byte, content, logprob)
+        # Chunk tracking for logprobs - stores (start_byte, end_byte, Chunk)
+        self._chunks: list[tuple[int, int, Chunk]] = []
         self._total_bytes = 0
 
         # Pending event for deferred processing
@@ -286,12 +286,18 @@ class XmlParser(Process):
         # Consume upstream chunks until we have output
         while not self._output_queue and not self._is_stream_exhausted:
             try:
-                chunk = await super().__anext__()
+                upstream_chunk = await super().__anext__()
                 # Feed the chunk (may produce output)
-                if hasattr(chunk, 'content'):
-                    self.feed(chunk.content, logprob=getattr(chunk, 'logprob', None))
+                if isinstance(upstream_chunk, Chunk):
+                    self.feed(upstream_chunk)
+                elif hasattr(upstream_chunk, 'content'):
+                    chunk = Chunk.from_content(
+                        upstream_chunk.content,
+                        logprob=getattr(upstream_chunk, 'logprob', None)
+                    )
+                    self.feed(chunk)
                 else:
-                    self.feed(str(chunk))
+                    self.feed(str(upstream_chunk))
             except StopAsyncIteration:
                 # Upstream exhausted
                 self._is_stream_exhausted = True
@@ -308,25 +314,29 @@ class XmlParser(Process):
     # Feeding data
     # -------------------------------------------------------------------------
 
-    def feed(self, text: str, logprob: float | None = None, is_final: bool = False):
+    def feed(self, chunk: Chunk | str, logprob: float | None = None, is_final: bool = False):
         """
-        Feed text to the parser.
+        Feed a chunk to the parser.
 
         Args:
-            text: Text content to parse
-            logprob: Optional log probability for this chunk
+            chunk: Chunk object or string content to parse
+            logprob: Optional log probability (used if chunk is a string)
             is_final: Whether this is the last chunk
         """
-        data = text.encode("utf-8")
+        # Convert string to Chunk if needed
+        if isinstance(chunk, str):
+            chunk = Chunk.from_content(chunk, logprob=logprob)
+
+        data = chunk.content.encode("utf-8")
         start = self._total_bytes
         end = start + len(data)
-        self._chunks.append((start, end, text, logprob))
+        self._chunks.append((start, end, chunk))
         self._total_bytes = end
 
         try:
             self._parser.Parse(data, is_final)
         except expat.ExpatError as e:
-            current_data = "".join(c[2] for c in self._chunks)
+            current_data = "".join(c[2].content for c in self._chunks)
             raise ParserError(f"XML parse error: {e}. Current data: {current_data}")
 
     def close(self):
@@ -368,20 +378,21 @@ class XmlParser(Process):
     # Chunk retrieval
     # -------------------------------------------------------------------------
 
-    def _get_chunks_in_range(self, start: int, end: int) -> list[tuple[str, float | None]]:
+    def _get_chunks_in_range(self, start: int, end: int) -> list[Chunk]:
         """Get chunks overlapping the byte range [start, end)."""
         result = []
 
-        for chunk_start, chunk_end, content, logprob in self._chunks:
+        for chunk_start, chunk_end, chunk in self._chunks:
             if chunk_start < end and chunk_end > start:
-                # Calculate slice indices
-                slice_start = max(0, start - chunk_start)
-                slice_end = min(len(content.encode("utf-8")), end - chunk_start)
-
-                # Convert byte indices to character indices (approximate for non-ASCII)
-                text = content.encode("utf-8")[slice_start:slice_end].decode("utf-8", errors="replace")
-                if text:
-                    result.append((text, logprob))
+                # Check if we need to split the chunk
+                if chunk_end > end:
+                    # Split off the part after our range
+                    chunk, _ = chunk.split(end - chunk_start)
+                if chunk_start < start:
+                    # Split off the part before our range
+                    _, chunk = chunk.split(start - chunk_start)
+                if chunk.content:
+                    result.append(chunk)
 
         return result
 
@@ -436,7 +447,7 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
 
 
-    def _handle_start(self, name: str, attrs: dict, chunks: list[tuple[str, float | None]]):
+    def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
         """Handle opening tag - instantiate block from schema."""
         # Handle synthetic root
         if name == self._root_tag:
@@ -460,10 +471,10 @@ class XmlParser(Process):
 
         # Add opening tag as prefix chunk with logprob
         prefix_chunks = []
-        for content, logprob in chunks:
-            if content:
-                chunk = child_block._raw_append(content, logprob=logprob, style="prefix")
-                prefix_chunks.append(chunk)
+        for chunk in chunks:
+            if chunk.content:
+                result_chunk = child_block._raw_append(chunk.content, logprob=chunk.logprob, style="prefix")
+                prefix_chunks.append(result_chunk)
 
         # Append to current block
         if self.current_block is not None:
@@ -473,7 +484,7 @@ class XmlParser(Process):
         self._stack.append((child_schema, child_block))
         self._emit_event("block_init", child_block, prefix_chunks if prefix_chunks else None)
 
-    def _handle_end(self, name: str, chunks: list[tuple[str, float | None]]):
+    def _handle_end(self, name: str, chunks: list[Chunk]):
         """Handle closing tag - commit and pop stack."""
         # Skip synthetic root
         if name == self._root_tag:
@@ -489,10 +500,10 @@ class XmlParser(Process):
 
         # Add closing tag as postfix chunk with logprob
         postfix_chunks = []
-        for content, logprob in chunks:
-            if content:
-                chunk = block._raw_append(content, logprob=logprob, style="postfix")
-                postfix_chunks.append(chunk)
+        for chunk in chunks:
+            if chunk.content:
+                result_chunk = block._raw_append(chunk.content, logprob=chunk.logprob, style="postfix")
+                postfix_chunks.append(result_chunk)
 
         # Pop from stack
         self._stack.pop()
@@ -500,17 +511,17 @@ class XmlParser(Process):
         # Emit commit event
         self._emit_event("block_commit", block, postfix_chunks if postfix_chunks else None)
 
-    def _handle_chardata(self, chunks: list[tuple[str, float | None]]):
+    def _handle_chardata(self, chunks: list[Chunk]):
         """Handle character data - append to current block."""
         if self.current_block is None:
             return
 
         # Append each chunk with its logprob
         result_chunks = []
-        for content, logprob in chunks:
-            if content:  # Skip empty content
-                chunk = self.current_block._raw_append(content, logprob=logprob)
-                result_chunks.append(chunk)
+        for chunk in chunks:
+            if chunk.content:  # Skip empty content
+                result_chunk = self.current_block._raw_append(chunk.content, logprob=chunk.logprob)
+                result_chunks.append(result_chunk)
 
         if result_chunks:
             self._emit_event("block_delta", self.current_block, result_chunks)

@@ -146,9 +146,70 @@ class Chunk:
         return self.content == "\n"
 
     @property
+    def is_line_end(self) -> bool:
+        """True if chunk ends with a newline."""
+        return self.content.endswith("\n") if self.content else False
+
+    @property
     def is_whitespace(self) -> bool:
         """True if chunk is only whitespace."""
         return self.content.isspace() if self.content else True
+
+    def isspace(self) -> bool:
+        """Check if content is whitespace (method form for compatibility)."""
+        return self.content.isspace() if self.content else True
+
+    def split(self, position: int) -> tuple["Chunk", "Chunk"]:
+        """
+        Split chunk at the given position (relative to chunk start).
+
+        Returns two chunks: (left, right) where left contains content[:position]
+        and right contains content[position:].
+
+        Args:
+            position: Position within content to split at
+
+        Returns:
+            Tuple of (left_chunk, right_chunk)
+        """
+        if position <= 0:
+            # Return empty left, full right
+            left_meta = ChunkMeta(
+                start=self.meta.start,
+                end=self.meta.start,
+                logprob=self.meta.logprob,
+                style=self.meta.style,
+            )
+            return Chunk(content="", meta=left_meta), self.copy()
+
+        if position >= len(self.content):
+            # Return full left, empty right
+            right_meta = ChunkMeta(
+                start=self.meta.end,
+                end=self.meta.end,
+                logprob=self.meta.logprob,
+                style=self.meta.style,
+            )
+            return self.copy(), Chunk(content="", meta=right_meta)
+
+        # Split in middle
+        left_content = self.content[:position]
+        right_content = self.content[position:]
+
+        left_meta = ChunkMeta(
+            start=self.meta.start,
+            end=self.meta.start + position,
+            logprob=self.meta.logprob,
+            style=self.meta.style,
+        )
+        right_meta = ChunkMeta(
+            start=self.meta.start + position,
+            end=self.meta.end,
+            logprob=self.meta.logprob,
+            style=self.meta.style,
+        )
+
+        return Chunk(content=left_content, meta=left_meta), Chunk(content=right_content, meta=right_meta)
 
     def copy(self) -> Chunk:
         """Create a copy of this chunk."""
@@ -193,6 +254,32 @@ class Chunk:
             text: The full text to extract content from
         """
         content = text[meta.start:meta.end]
+        return cls(content=content, meta=meta)
+
+    @classmethod
+    def from_content(
+        cls,
+        content: str,
+        logprob: float | None = None,
+        style: str | None = None,
+    ) -> Chunk:
+        """
+        Create Chunk from content string.
+
+        Positions are set to 0:len(content) - useful for incoming parser chunks
+        where final positions aren't known yet.
+
+        Args:
+            content: The text content
+            logprob: Optional log probability
+            style: Optional style label
+        """
+        meta = ChunkMeta(
+            start=0,
+            end=len(content),
+            logprob=logprob,
+            style=style,
+        )
         return cls(content=content, meta=meta)
 
     def __repr__(self) -> str:
