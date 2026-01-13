@@ -52,14 +52,14 @@ class SchemaCtx[TxSchema]:
             raise ValueError("Block is not initialized")
         return self._block
 
-    def init(self, name: str, attrs: dict) -> list[SchemaCtx]:
+    def init(self, name: str, attrs: dict, chunks: list[Chunk]) -> list[SchemaCtx]:
         raise NotImplementedError("init not implemented")
     
     
-    def append(self, content: str, logprob: float):
+    def append(self, chunks: list[Chunk]):
         raise NotImplementedError("append not implemented")
     
-    def commit(self, name: str):
+    def commit(self, name: str, chunks: list[Chunk]):
         raise NotImplementedError("commit not implemented")
     
     
@@ -84,18 +84,35 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         schema = self.schema.get_schema(name)
         return schema
            
-    def init(self, name: str, attrs: dict) -> list[SchemaCtx]:
-        self._block = Block(
-            role=self.schema.role,
-            tags=list(self.schema.tags),
-            style=list(self.schema.style),
-            attrs=dict(attrs) if attrs else dict(self.schema.attrs),
-        )
+    def init(self, name: str, attrs: dict, chunks: list[Chunk]) -> list[SchemaCtx]:
+        # self._block = Block(
+        #     role=self.schema.role,
+        #     tags=list(self.schema.tags),
+        #     style=list(self.schema.style),
+        #     attrs=dict(attrs) if attrs else dict(self.schema.attrs),
+        # )
+        # self.append(chunks)
+        self.schema.init_partial(chunks)
         return [self]
     
-    def append(self, content: str, logprob: float):
-        self.block._raw_append(content, logprob=logprob)
-        
+    def append(self, chunks: list[Chunk]):
+        for chunk in chunks:
+            if chunk.content:
+                self.block._raw_append(chunk.content, logprob=chunk.logprob)
+        return chunks
+    
+    
+    def commit(self, name: str, chunks: list[Chunk]):
+        postfix = Block()
+        for chunk in chunks:
+            if chunk.content:
+                postfix._raw_append(chunk.content, logprob=chunk.logprob)
+                
+        with Block(role=self.schema.role, tags=list(self.schema.tags), style=self.schema.style) as block:
+            block /= self.block
+            block /= postfix            
+        self._block = block
+        return postfix
 
 class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
     
@@ -116,7 +133,7 @@ class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
             raise ValueError(f"Unknown item name '{item_name}' - no matching schema found")
         return schema
     
-    def init(self, name: str, attrs: dict) -> list[SchemaCtx]:        
+    def init(self, name: str, attrs: dict, chunks: list[Chunk]) -> list[SchemaCtx]:        
         self._block = BlockList(
             role=self.schema.role,
             tags=list(self.schema.tags),
@@ -125,29 +142,62 @@ class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
         )
         item_name = self._get_key(attrs)
         item_ctx = self.build_child_schema(item_name, attrs)
-        item_ctx.init(item_name, attrs)
+        item_ctx.init(item_name, attrs, chunks)
         return [self, item_ctx]
 
 class ContextStack:
     
     def __init__(self, schema: "BlockSchema | BlockListSchema"):
         self._stack: list[SchemaCtx] = []
+        self._commited_stack: list[SchemaCtx] = []
         self._schema = schema
+        self._pending_pop: SchemaCtx | None = None
+        self._did_start = False
     
     
     def top(self) -> "SchemaCtx":
+        if self._pending_pop is not None:
+            return self._pending_pop
         return self._stack[-1]
+    
+    def push(self, schema_ctx: list[SchemaCtx]):
+        if self._pending_pop is not None:
+            self._pending_pop = None
+        self.top().block.append_child(schema_ctx[0].block)
+        self._stack.extend(schema_ctx)
         
-    def init(self, name: str, attrs: dict):
-        schema_ctx = self.top().build_child_schema(name, attrs)
-        ctx_list = schema_ctx.init(name, attrs)
+    def pop(self) -> SchemaCtx:
+        schema_ctx = self._stack.pop()
+        self._pending_pop = schema_ctx
+        return schema_ctx
+    
+    def is_empty(self) -> bool:
+        return not self._stack
+        
+    def init(self, name: str, attrs: dict, chunks: list[Chunk]):
+        if self.is_empty():
+            if self._did_start:
+                raise ParserError("Unexpected start tag - stack is empty")
+            self._did_start = True
+            schema_ctx = BlockSchemaCtx(self._schema)
+        else:
+            schema_ctx = self.top().build_child_schema(name, attrs)
+        ctx_list = schema_ctx.init(name, attrs, chunks)
         self._stack.extend(ctx_list)
     
-    def commit(self, name: str):
-        pass  
+    def commit(self, name: str, chunks: list[Chunk]):
+        postfix = self.top().commit(name, chunks) 
+        schema_ctx = self.pop()       
+        self._commited_stack.append(schema_ctx)
         
-    def append(self, chunks: list[tuple[str, float | None]]):
+        return [postfix]
+        
+    def append(self, chunks: list[Chunk]):
         return self.top().append(chunks)
+    
+    
+    def result(self) -> Block:
+        return self._commited_stack[-1].block
     
 
 
@@ -197,8 +247,7 @@ class XmlParser(Process):
             raise ParserError("No schema found to parse against")
 
         self._root: Block | None = None
-        self._stack: list[tuple["BlockSchema", Block]] = []
-        self._ctx_stack: ContextStack = ContextStack(self.schema)
+        self._stack: list[tuple["BlockSchema", Block]] = []        
         self._verbose = verbose
 
         # Expat parser setup
@@ -234,20 +283,25 @@ class XmlParser(Process):
             # Single schema - wrap it
             self._wrapper_schema = BlockSchema(name=self._root_tag)
             self._wrapper_schema._raw_append_child(self.schema)
+        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema)
         self._index = 0
 
         # Start with synthetic root
         self.feed("<{}>".format(self._root_tag))
 
+    # @property
+    # def result(self) -> Block | None:
+    #     """Get the built block tree, unwrapping synthetic root."""
+    #     if self._root is None:
+    #         return None
+    #     # Unwrap synthetic root - return first real child
+    #     if self._has_synthetic_root and self._root.children:
+    #         return self._root.children[0]
+    #     return self._root
     @property
     def result(self) -> Block | None:
         """Get the built block tree, unwrapping synthetic root."""
-        if self._root is None:
-            return None
-        # Unwrap synthetic root - return first real child
-        if self._has_synthetic_root and self._root.children:
-            return self._root.children[0]
-        return self._root
+        return self._ctx_stack.result()
 
     @property
     def current_block(self) -> Block | None:
@@ -291,7 +345,7 @@ class XmlParser(Process):
                 if isinstance(upstream_chunk, Chunk):
                     self.feed(upstream_chunk)
                 elif hasattr(upstream_chunk, 'content'):
-                    chunk = Chunk.from_content(
+                    chunk = Chunk(
                         upstream_chunk.content,
                         logprob=getattr(upstream_chunk, 'logprob', None)
                     )
@@ -325,7 +379,7 @@ class XmlParser(Process):
         """
         # Convert string to Chunk if needed
         if isinstance(chunk, str):
-            chunk = Chunk.from_content(chunk, logprob=logprob)
+            chunk = Chunk(chunk, logprob=logprob)
 
         data = chunk.content.encode("utf-8")
         start = self._total_bytes
@@ -445,9 +499,25 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Block building
     # -------------------------------------------------------------------------
-
-
     def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
+        """Handle opening tag - instantiate block from schema."""
+        self._ctx_stack.init(name, attrs, chunks)
+        self._emit_event("block_init", self._ctx_stack.top().block, chunks)
+        
+        
+    def _handle_end(self, name: str, chunks: list[Chunk]):
+        """Handle closing tag - commit and pop stack."""
+        self._ctx_stack.commit(name, chunks)        
+        self._emit_event("block_commit", self._ctx_stack.top().block, chunks)
+        
+        
+    def _handle_chardata(self, chunks: list[Chunk]):
+        """Handle character data - append to current block."""
+        self._ctx_stack.append(chunks)
+        self._emit_event("block_delta", self._ctx_stack.top().block, chunks)
+
+
+    def _handle_start2(self, name: str, attrs: dict, chunks: list[Chunk]):
         """Handle opening tag - instantiate block from schema."""
         # Handle synthetic root
         if name == self._root_tag:
@@ -484,7 +554,10 @@ class XmlParser(Process):
         self._stack.append((child_schema, child_block))
         self._emit_event("block_init", child_block, prefix_chunks if prefix_chunks else None)
 
-    def _handle_end(self, name: str, chunks: list[Chunk]):
+    
+
+    
+    def _handle_end2(self, name: str, chunks: list[Chunk]):
         """Handle closing tag - commit and pop stack."""
         # Skip synthetic root
         if name == self._root_tag:
@@ -511,7 +584,9 @@ class XmlParser(Process):
         # Emit commit event
         self._emit_event("block_commit", block, postfix_chunks if postfix_chunks else None)
 
-    def _handle_chardata(self, chunks: list[Chunk]):
+
+
+    def _handle_chardata2(self, chunks: list[Chunk]):
         """Handle character data - append to current block."""
         if self.current_block is None:
             return

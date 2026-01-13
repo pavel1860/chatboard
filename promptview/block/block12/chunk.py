@@ -91,19 +91,50 @@ class ChunkMeta:
         return f"ChunkMeta({', '.join(parts)})"
 
 
-@dataclass
 class Chunk:
     """
     A chunk of text with metadata.
 
     Combines content text with ChunkMeta for frontend consumption.
 
+    Can be created simply with content and optional metadata:
+        chunk = Chunk("Hello", logprob=0.7, style="xml")
+
+    Or with an explicit ChunkMeta:
+        chunk = Chunk("Hello", meta=existing_meta)
+
     Attributes:
         content: The actual text content
         meta: ChunkMeta with position and metadata info
     """
-    content: str
-    meta: ChunkMeta
+
+    def __init__(
+        self,
+        content: str,
+        *,
+        logprob: float | None = None,
+        style: str | None = None,
+        meta: ChunkMeta | None = None,
+    ):
+        """
+        Create a Chunk.
+
+        Args:
+            content: The text content
+            logprob: Optional log probability (ignored if meta is provided)
+            style: Optional style label (ignored if meta is provided)
+            meta: Optional ChunkMeta (if not provided, one is created with start=0, end=len(content))
+        """
+        self.content = content
+        if meta is not None:
+            self.meta = meta
+        else:
+            self.meta = ChunkMeta(
+                start=0,
+                end=len(content),
+                logprob=logprob,
+                style=style,
+            )
 
     @property
     def start(self) -> int:
@@ -180,7 +211,7 @@ class Chunk:
                 logprob=self.meta.logprob,
                 style=self.meta.style,
             )
-            return Chunk(content="", meta=left_meta), self.copy()
+            return Chunk("", meta=left_meta), self.copy()
 
         if position >= len(self.content):
             # Return full left, empty right
@@ -190,7 +221,7 @@ class Chunk:
                 logprob=self.meta.logprob,
                 style=self.meta.style,
             )
-            return self.copy(), Chunk(content="", meta=right_meta)
+            return self.copy(), Chunk("", meta=right_meta)
 
         # Split in middle
         left_content = self.content[:position]
@@ -209,14 +240,11 @@ class Chunk:
             style=self.meta.style,
         )
 
-        return Chunk(content=left_content, meta=left_meta), Chunk(content=right_content, meta=right_meta)
+        return Chunk(left_content, meta=left_meta), Chunk(right_content, meta=right_meta)
 
     def copy(self) -> Chunk:
         """Create a copy of this chunk."""
-        return Chunk(
-            content=self.content,
-            meta=self.meta.copy(),
-        )
+        return Chunk(self.content, meta=self.meta.copy())
 
     def model_dump(self) -> dict[str, Any]:
         """Serialize chunk to dictionary for frontend."""
@@ -239,10 +267,7 @@ class Chunk:
             style=data.get("style"),
             id=data.get("id", _generate_id()),
         )
-        return cls(
-            content=data.get("content", ""),
-            meta=meta,
-        )
+        return cls(data.get("content", ""), meta=meta)
 
     @classmethod
     def from_meta(cls, meta: ChunkMeta, text: str) -> Chunk:
@@ -254,33 +279,7 @@ class Chunk:
             text: The full text to extract content from
         """
         content = text[meta.start:meta.end]
-        return cls(content=content, meta=meta)
-
-    @classmethod
-    def from_content(
-        cls,
-        content: str,
-        logprob: float | None = None,
-        style: str | None = None,
-    ) -> Chunk:
-        """
-        Create Chunk from content string.
-
-        Positions are set to 0:len(content) - useful for incoming parser chunks
-        where final positions aren't known yet.
-
-        Args:
-            content: The text content
-            logprob: Optional log probability
-            style: Optional style label
-        """
-        meta = ChunkMeta(
-            start=0,
-            end=len(content),
-            logprob=logprob,
-            style=style,
-        )
-        return cls(content=content, meta=meta)
+        return cls(content, meta=meta)
 
     def __repr__(self) -> str:
         content_preview = self.content[:20] if len(self.content) <= 20 else self.content[:17] + "..."
@@ -290,3 +289,43 @@ class Chunk:
         if self.style:
             parts.append(f"style={self.style!r}")
         return f"Chunk({', '.join(parts)})"
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Equality comparison based on content.
+
+        Supports comparison with:
+        - Another Chunk (compares content)
+        - A string (compares to chunk's content)
+
+        Usage:
+            c1 == c2        # Compare two chunks
+            c1 == "hello"   # Compare chunk to string
+            "hello" == c1   # Also works
+        """
+        if isinstance(other, Chunk):
+            return self.content == other.content
+        elif isinstance(other, str):
+            return self.content == other
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        """
+        Inequality comparison based on content.
+
+        Usage:
+            c1 != c2        # Compare two chunks
+            c1 != "hello"   # Compare chunk to string
+        """
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return result
+        return not result
+
+    def __hash__(self) -> int:
+        """
+        Hash based on id (not content) to allow chunks in sets/dicts.
+
+        Note: Chunks are mutable, so we hash by id rather than content.
+        """
+        return hash(self.meta.id)

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generator, Type
 
 
-from .block import Block, BlockChildren
+from .block import Block, BlockChildren, ContentType
 from .chunk import Chunk
 # if TYPE_CHECKING:
 #     from .block import Block
@@ -201,7 +201,7 @@ class Mutator(metaclass=MutatorMeta):
 
     
     @classmethod
-    def create_block(cls, content: str, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:        
+    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:        
         block = Block(content)
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
@@ -322,10 +322,8 @@ class XmlMutator(Mutator):
             with blk(block.text, tags=["xml-opening-tag"]) as opening_tag:
                 opening_tag.prepend("<", style="xml")
                 opening_tag.append(">", style="xml")
-            # blk /= block.text
-            # blk[0].prepend("<", style="xml")
-            # blk[0].append(">", style="xml")
         return blk
+    
 
     def commit(self, block: Block) -> Block:
         if not self.tail.has_newline():       

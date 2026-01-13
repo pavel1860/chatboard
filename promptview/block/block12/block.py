@@ -34,7 +34,113 @@ def _generate_id() -> str:
 
 
 # Type for content that can be passed to Block
-ContentType = Union[str, int, float, bool, "Block", None]
+ContentType = Union[str, int, float, bool,  "Block", list[Chunk], None]
+
+
+# =========================================================================
+# Chunk Helper Functions
+# =========================================================================
+
+def chunks_contain(chunks: list[Chunk], s: str) -> bool:
+    """
+    Check if a string is present in the chunks (may span multiple chunks).
+
+    Args:
+        chunks: List of Chunk objects
+        s: String to search for
+
+    Returns:
+        True if string is found, False otherwise
+    """
+    if not chunks or not s:
+        return False
+    full_text = "".join(c.content for c in chunks)
+    return s in full_text
+
+
+def split_chunks(
+    chunks: list[Chunk],
+    sep: str
+) -> tuple[list[Chunk], list[Chunk], list[Chunk]]:
+    """
+    Split chunks on a separator that may span multiple chunks.
+
+    Args:
+        chunks: List of Chunk objects
+        sep: Separator string to split on
+
+    Returns: (before, separator, after)
+        - before: Chunk objects before the separator
+        - separator: Chunk objects that make up the separator (empty if not found)
+        - after: Chunk objects after the separator
+
+    Note: If separator falls mid-chunk, that chunk is split using Chunk.split()
+    """
+    if not chunks or not sep:
+        return list(chunks), [], []
+
+    # Build full text
+    full_text = "".join(c.content for c in chunks)
+
+    # Find separator
+    sep_idx = full_text.find(sep)
+    if sep_idx == -1:
+        return list(chunks), [], []
+
+    sep_end_idx = sep_idx + len(sep)
+
+    # Track position as we iterate
+    pos = 0
+    before: list[Chunk] = []
+    separator: list[Chunk] = []
+    after: list[Chunk] = []
+
+    for chunk in chunks:
+        chunk_start = pos
+        chunk_end = pos + len(chunk.content)
+
+        if chunk_end <= sep_idx:
+            # Whole chunk is before separator
+            before.append(chunk)
+        elif chunk_start >= sep_end_idx:
+            # Whole chunk is after separator
+            after.append(chunk)
+        elif chunk_start >= sep_idx and chunk_end <= sep_end_idx:
+            # Whole chunk is within separator
+            separator.append(chunk)
+        else:
+            # Chunk overlaps with separator boundary
+            if chunk_start < sep_idx:
+                # Chunk starts before separator
+                split_offset = sep_idx - chunk_start
+                left_chunk, right_chunk = chunk.split(split_offset)
+                if left_chunk.content:
+                    before.append(left_chunk)
+
+                if chunk_end <= sep_end_idx:
+                    # Rest of chunk is part of separator
+                    if right_chunk.content:
+                        separator.append(right_chunk)
+                else:
+                    # Separator ends within this chunk too
+                    sep_part_len = sep_end_idx - sep_idx
+                    sep_chunk, after_chunk = right_chunk.split(sep_part_len)
+                    if sep_chunk.content:
+                        separator.append(sep_chunk)
+                    if after_chunk.content:
+                        after.append(after_chunk)
+            else:
+                # Chunk starts within separator but extends past it
+                sep_part_len = sep_end_idx - chunk_start
+                sep_chunk, after_chunk = chunk.split(sep_part_len)
+                if sep_chunk.content:
+                    separator.append(sep_chunk)
+                if after_chunk.content:
+                    after.append(after_chunk)
+
+        pos = chunk_end
+
+    return before, separator, after
 
 
 class BlockChildren(UserList["Block"]):
@@ -136,8 +242,13 @@ class Block:
             if isinstance(content, Block):
                 # Copy content from another block
                 self._raw_append(content.text)
+            elif isinstance(content, (list, tuple)) and all(isinstance(item, Chunk) for item in content):
+                for chunk in content:
+                    self._raw_append(chunk.content, logprob=chunk.logprob, style=chunk.style)
             elif isinstance(content, (str, int, float, bool)):
                 self._raw_append(str(content))
+            else:
+                raise ValueError(f"Invalid content type: {type(content)}")
 
     # =========================================================================
     # Basic Properties
@@ -402,6 +513,46 @@ class Block:
         else:
             return self.append_child(Block(other))
 
+    def __eq__(self, other: object) -> bool:
+        """
+        Equality comparison based on text content.
+
+        Supports comparison with:
+        - Another Block (compares text content)
+        - A string (compares to block's text)
+
+        Usage:
+            b1 == b2        # Compare two blocks
+            b1 == "hello"   # Compare block to string
+            "hello" == b1   # Also works
+        """
+        if isinstance(other, Block):
+            return self._text == other._text
+        elif isinstance(other, str):
+            return self._text == other
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        """
+        Inequality comparison based on text content.
+
+        Usage:
+            b1 != b2        # Compare two blocks
+            b1 != "hello"   # Compare block to string
+        """
+        result = self.__eq__(other)
+        if result is NotImplemented:
+            return result
+        return not result
+
+    def __hash__(self) -> int:
+        """
+        Hash based on id (not content) to allow blocks in sets/dicts.
+
+        Note: Blocks are mutable, so we hash by id rather than content.
+        """
+        return hash(self.id)
+
     # =========================================================================
     # Raw Text Operations (used by mutators)
     # =========================================================================
@@ -638,6 +789,340 @@ class Block:
             return ""
         parts = [self._text[c.start:c.end] for c in chunks]
         return "".join(parts)
+
+    def get_chunks(self) -> list[Chunk]:
+        """
+        Get all chunks as Chunk objects (with content).
+
+        Returns:
+            List of Chunk objects containing both content and metadata
+        """
+        return [Chunk.from_meta(meta, self._text) for meta in self.chunks]
+
+    # =========================================================================
+    # Chunk Manipulation
+    # =========================================================================
+
+    def contains(self, s: str) -> bool:
+        """
+        Check if this block's text contains the given string.
+
+        Args:
+            s: String to search for
+
+        Returns:
+            True if string is found in the block's text
+        """
+        return s in self._text
+
+    def chunks_contain(self, s: str) -> bool:
+        """
+        Check if this block's chunks contain the given string.
+
+        The string may span multiple chunks.
+
+        Args:
+            s: String to search for
+
+        Returns:
+            True if string is found
+        """
+        return chunks_contain(self.get_chunks(), s)
+
+    def _create_block_from_chunks(
+        self,
+        chunks: list[Chunk],
+        inherit: bool = False,
+    ) -> "Block":
+        """
+        Create a new Block from a list of chunks.
+
+        Args:
+            chunks: List of Chunk objects to populate the block
+            inherit: If True, copy role, tags, style, attrs from this block
+
+        Returns:
+            New Block with the given chunks
+        """
+        if inherit:
+            block = Block(
+                role=self.role,
+                tags=list(self.tags),
+                style=list(self.style),
+                attrs=dict(self.attrs),
+            )
+        else:
+            block = Block()
+
+        for chunk in chunks:
+            block._raw_append(chunk.content, logprob=chunk.logprob, style=chunk.style)
+
+        return block
+
+    def split(
+        self,
+        sep: str,
+        inherit: bool = False,
+    ) -> tuple["Block", "Block", "Block"]:
+        """
+        Split this block's chunks on a separator.
+
+        Returns three new Blocks: (before, separator, after).
+        The separator may span multiple chunks.
+
+        Args:
+            sep: Separator string to split on
+            inherit: If True, copy role, tags, style, attrs to new blocks
+
+        Returns:
+            Tuple of (before, separator, after) Blocks
+        """
+        chunks = self.get_chunks()
+        before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
+
+        before_block = self._create_block_from_chunks(before_chunks, inherit=inherit)
+        sep_block = self._create_block_from_chunks(sep_chunks, inherit=inherit)
+        after_block = self._create_block_from_chunks(after_chunks, inherit=inherit)
+
+        return before_block, sep_block, after_block
+
+    def split_prefix(
+        self,
+        sep: str,
+        inherit: bool = False,
+        create_on_empty: bool = True,
+    ) -> tuple["Block", "Block"]:
+        """
+        Split this block's chunks, returning (before + separator, after).
+
+        Args:
+            sep: Separator string to split on
+            inherit: If True, copy role, tags, style, attrs to new blocks
+            create_on_empty: If True and separator not found, create a block with the separator
+
+        Returns:
+            Tuple of (prefix_block, remainder_block)
+        """
+        chunks = self.get_chunks()
+        before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
+
+        if not sep_chunks:
+            if create_on_empty:
+                prefix_block = Block(sep)
+                remainder_block = self._create_block_from_chunks(chunks, inherit=inherit)
+            else:
+                prefix_block = Block()
+                remainder_block = self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            prefix_block = self._create_block_from_chunks(before_chunks + sep_chunks, inherit=inherit)
+            remainder_block = self._create_block_from_chunks(after_chunks, inherit=inherit)
+
+        return prefix_block, remainder_block
+
+    def split_postfix(
+        self,
+        sep: str,
+        inherit: bool = False,
+        create_on_empty: bool = True,
+    ) -> tuple["Block", "Block"]:
+        """
+        Split this block's chunks, returning (before, separator + after).
+
+        Args:
+            sep: Separator string to split on
+            inherit: If True, copy role, tags, style, attrs to new blocks
+            create_on_empty: If True and separator not found, create a block with the separator
+
+        Returns:
+            Tuple of (content_block, postfix_block)
+        """
+        chunks = self.get_chunks()
+        before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
+
+        if not sep_chunks:
+            if create_on_empty:
+                content_block = self._create_block_from_chunks(chunks, inherit=inherit)
+                postfix_block = Block(sep)
+            else:
+                content_block = self._create_block_from_chunks(chunks, inherit=inherit)
+                postfix_block = Block()
+        else:
+            content_block = self._create_block_from_chunks(before_chunks, inherit=inherit)
+            postfix_block = self._create_block_from_chunks(sep_chunks + after_chunks, inherit=inherit)
+
+        return content_block, postfix_block
+
+    def filter_chunks(
+        self,
+        styles: set[str] | str | None = None,
+        inherit: bool = False,
+    ) -> "Block":
+        """
+        Create a new Block containing only chunks with matching styles.
+
+        Args:
+            styles: Style(s) to filter by. If None, keeps all chunks.
+            inherit: If True, copy role, tags, style, attrs to new block
+
+        Returns:
+            New Block with filtered chunks
+        """
+        if styles is None:
+            return self._create_block_from_chunks(self.get_chunks(), inherit=inherit)
+
+        if isinstance(styles, str):
+            styles = {styles}
+
+        filtered_chunks = [c for c in self.get_chunks() if c.style in styles]
+        return self._create_block_from_chunks(filtered_chunks, inherit=inherit)
+
+    # =========================================================================
+    # Text Transformations
+    # =========================================================================
+
+    def lower(self, new_block: bool = False, inherit: bool = True) -> "Block":
+        """
+        Convert text to lowercase.
+
+        Args:
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = [Chunk(c.content.lower(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.lower()
+            return self
+
+    def upper(self, new_block: bool = False, inherit: bool = True) -> "Block":
+        """
+        Convert text to uppercase.
+
+        Args:
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = [Chunk(c.content.upper(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.upper()
+            return self
+
+    def title(self, new_block: bool = False, inherit: bool = True) -> "Block":
+        """
+        Convert text to title case.
+
+        Args:
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = [Chunk(c.content.title(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.title()
+            return self
+
+    def capitalize(self, new_block: bool = False, inherit: bool = True) -> "Block":
+        """
+        Capitalize the first character.
+
+        Args:
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = self.get_chunks()
+            if chunks:
+                first = chunks[0]
+                chunks[0] = Chunk(first.content.capitalize(), logprob=first.logprob, style=first.style)
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.capitalize()
+            return self
+
+    def swapcase(self, new_block: bool = False, inherit: bool = True) -> "Block":
+        """
+        Swap case of all characters.
+
+        Args:
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = [Chunk(c.content.swapcase(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.swapcase()
+            return self
+
+    def snake_case(self, new_block: bool = False, inherit: bool = True) -> "Block":
+        """
+        Convert text to snake_case.
+
+        Replaces spaces with underscores and converts to lowercase.
+
+        Args:
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = []
+            for c in self.get_chunks():
+                if c.is_whitespace:
+                    chunks.append(Chunk("_", logprob=c.logprob, style=c.style))
+                else:
+                    chunks.append(Chunk(c.content.lower().replace(" ", "_"), logprob=c.logprob, style=c.style))
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.lower().replace(" ", "_")
+            return self
+
+    def replace(
+        self,
+        old: str,
+        new: str,
+        new_block: bool = False,
+        inherit: bool = True,
+    ) -> "Block":
+        """
+        Replace occurrences of old with new.
+
+        Args:
+            old: String to replace
+            new: Replacement string
+            new_block: If True, return a new block; otherwise modify in place
+            inherit: If new_block is True, copy role, tags, style, attrs
+
+        Returns:
+            Self (modified) or new Block
+        """
+        if new_block:
+            chunks = [Chunk(c.content.replace(old, new), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            return self._create_block_from_chunks(chunks, inherit=inherit)
+        else:
+            self._text = self._text.replace(old, new)
+            return self
 
     # =========================================================================
     # Tree Traversal

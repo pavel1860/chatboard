@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Type, Any
 from pydantic import BaseModel
 
 from .block import Block, ContentType, _parse_style, _generate_id
-from .chunk import ChunkMeta
+from .chunk import ChunkMeta, Chunk
 
 if TYPE_CHECKING:
     pass
@@ -106,6 +106,15 @@ class BlockSchema(Block):
     # -------------------------------------------------------------------------
     # Instantiation
     # -------------------------------------------------------------------------
+    
+    def init_partial(self, content: ContentType, use_mutator: bool = True):
+        from .mutator import MutatorMeta
+        from .mutator import BlockMutator
+        content = content or self.name        
+        config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
+        tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs)        
+        return tran_block
+
 
     def instantiate(
         self,
