@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, Generator, TypeVar
 from xml.parsers import expat
 
 from .block import Block
-from .chunk import Chunk, ChunkMeta
+from .chunk import BlockChunk, ChunkMeta
 from ...prompt.fbp_process import Process
 from .schema import BlockSchema, BlockListSchema, BlockList
 
@@ -33,7 +33,7 @@ class ParserEvent:
     path: str
     type: Literal["block_init", "block_commit", "block_delta"]
     block: Block
-    chunks: list[Chunk] | None = None
+    chunks: list[BlockChunk] | None = None
 
 
 
@@ -53,14 +53,14 @@ class SchemaCtx[TxSchema]:
             raise ValueError("Block is not initialized")
         return self._block
 
-    def init(self, name: str, attrs: dict, chunks: list[Chunk]) -> list[SchemaCtx]:
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:
         raise NotImplementedError("init not implemented")
     
     
-    def append(self, chunks: list[Chunk]):
+    def append(self, chunks: list[BlockChunk]):
         raise NotImplementedError("append not implemented")
     
-    def commit(self, name: str, chunks: list[Chunk]):
+    def commit(self, name: str, chunks: list[BlockChunk]):
         raise NotImplementedError("commit not implemented")
     
     
@@ -85,7 +85,7 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         schema = self.schema.get_schema(name)
         return schema
            
-    def init(self, name: str, attrs: dict, chunks: list[Chunk]) -> list[SchemaCtx]:
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:
         # self._block = Block(
         #     role=self.schema.role,
         #     tags=list(self.schema.tags),
@@ -96,7 +96,7 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         self._block = self.schema.init_partial(chunks, is_streaming=True)
         return [self]
     
-    def append(self, chunks: list[Chunk]):
+    def append(self, chunks: list[BlockChunk]):
         for chunk in chunks:
             if chunk.content:
                 if not self._content_started:
@@ -108,7 +108,7 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         return chunks
     
     
-    def commit(self, name: str, chunks: list[Chunk]):
+    def commit(self, name: str, chunks: list[BlockChunk]):
         postfix = Block(chunks)
         self.block.commit(postfix)
         return postfix
@@ -132,7 +132,7 @@ class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
             raise ValueError(f"Unknown item name '{item_name}' - no matching schema found")
         return schema
     
-    def init(self, name: str, attrs: dict, chunks: list[Chunk]) -> list[SchemaCtx]:        
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:        
         self._block = BlockList(
             role=self.schema.role,
             tags=list(self.schema.tags),
@@ -180,7 +180,7 @@ class ContextStack:
     def is_root(self) -> bool:
         return len(self._stack) == 1 and self._stack[0].schema == self._schema
         
-    def init(self, name: str, attrs: dict, chunks: list[Chunk]):
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         self._pending_pop = None
         if self.is_empty():
             if self._did_start:
@@ -192,7 +192,7 @@ class ContextStack:
         ctx_list = schema_ctx.init(name, attrs, chunks)
         self.push(ctx_list)
     
-    def commit(self, name: str, chunks: list[Chunk]):
+    def commit(self, name: str, chunks: list[BlockChunk]):
         schema_ctx = self.pop()
         postfix = schema_ctx.commit(name, chunks)                
         self._commited_stack.append(schema_ctx)
@@ -200,7 +200,7 @@ class ContextStack:
         return [postfix]
     
         
-    def append(self, chunks: list[Chunk]):
+    def append(self, chunks: list[BlockChunk]):
         if self._pending_pop is not None:
             if chunks[0] != "\n":
                 self._pending_pop = None
@@ -271,7 +271,7 @@ class XmlParser(Process):
         self._parser.CharacterDataHandler = self._on_chardata
 
         # Chunk tracking for logprobs - stores (start_byte, end_byte, Chunk)
-        self._chunks: list[tuple[int, int, Chunk]] = []
+        self._chunks: list[tuple[int, int, BlockChunk]] = []
         self._total_bytes = 0
 
         # Pending event for deferred processing
@@ -355,10 +355,10 @@ class XmlParser(Process):
             try:
                 upstream_chunk = await super().__anext__()
                 # Feed the chunk (may produce output)
-                if isinstance(upstream_chunk, Chunk):
+                if isinstance(upstream_chunk, BlockChunk):
                     self.feed(upstream_chunk)
                 elif hasattr(upstream_chunk, 'content'):
-                    chunk = Chunk(
+                    chunk = BlockChunk(
                         upstream_chunk.content,
                         logprob=getattr(upstream_chunk, 'logprob', None)
                     )
@@ -381,7 +381,7 @@ class XmlParser(Process):
     # Feeding data
     # -------------------------------------------------------------------------
 
-    def feed(self, chunk: Chunk | str, logprob: float | None = None, is_final: bool = False):
+    def feed(self, chunk: BlockChunk | str, logprob: float | None = None, is_final: bool = False):
         """
         Feed a chunk to the parser.
 
@@ -392,7 +392,7 @@ class XmlParser(Process):
         """
         # Convert string to Chunk if needed
         if isinstance(chunk, str):
-            chunk = Chunk(chunk, logprob=logprob)
+            chunk = BlockChunk(chunk, logprob=logprob)
 
         data = chunk.content.encode("utf-8")
         start = self._total_bytes
@@ -445,7 +445,7 @@ class XmlParser(Process):
     # Chunk retrieval
     # -------------------------------------------------------------------------
 
-    def _get_chunks_in_range(self, start: int, end: int) -> list[Chunk]:
+    def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
         """Get chunks overlapping the byte range [start, end)."""
         result = []
 
@@ -516,7 +516,7 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Block building
     # -------------------------------------------------------------------------
-    def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
+    def _handle_start(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         """Handle opening tag - instantiate block from schema."""
         if name == self._root_tag:
             chunks = []
@@ -524,7 +524,7 @@ class XmlParser(Process):
         self._emit_event("block_init", self._ctx_stack.top().block, chunks)
         
         
-    def _handle_end(self, name: str, chunks: list[Chunk]):
+    def _handle_end(self, name: str, chunks: list[BlockChunk]):
         """Handle closing tag - commit and pop stack."""
         if name == self._root_tag:
             chunks = []
@@ -532,13 +532,13 @@ class XmlParser(Process):
         self._emit_event("block_commit", self._ctx_stack.top().block, chunks)
         
         
-    def _handle_chardata(self, chunks: list[Chunk]):
+    def _handle_chardata(self, chunks: list[BlockChunk]):
         """Handle character data - append to current block."""
         self._ctx_stack.append(chunks)
         self._emit_event("block_delta", self._ctx_stack.top().block, chunks)
 
 
-    def _handle_start2(self, name: str, attrs: dict, chunks: list[Chunk]):
+    def _handle_start2(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         """Handle opening tag - instantiate block from schema."""
         # Handle synthetic root
         if name == self._root_tag:
@@ -578,7 +578,7 @@ class XmlParser(Process):
     
 
     
-    def _handle_end2(self, name: str, chunks: list[Chunk]):
+    def _handle_end2(self, name: str, chunks: list[BlockChunk]):
         """Handle closing tag - commit and pop stack."""
         # Skip synthetic root
         if name == self._root_tag:
@@ -607,7 +607,7 @@ class XmlParser(Process):
 
 
 
-    def _handle_chardata2(self, chunks: list[Chunk]):
+    def _handle_chardata2(self, chunks: list[BlockChunk]):
         """Handle character data - append to current block."""
         if self.current_block is None:
             return
@@ -622,7 +622,7 @@ class XmlParser(Process):
         if result_chunks:
             self._emit_event("block_delta", self.current_block, result_chunks)
 
-    def _emit_event(self, event_type: str, block: Block, chunks: list[Chunk] | None = None):
+    def _emit_event(self, event_type: str, block: Block, chunks: list[BlockChunk] | None = None):
         """Emit a parser event."""
         # Build path from stack
         path = "/".join(str(i) for i, _ in enumerate(self._stack))

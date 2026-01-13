@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Type, Any
 from pydantic import BaseModel
 
 from .block import Block, ContentType, _parse_style, _generate_id
-from .chunk import ChunkMeta, Chunk
+from .chunk import ChunkMeta, BlockChunk
 
 if TYPE_CHECKING:
     pass

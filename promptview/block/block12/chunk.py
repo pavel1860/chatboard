@@ -91,7 +91,7 @@ class ChunkMeta:
         return f"ChunkMeta({', '.join(parts)})"
 
 
-class Chunk:
+class BlockChunk:
     """
     A chunk of text with metadata.
 
@@ -190,7 +190,7 @@ class Chunk:
         """Check if content is whitespace (method form for compatibility)."""
         return self.content.isspace() if self.content else True
 
-    def split(self, position: int) -> tuple["Chunk", "Chunk"]:
+    def split(self, position: int) -> tuple["BlockChunk", "BlockChunk"]:
         """
         Split chunk at the given position (relative to chunk start).
 
@@ -211,7 +211,7 @@ class Chunk:
                 logprob=self.meta.logprob,
                 style=self.meta.style,
             )
-            return Chunk("", meta=left_meta), self.copy()
+            return BlockChunk("", meta=left_meta), self.copy()
 
         if position >= len(self.content):
             # Return full left, empty right
@@ -221,7 +221,7 @@ class Chunk:
                 logprob=self.meta.logprob,
                 style=self.meta.style,
             )
-            return self.copy(), Chunk("", meta=right_meta)
+            return self.copy(), BlockChunk("", meta=right_meta)
 
         # Split in middle
         left_content = self.content[:position]
@@ -240,11 +240,11 @@ class Chunk:
             style=self.meta.style,
         )
 
-        return Chunk(left_content, meta=left_meta), Chunk(right_content, meta=right_meta)
+        return BlockChunk(left_content, meta=left_meta), BlockChunk(right_content, meta=right_meta)
 
-    def copy(self) -> Chunk:
+    def copy(self) -> BlockChunk:
         """Create a copy of this chunk."""
-        return Chunk(self.content, meta=self.meta.copy())
+        return BlockChunk(self.content, meta=self.meta.copy())
 
     def model_dump(self) -> dict[str, Any]:
         """Serialize chunk to dictionary for frontend."""
@@ -258,7 +258,7 @@ class Chunk:
         }
 
     @classmethod
-    def model_load(cls, data: dict[str, Any]) -> Chunk:
+    def model_load(cls, data: dict[str, Any]) -> BlockChunk:
         """Deserialize chunk from dictionary."""
         meta = ChunkMeta(
             start=data.get("start", 0),
@@ -270,7 +270,7 @@ class Chunk:
         return cls(data.get("content", ""), meta=meta)
 
     @classmethod
-    def from_meta(cls, meta: ChunkMeta, text: str) -> Chunk:
+    def from_meta(cls, meta: ChunkMeta, text: str) -> BlockChunk:
         """
         Create Chunk from ChunkMeta by extracting content from text.
 
@@ -303,7 +303,7 @@ class Chunk:
             c1 == "hello"   # Compare chunk to string
             "hello" == c1   # Also works
         """
-        if isinstance(other, Chunk):
+        if isinstance(other, BlockChunk):
             return self.content == other.content
         elif isinstance(other, str):
             return self.content == other

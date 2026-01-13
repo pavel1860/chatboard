@@ -20,7 +20,7 @@ import re
 
 from promptview.utils.function_utils import is_overridden
 
-from .chunk import ChunkMeta, Chunk
+from .chunk import ChunkMeta, BlockChunk
 
 if TYPE_CHECKING:
     from .mutator import Mutator
@@ -34,14 +34,14 @@ def _generate_id() -> str:
 
 
 # Type for content that can be passed to Block
-ContentType = Union[str, int, float, bool,  "Block", list[Chunk], None]
+ContentType = Union[str, int, float, bool,  "Block", list[BlockChunk], None]
 
 
 # =========================================================================
 # Chunk Helper Functions
 # =========================================================================
 
-def chunks_contain(chunks: list[Chunk], s: str) -> bool:
+def chunks_contain(chunks: list[BlockChunk], s: str) -> bool:
     """
     Check if a string is present in the chunks (may span multiple chunks).
 
@@ -59,9 +59,9 @@ def chunks_contain(chunks: list[Chunk], s: str) -> bool:
 
 
 def split_chunks(
-    chunks: list[Chunk],
+    chunks: list[BlockChunk],
     sep: str
-) -> tuple[list[Chunk], list[Chunk], list[Chunk]]:
+) -> tuple[list[BlockChunk], list[BlockChunk], list[BlockChunk]]:
     """
     Split chunks on a separator that may span multiple chunks.
 
@@ -91,9 +91,9 @@ def split_chunks(
 
     # Track position as we iterate
     pos = 0
-    before: list[Chunk] = []
-    separator: list[Chunk] = []
-    after: list[Chunk] = []
+    before: list[BlockChunk] = []
+    separator: list[BlockChunk] = []
+    after: list[BlockChunk] = []
 
     for chunk in chunks:
         chunk_start = pos
@@ -247,7 +247,7 @@ class Block:
             if isinstance(content, Block):
                 # Copy content from another block
                 self._raw_append(content.text)
-            elif isinstance(content, (list, tuple)) and all(isinstance(item, Chunk) for item in content):
+            elif isinstance(content, (list, tuple)) and all(isinstance(item, BlockChunk) for item in content):
                 for chunk in content:
                     self._raw_append(chunk.content, logprob=chunk.logprob, style=chunk.style)
             elif isinstance(content, (str, int, float, bool)):
@@ -363,7 +363,7 @@ class Block:
         content: ContentType,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> list[Block | Chunk]:
+    ) -> list[Block | BlockChunk]:
         """
         Append content to this block.
 
@@ -386,7 +386,7 @@ class Block:
         content: ContentType,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> Chunk:
+    ) -> BlockChunk:
         """
         Prepend content to this block.
 
@@ -646,7 +646,7 @@ class Block:
         content: str,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> Chunk:
+    ) -> BlockChunk:
         """
         Low-level append to this block's local text.
 
@@ -666,14 +666,14 @@ class Block:
         # Append to local text
         target._text += content
 
-        return Chunk(content=content, meta=chunk_meta)
+        return BlockChunk(content=content, meta=chunk_meta)
 
     def _raw_prepend(
         self,
         content: str,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> Chunk:
+    ) -> BlockChunk:
         """
         Low-level prepend to this block's local text.
 
@@ -686,7 +686,7 @@ class Block:
         if not content:
             chunk_meta = ChunkMeta(start=0, end=0, logprob=logprob, style=style)
             target.chunks.insert(0, chunk_meta)
-            return Chunk(content="", meta=chunk_meta)
+            return BlockChunk(content="", meta=chunk_meta)
 
         # Create chunk metadata at start (relative position 0)
         chunk_meta = ChunkMeta(start=0, end=len(content), logprob=logprob, style=style)
@@ -701,7 +701,7 @@ class Block:
         # Prepend to local text
         target._text = content + target._text
 
-        return Chunk(content=content, meta=chunk_meta)
+        return BlockChunk(content=content, meta=chunk_meta)
 
     def _raw_insert(
         self,
@@ -709,7 +709,7 @@ class Block:
         content: str,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> Chunk:
+    ) -> BlockChunk:
         """
         Low-level insert at a relative position within this block.
 
@@ -726,7 +726,7 @@ class Block:
         if not content:
             chunk_meta = ChunkMeta(start=rel_position, end=rel_position, logprob=logprob, style=style)
             target._insert_chunk_sorted(chunk_meta)
-            return Chunk(content="", meta=chunk_meta)
+            return BlockChunk(content="", meta=chunk_meta)
 
         delta = len(content)
 
@@ -746,7 +746,7 @@ class Block:
         # Insert into local text
         target._text = target._text[:rel_position] + content + target._text[rel_position:]
 
-        return Chunk(content=content, meta=chunk_meta)
+        return BlockChunk(content=content, meta=chunk_meta)
 
     def _insert_chunk_sorted(self, chunk: ChunkMeta) -> None:
         """Insert chunk maintaining sorted order by start position."""
@@ -874,14 +874,14 @@ class Block:
         parts = [self._text[c.start:c.end] for c in chunks]
         return "".join(parts)
 
-    def get_chunks(self) -> list[Chunk]:
+    def get_chunks(self) -> list[BlockChunk]:
         """
         Get all chunks as Chunk objects (with content).
 
         Returns:
             List of Chunk objects containing both content and metadata
         """
-        return [Chunk.from_meta(meta, self._text) for meta in self.chunks]
+        return [BlockChunk.from_meta(meta, self._text) for meta in self.chunks]
 
     # =========================================================================
     # Chunk Manipulation
@@ -915,7 +915,7 @@ class Block:
 
     def _create_block_from_chunks(
         self,
-        chunks: list[Chunk],
+        chunks: list[BlockChunk],
         inherit: bool = False,
     ) -> "Block":
         """
@@ -1076,7 +1076,7 @@ class Block:
             Self (modified) or new Block
         """
         if new_block:
-            chunks = [Chunk(c.content.lower(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            chunks = [BlockChunk(c.content.lower(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.lower()
@@ -1094,7 +1094,7 @@ class Block:
             Self (modified) or new Block
         """
         if new_block:
-            chunks = [Chunk(c.content.upper(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            chunks = [BlockChunk(c.content.upper(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.upper()
@@ -1112,7 +1112,7 @@ class Block:
             Self (modified) or new Block
         """
         if new_block:
-            chunks = [Chunk(c.content.title(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            chunks = [BlockChunk(c.content.title(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.title()
@@ -1133,7 +1133,7 @@ class Block:
             chunks = self.get_chunks()
             if chunks:
                 first = chunks[0]
-                chunks[0] = Chunk(first.content.capitalize(), logprob=first.logprob, style=first.style)
+                chunks[0] = BlockChunk(first.content.capitalize(), logprob=first.logprob, style=first.style)
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.capitalize()
@@ -1151,7 +1151,7 @@ class Block:
             Self (modified) or new Block
         """
         if new_block:
-            chunks = [Chunk(c.content.swapcase(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            chunks = [BlockChunk(c.content.swapcase(), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.swapcase()
@@ -1174,9 +1174,9 @@ class Block:
             chunks = []
             for c in self.get_chunks():
                 if c.is_whitespace:
-                    chunks.append(Chunk("_", logprob=c.logprob, style=c.style))
+                    chunks.append(BlockChunk("_", logprob=c.logprob, style=c.style))
                 else:
-                    chunks.append(Chunk(c.content.lower().replace(" ", "_"), logprob=c.logprob, style=c.style))
+                    chunks.append(BlockChunk(c.content.lower().replace(" ", "_"), logprob=c.logprob, style=c.style))
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.lower().replace(" ", "_")
@@ -1202,7 +1202,7 @@ class Block:
             Self (modified) or new Block
         """
         if new_block:
-            chunks = [Chunk(c.content.replace(old, new), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
+            chunks = [BlockChunk(c.content.replace(old, new), logprob=c.logprob, style=c.style) for c in self.get_chunks()]
             return self._create_block_from_chunks(chunks, inherit=inherit)
         else:
             self._text = self._text.replace(old, new)
@@ -1304,7 +1304,7 @@ class Block:
         """Check if this block's text ends with a newline."""
         return self._text.endswith("\n")
 
-    def add_newline(self, style: str | None = None) -> Chunk:
+    def add_newline(self, style: str | None = None) -> BlockChunk:
         """Add a newline to the end of this block."""
         return self._raw_append("\n", style=style)
 

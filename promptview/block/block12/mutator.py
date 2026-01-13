@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Generator, Type
 
 
 from .block import Block, BlockChildren, ContentType
-from .chunk import Chunk
+from .chunk import BlockChunk
 # if TYPE_CHECKING:
 #     from .block import Block
 #     from .chunk import ChunkMeta
@@ -230,10 +230,10 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     
-    def on_append(self, content: Block) -> Generator[Block | Chunk, Any, Any]:
+    def on_append(self, content: Block) -> Generator[Block | BlockChunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append is not implemented")
     
-    def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append_child is not implemented")
 
     def call_commit(self, postfix: Block | None = None) -> Block | None:
@@ -268,7 +268,7 @@ class BlockMutator(Mutator):
     styles = ("block",)
     
         
-    def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not prev.is_wrapper and not prev.has_newline():
             yield child.prev().add_newline(style="block")
@@ -360,7 +360,7 @@ class XmlMutator(Mutator):
             
         
 
-    def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not self.is_streaming and not prev.has_newline():
             yield prev.add_newline(style="xml")

@@ -13,8 +13,8 @@ This module provides:
 - pydantic_to_schema: Convert Pydantic models to BlockSchema
 """
 
-from .chunk import ChunkMeta, Chunk
-from .block import Block
+from .chunk import ChunkMeta, BlockChunk
+from .block import Block, ContentType
 from .schema import BlockSchema, BlockList, BlockListSchema
 from .mutator import (
     Mutator,
@@ -28,7 +28,7 @@ __all__ = [
     "BlockSchema",
     "BlockList",
     "BlockListSchema",
-    "Chunk",
+    "BlockChunk",
     "ChunkMeta",
     "Mutator",
     "MutatorMeta",
@@ -38,4 +38,5 @@ __all__ = [
     "pydantic_to_schema",
     "block_to_object",
     "block_to_dict",
+    "ContentType",
 ]
