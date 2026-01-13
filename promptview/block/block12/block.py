@@ -660,7 +660,7 @@ class Block:
 
         Returns a Chunk with the content and metadata.
         """
-        target = self.head
+        target = self.tail
 
         # Create chunk metadata with relative position
         rel_start = len(target._text)

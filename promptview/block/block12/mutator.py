@@ -337,7 +337,7 @@ class XmlMutator(Mutator):
     
     def on_append(self, content: Block):
         if not self.body and (self.head.has_newline() or content != "\n"):
-            yield self.head.append_child("")
+            yield self.block.children[0].append_child("")
             
         
 
