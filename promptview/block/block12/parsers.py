@@ -92,26 +92,20 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         #     attrs=dict(attrs) if attrs else dict(self.schema.attrs),
         # )
         # self.append(chunks)
-        self.schema.init_partial(chunks)
+        self._block = self.schema.init_partial(chunks)
         return [self]
     
     def append(self, chunks: list[Chunk]):
         for chunk in chunks:
             if chunk.content:
-                self.block._raw_append(chunk.content, logprob=chunk.logprob)
+                # self.block._raw_append(chunk.content, logprob=chunk.logprob)
+                self.block.append(chunk.content, logprob=chunk.logprob)
         return chunks
     
     
     def commit(self, name: str, chunks: list[Chunk]):
-        postfix = Block()
-        for chunk in chunks:
-            if chunk.content:
-                postfix._raw_append(chunk.content, logprob=chunk.logprob)
-                
-        with Block(role=self.schema.role, tags=list(self.schema.tags), style=self.schema.style) as block:
-            block /= self.block
-            block /= postfix            
-        self._block = block
+        postfix = Block(chunks)
+        self.block.commit(postfix)
         return postfix
 
 class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
@@ -154,6 +148,9 @@ class ContextStack:
         self._pending_pop: SchemaCtx | None = None
         self._did_start = False
     
+    @property
+    def curr_block(self) -> Block:
+        return self.top().block
     
     def top(self) -> "SchemaCtx":
         if self._pending_pop is not None:
@@ -163,7 +160,8 @@ class ContextStack:
     def push(self, schema_ctx: list[SchemaCtx]):
         if self._pending_pop is not None:
             self._pending_pop = None
-        self.top().block.append_child(schema_ctx[0].block)
+        if not self.is_empty():
+            self.curr_block.append_child(schema_ctx[0].block)
         self._stack.extend(schema_ctx)
         
     def pop(self) -> SchemaCtx:
@@ -183,11 +181,11 @@ class ContextStack:
         else:
             schema_ctx = self.top().build_child_schema(name, attrs)
         ctx_list = schema_ctx.init(name, attrs, chunks)
-        self._stack.extend(ctx_list)
+        self.push(ctx_list)
     
     def commit(self, name: str, chunks: list[Chunk]):
-        postfix = self.top().commit(name, chunks) 
-        schema_ctx = self.pop()       
+        schema_ctx = self.pop()
+        postfix = schema_ctx.commit(name, chunks)                
         self._commited_stack.append(schema_ctx)
         
         return [postfix]
@@ -501,6 +499,8 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     def _handle_start(self, name: str, attrs: dict, chunks: list[Chunk]):
         """Handle opening tag - instantiate block from schema."""
+        if name == self._root_tag:
+            chunks = []
         self._ctx_stack.init(name, attrs, chunks)
         self._emit_event("block_init", self._ctx_stack.top().block, chunks)
         

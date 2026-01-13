@@ -213,14 +213,20 @@ class Mutator(metaclass=MutatorMeta):
         return block
     
     
-    def on_append(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
+    def on_append(self, content: Block) -> Generator[Block | Chunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append is not implemented")
     
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append_child is not implemented")
 
+    def call_commit(self, postfix: Block | None = None) -> Block | None:
+        if self._committed:
+            raise ValueError(f"Mutator {self.__class__.__name__} is already committed for block {self.block}")
+        res = self.commit(self.block, postfix)
+        self._committed = True
+        return res
     
-    def commit(self, block: Block) -> Block | None:
+    def commit(self, block: Block, postfix: Block | None = None) -> Block | None:
         return None
     
     
@@ -246,7 +252,8 @@ class BlockMutator(Mutator):
     
         
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
-        if not child.prev().has_newline():
+        prev = child.prev()
+        if not prev.is_wrapper and not prev.has_newline():
             yield child.prev().add_newline(style="block")
         
         
@@ -283,16 +290,6 @@ class XmlMutator(Mutator):
         """Opening tag block."""
         return self.block.children[0]
 
-    # @property
-    # def body(self) -> BlockChildren:
-    #     """Content blocks between opening and closing tags."""
-    #     # if not self.block.children:
-    #     #     return []
-    #     if self._committed and len(self.block.children) > 1:
-    #         # Exclude head (first) and tail (last)
-    #         return self.block.children[1:-1]
-    #     # Before commit: everything after head is body
-    #     return self.block.children[1:]
     
     @property
     def body(self) -> BlockChildren:
@@ -318,23 +315,36 @@ class XmlMutator(Mutator):
 
     @classmethod
     def init(cls, block: Block) -> Block:
+        prefix, suffix = block.split_prefix("<", create_on_empty=True)
+        content, postfix = suffix.split_postfix(">", create_on_empty=True)
+        content.snake_case()
+        
         with Block(tags=["xml-container"]) as blk:
-            with blk(block.text, tags=["xml-opening-tag"]) as opening_tag:
-                opening_tag.prepend("<", style="xml")
-                opening_tag.append(">", style="xml")
+            with blk(content, tags=["xml-opening-tag"]) as opening_tag:
+                opening_tag.prepend(prefix, style="xml")
+                opening_tag.append(postfix, style="xml")
         return blk
     
 
-    def commit(self, block: Block) -> Block:
-        if not self.tail.has_newline():       
-            self.tail.add_newline(style="xml")
-        post_fix = Block("</" + self.content + ">", tags=["xml-closing-tag"])
-        block._raw_append_child(post_fix, to_body=False)
-        return post_fix
+    def commit(self, block: Block, postfix: Block | None = None) -> Block:
+        # if not block.tail.has_newline():       
+            # block.tail.add_newline(style="xml")
+        if postfix is None:
+            postfix = Block("</" + block.content + ">", tags=["xml-closing-tag"])
+        # block._raw_append_child(postfix, to_body=False)
+        block.append_child(postfix, to_body=False)
+        return postfix
+    
+    def on_append(self, content: Block):
+        if not self.body and (self.head.has_newline() or content != "\n"):
+            yield self.head.append_child("")
+            
+        
 
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
-        if not child.prev().has_newline():
-            yield child.prev().add_newline(style="xml")
+        prev = child.prev()
+        if not prev.is_wrapper and not prev.has_newline():
+            yield prev.add_newline(style="xml")
         yield child.indent(style="xml")
         
         

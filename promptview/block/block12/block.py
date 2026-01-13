@@ -149,6 +149,10 @@ class BlockChildren(UserList["Block"]):
         self.parent: Block = parent
         UserList.__init__(self, items)
 
+    def __iter__(self) -> Iterator["Block"]:
+        """Iterate over children without relying on IndexError."""
+        return iter(self.data)
+
     @overload
     def __getitem__(self, index: SupportsIndex) -> 'Block': ...
 
@@ -410,6 +414,7 @@ class Block:
     def append_child(
         self,
         child: Block | ContentType = None,
+        to_body: bool = True,
         **kwargs
     ) -> Block:
         """
@@ -426,8 +431,8 @@ class Block:
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
 
-        child = self._raw_append_child(child)
-        if self._should_use_mutator("on_append_child"):
+        child = self._raw_append_child(child, to_body=to_body)
+        if to_body and self._should_use_mutator("on_append_child"):
             for event in self.mutator.on_append_child(child=child):
                 pass  # Events handled by mutator
 
@@ -552,6 +557,90 @@ class Block:
         Note: Blocks are mutable, so we hash by id rather than content.
         """
         return hash(self.id)
+
+    def __bool__(self) -> bool:
+        """
+        Boolean evaluation based on text content.
+
+        Empty blocks are falsy, non-empty blocks are truthy.
+
+        Usage:
+            if not block:
+                print("empty")
+            if block:
+                print("has content")
+        """
+        return len(self._text) > 0
+
+    def __add__(self, other: "Block | str") -> "Block":
+        """
+        Concatenation operator - creates a new Block with combined text.
+
+        Usage:
+            b3 = b1 + b2          # Combine two blocks
+            b3 = b1 + "world"     # Combine block with string
+        """
+        if isinstance(other, Block):
+            new_block = Block(self._text)
+            # Copy chunks from self
+            for chunk in self.chunks:
+                new_block.chunks.append(chunk.copy())
+            # Append other's text and chunks
+            offset = len(new_block._text)
+            new_block._text += other._text
+            for chunk in other.chunks:
+                new_chunk = chunk.copy()
+                new_chunk.shift(offset)
+                new_block.chunks.append(new_chunk)
+            return new_block
+        elif isinstance(other, str):
+            new_block = Block(self._text)
+            for chunk in self.chunks:
+                new_block.chunks.append(chunk.copy())
+            new_block._raw_append(other)
+            return new_block
+        return NotImplemented
+
+    def __radd__(self, other: str) -> "Block":
+        """
+        Right-hand concatenation for string + Block.
+
+        Usage:
+            b2 = "Hello" + b1
+        """
+        if isinstance(other, str):
+            new_block = Block(other)
+            # Append self's text and chunks
+            offset = len(new_block._text)
+            new_block._text += self._text
+            for chunk in self.chunks:
+                new_chunk = chunk.copy()
+                new_chunk.shift(offset)
+                new_block.chunks.append(new_chunk)
+            return new_block
+        return NotImplemented
+
+    def __iadd__(self, other: "Block | str") -> Self:
+        """
+        In-place concatenation operator.
+
+        Usage:
+            b1 += b2          # Append b2's text to b1
+            b1 += "world"     # Append string to b1
+        """
+        if isinstance(other, Block):
+            # Append other's text and chunks
+            offset = len(self._text)
+            self._text += other._text
+            for chunk in other.chunks:
+                new_chunk = chunk.copy()
+                new_chunk.shift(offset)
+                self.chunks.append(new_chunk)
+            return self
+        elif isinstance(other, str):
+            self._raw_append(other)
+            return self
+        return NotImplemented
 
     # =========================================================================
     # Raw Text Operations (used by mutators)
@@ -890,7 +979,7 @@ class Block:
         self,
         sep: str,
         inherit: bool = False,
-        create_on_empty: bool = True,
+        create_on_empty: bool = False,
     ) -> tuple["Block", "Block"]:
         """
         Split this block's chunks, returning (before + separator, after).
@@ -923,7 +1012,7 @@ class Block:
         self,
         sep: str,
         inherit: bool = False,
-        create_on_empty: bool = True,
+        create_on_empty: bool = False,
     ) -> tuple["Block", "Block"]:
         """
         Split this block's chunks, returning (before, separator + after).
@@ -1465,9 +1554,8 @@ class Block:
     # Rendering
     # =========================================================================
 
-    def commit(self) -> Block | None:
-        post_block = self.mutator.commit(self)
-        self.mutator._committed = True
+    def commit(self, postfix: Block | None = None) -> Block | None:
+        post_block = self.mutator.call_commit(postfix)
         return post_block
 
     def transform(self) -> Block:
@@ -1630,6 +1718,14 @@ class Block:
         content_preview = self._text[:20] if self._text else ""
         if len(self._text) > 20:
             content_preview += "..."
+        if self.tags:
+            content_preview += f", tags={self.tags}"
+        if self.role:
+            content_preview += f", role={self.role}"
+        if self.style:
+            content_preview += f", style={self.style}"
+        if self.attrs:
+            content_preview += f", attrs={self.attrs}"
         return f"Block({content_preview!r}, children={len(self.children)})"
 
 

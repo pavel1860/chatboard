@@ -110,7 +110,7 @@ class BlockSchema(Block):
     def init_partial(self, content: ContentType, use_mutator: bool = True):
         from .mutator import MutatorMeta
         from .mutator import BlockMutator
-        content = content or self.name        
+        content = content if use_mutator else self.name        
         config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
         tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs)        
         return tran_block

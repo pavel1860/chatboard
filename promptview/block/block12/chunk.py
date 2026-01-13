@@ -329,3 +329,17 @@ class Chunk:
         Note: Chunks are mutable, so we hash by id rather than content.
         """
         return hash(self.meta.id)
+
+    def __bool__(self) -> bool:
+        """
+        Boolean evaluation based on content.
+
+        Empty chunks are falsy, non-empty chunks are truthy.
+
+        Usage:
+            if not chunk:
+                print("empty")
+            if chunk:
+                print("has content")
+        """
+        return len(self.content) > 0
