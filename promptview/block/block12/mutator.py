@@ -152,8 +152,9 @@ class Mutator(metaclass=MutatorMeta):
     _committed: bool = False
 
 
-    def __init__(self, block: Block):
+    def __init__(self, block: Block, is_streaming: bool = False):
         self.block = block
+        self.is_streaming = is_streaming
 
     # =========================================================================
     # Structure Access Properties
@@ -189,6 +190,14 @@ class Mutator(metaclass=MutatorMeta):
             return self.body[-1].tail
         return self.head
 
+    # @property
+    # def content(self) -> str:
+    #     """
+    #     Get the content text (unstyled chunks only).
+
+    #     Delegates to block.content property.
+    #     """
+    #     return self.block.content
     @property
     def content(self) -> str:
         """
@@ -196,16 +205,24 @@ class Mutator(metaclass=MutatorMeta):
 
         Delegates to block.content property.
         """
-        return self.block.content
+        block = self.block
+        if not block.chunks:
+            return block._text
+
+        content_parts = []
+        for chunk in block.chunks:
+            if chunk.style is None:
+                content_parts.append(block._text[chunk.start:chunk.end])
+        return "".join(content_parts)
         
 
     
     @classmethod
-    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None) -> Block:        
+    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
         block = Block(content)
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
-        block.mutator = cls(block)
+        block.mutator = cls(block, is_streaming=is_streaming)
         return block
     
     @classmethod
@@ -323,27 +340,29 @@ class XmlMutator(Mutator):
             with blk(content, tags=["xml-opening-tag"]) as opening_tag:
                 opening_tag.prepend(prefix, style="xml")
                 opening_tag.append(postfix, style="xml")
+                # with opening_tag() as body:
+                #     pass
         return blk
     
 
     def commit(self, block: Block, postfix: Block | None = None) -> Block:
-        # if not block.tail.has_newline():       
-            # block.tail.add_newline(style="xml")
+        if not self.is_streaming and not block.tail.has_newline():       
+            block.tail.add_newline(style="xml")
         if postfix is None:
             postfix = Block("</" + block.content + ">", tags=["xml-closing-tag"])
         # block._raw_append_child(postfix, to_body=False)
         block.append_child(postfix, to_body=False)
         return postfix
     
-    def on_append(self, content: Block):
-        if not self.body and (self.head.has_newline() or content != "\n"):
-            yield self.block.children[0].append_child("")
+    # def on_append(self, content: Block):
+    #     if not self.body and (self.head.has_newline() or content != "\n"):
+    #         yield self.block.children[0].append_child("")
             
         
 
     def on_append_child(self, child: Block) -> Generator[Block | Chunk, Any, Any]:
         prev = child.prev()
-        if not prev.is_wrapper and not prev.has_newline():
+        if not self.is_streaming and not prev.has_newline():
             yield prev.add_newline(style="xml")
         yield child.indent(style="xml")
         

@@ -166,6 +166,7 @@ class BlockChildren(UserList["Block"]):
         return result
 
 
+
 class Block:
     """
     Tree node with local text and chunk metadata.
@@ -271,23 +272,6 @@ class Block:
         """Get this block's local text content."""
         return self._text
 
-    @property
-    def content(self) -> str:
-        """
-        Get text from unstyled chunks only.
-
-        Returns text from chunks that have style=None, excluding any
-        styled chunks (e.g., prefixes, postfixes, formatting markers).
-        This gives you the "pure content" without style decorations.
-        """
-        if not self.chunks:
-            return self._text
-
-        content_parts = []
-        for chunk in self.chunks:
-            if chunk.style is None:
-                content_parts.append(self._text[chunk.start:chunk.end])
-        return "".join(content_parts)
 
     @property
     def is_root(self) -> bool:
@@ -328,6 +312,17 @@ class Block:
     # =========================================================================
     # Mutator Structure Properties
     # =========================================================================
+    @property
+    def content(self) -> str:
+        """
+        Get text from unstyled chunks only.
+
+        Returns text from chunks that have style=None, excluding any
+        styled chunks (e.g., prefixes, postfixes, formatting markers).
+        This gives you the "pure content" without style decorations.
+        """
+        return self.mutator.content
+
 
     @property
     def head(self) -> "Block":
@@ -660,7 +655,7 @@ class Block:
 
         Returns a Chunk with the content and metadata.
         """
-        target = self.tail
+        target = self.head
 
         # Create chunk metadata with relative position
         rel_start = len(target._text)
@@ -1241,22 +1236,20 @@ class Block:
         if self.parent is None:
             return None
         siblings = self.parent.body
-        try:
-            idx = siblings.index(self)
-            return siblings[idx + 1] if idx + 1 < len(siblings) else None
-        except ValueError:
-            return None
+        for i, sibling in enumerate(siblings):
+            if sibling is self:  # Use identity, not equality
+                return siblings[i + 1] if i + 1 < len(siblings) else None
+        return None
 
     def prev_sibling(self) -> Block | None:
         """Get previous sibling or None."""
         if self.parent is None:
             return None
         siblings = self.parent.body
-        try:
-            idx = siblings.index(self)
-            return siblings[idx - 1] if idx > 0 else None
-        except ValueError:
-            return None
+        for i, sibling in enumerate(siblings):
+            if sibling is self:  # Use identity, not equality
+                return siblings[i - 1] if i > 0 else None
+        return None
 
     def rightmost_descendant(self) -> Block:
         """
@@ -1353,6 +1346,9 @@ class Block:
     # =========================================================================
     # Tag-based Search
     # =========================================================================
+    
+    def __iter__(self):
+        return iter(self.body)
 
     def __getitem__(self, key: str | int) -> Block:
         if isinstance(key, int):
@@ -1644,7 +1640,7 @@ class Block:
                     return None
                 wrapper_schema = BlockSchema(
                     name=root,
-                    style=_parse_style(style) if style else [],
+                    # style=_parse_style(style) if style else [],
                 )
                 for child_schema in schema_children:
                     wrapper_schema._raw_append_child(child_schema)
@@ -1684,24 +1680,29 @@ class Block:
     def debug_tree(self, indent: int = 0) -> str:
         """Generate debug representation of block tree."""
         prefix = "  " * indent
-        parts = [f"{prefix}Block"]
-
-        if self.tags:
-            parts.append(f" tags={self.tags}")
-        if self.role:
-            parts.append(f" role={self.role!r}")
-        if self.style:
-            parts.append(f" style={self.style}")
-
+        parts = [f"{prefix}Block("]
+        
+        
         content_preview = self._text[:30]
         if len(self._text) > 30:
             content_preview += "..."
-        parts.append(f" text={content_preview!r}")
+        parts.append(f"{content_preview!r}")
+
+        if self.tags:
+            parts.append(f", tags={self.tags}")
+        if self.role:
+            parts.append(f", role={self.role!r}")
+        if self.style:
+            parts.append(f", style={self.style}")
+
+
 
         if self.chunks:
             chunk_styles = [c.style if c.style else 'txt' for c in self.chunks]
             if chunk_styles:
-                parts.append(f" chunk_styles={chunk_styles}")
+                parts.append(f", chunk_styles={chunk_styles}")
+                
+        parts.append(")")
 
         lines = ["".join(parts)]
 

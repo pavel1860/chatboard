@@ -45,6 +45,7 @@ class SchemaCtx[TxSchema]:
     def __init__(self, schema: TxSchema):
         self.schema: TxSchema = schema
         self._block: Block | None = None
+        self._content_started = False
         
     @property
     def block(self) -> Block:
@@ -92,14 +93,18 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         #     attrs=dict(attrs) if attrs else dict(self.schema.attrs),
         # )
         # self.append(chunks)
-        self._block = self.schema.init_partial(chunks)
+        self._block = self.schema.init_partial(chunks, is_streaming=True)
         return [self]
     
     def append(self, chunks: list[Chunk]):
         for chunk in chunks:
             if chunk.content:
-                # self.block._raw_append(chunk.content, logprob=chunk.logprob)
-                self.block.append(chunk.content, logprob=chunk.logprob)
+                if not self._content_started:
+                    if chunk == "\n":
+                        self.block.append(chunk.content, logprob=chunk.logprob)
+                    self._content_started = True
+                    self.block.append_child("")
+                self.block.tail.append(chunk.content, logprob=chunk.logprob)
         return chunks
     
     
@@ -171,8 +176,12 @@ class ContextStack:
     
     def is_empty(self) -> bool:
         return not self._stack
+    
+    def is_root(self) -> bool:
+        return len(self._stack) == 1 and self._stack[0].schema == self._schema
         
     def init(self, name: str, attrs: dict, chunks: list[Chunk]):
+        self._pending_pop = None
         if self.is_empty():
             if self._did_start:
                 raise ParserError("Unexpected start tag - stack is empty")
@@ -189,8 +198,14 @@ class ContextStack:
         self._commited_stack.append(schema_ctx)
         
         return [postfix]
+    
         
     def append(self, chunks: list[Chunk]):
+        if self._pending_pop is not None:
+            if chunks[0] != "\n":
+                self._pending_pop = None
+            if self.is_root():
+                self.top().block.append_child("")
         return self.top().append(chunks)
     
     
@@ -465,7 +480,11 @@ class XmlParser(Process):
             return
 
         if self._verbose:
+            if event_type == "start":
+                print(f"*********************** {event_data[0]} *************************")
             print(f"Event {self._index}: {event_type}, data={event_data}, chunks={chunks}")
+            if event_type == "end":
+                print(f"----------------------- {event_data} -------------------------")
 
         if event_type == "start":
             name, attrs = event_data
@@ -507,6 +526,8 @@ class XmlParser(Process):
         
     def _handle_end(self, name: str, chunks: list[Chunk]):
         """Handle closing tag - commit and pop stack."""
+        if name == self._root_tag:
+            chunks = []
         self._ctx_stack.commit(name, chunks)        
         self._emit_event("block_commit", self._ctx_stack.top().block, chunks)
         
@@ -608,8 +629,8 @@ class XmlParser(Process):
         event = ParserEvent(path=path, type=event_type, block=block, chunks=chunks)
         self._output_queue.append(event)
 
-        if self._verbose:
-            print(f"Emit: {event_type} path={path} block={block}")
+        # if self._verbose:
+            # print(f"Emit: {event_type} path={path} block={block}")
 
     # -------------------------------------------------------------------------
     # Iterator interface (for non-pipeline usage)

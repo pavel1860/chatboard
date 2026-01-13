@@ -107,12 +107,12 @@ class BlockSchema(Block):
     # Instantiation
     # -------------------------------------------------------------------------
     
-    def init_partial(self, content: ContentType, use_mutator: bool = True):
+    def init_partial(self, content: ContentType, use_mutator: bool = True, is_streaming: bool = False):
         from .mutator import MutatorMeta
         from .mutator import BlockMutator
         content = content if use_mutator else self.name        
         config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
-        tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs)        
+        tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
         return tran_block
 
 
