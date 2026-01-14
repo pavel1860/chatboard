@@ -75,15 +75,16 @@ class MutatorConfig:
         return reused_blocks
     
     def build_block(self, orig_block: Block) -> Block:
-        block = self.mutator.init(orig_block)
-        if reused_blocks := self._get_reused_blocks(block, orig_block):
-            raise RenderError(f"You cannot reuse original blocks in a Mutator. Please use the block content instead.\n Reused blocks: {reused_blocks}")
-        
-        
-        block = _apply_metadata(block, orig_block.tags, orig_block.role, orig_block.style, orig_block.attrs)
-        block.mutator = self.mutator(block, is_streaming=False)
-        block.stylizers = [stylizer() for stylizer in self.stylizers]
+        from .transform import transform_context        
+        with transform_context(True):
+            block = self.mutator.init(orig_block)
+            if reused_blocks := self._get_reused_blocks(block, orig_block):
+                raise RenderError(f"You cannot reuse original blocks in a Mutator. Please use the block content instead.\n Reused blocks: {reused_blocks}")
+            block = _apply_metadata(block, orig_block.tags, orig_block.role, orig_block.style, orig_block.attrs)
+            block.mutator = self.mutator(block, is_streaming=False)
+            block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
+
 
 
 
@@ -184,6 +185,7 @@ class Mutator(metaclass=MutatorMeta):
     """
 
     styles: tuple[str, ...] = ()
+    target: str = "content"
     _committed: bool = False
 
 
@@ -306,7 +308,7 @@ class BlockMutator(Mutator):
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not prev.is_wrapper and not prev.has_newline():
-            yield child.prev().add_newline(style="block")
+            yield child.prev().add_newline(style=self.styles[0])
         
         
         
@@ -420,7 +422,7 @@ class XmlMutator(Mutator):
         
 
 
-class MarkdownMutator(Mutator):
+class MarkdownMutator(BlockMutator):
     styles = ("md",)
     
     
@@ -430,16 +432,16 @@ class MarkdownMutator(Mutator):
         block.prepend("\n" + "#" * (block.path.depth + 1) + " ", style="md")
         return block
     
-    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
-        prev = child.prev()
-        if not self.is_streaming and not prev.has_newline():
-            yield prev.add_newline(style="markdown")
+    # def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+    #     prev = child.prev()
+    #     if not self.is_streaming and not prev.has_newline():
+    #         yield prev.add_newline(style="markdown")
         # yield child.indent(style="markdown")
         
         
         
         
-class BannerMutator(Mutator):
+class BannerMutator(BlockMutator):
     styles = ("banner",)
     
     @property
@@ -453,10 +455,11 @@ class BannerMutator(Mutator):
     @classmethod
     def init(cls, block: Block) -> Block:
         with Block() as blk:
+            block.prev().append("\n", style="banner")
             with blk() as header:
-                header /= "=" * 51 + "\n"
-                header /= block.content + "\n"
-                header /= "=" * 51 + "\n"
+                header /= "=" * 51
+                header /= block.content
+                header /= "=" * 51
             with blk() as body:
                 pass
         return blk
@@ -500,6 +503,7 @@ class XmlDefMutator(Mutator):
     
 class ToolDescriptionMutator(Mutator):
     styles = ("tool-desc",)
+    target = "block"
     
     @classmethod
     def init(cls, block: Block) -> Block:
@@ -511,13 +515,18 @@ class ToolDescriptionMutator(Mutator):
             with blk("## Purpose") as purpose:
                 purpose /= description.body[0].content
             with blk("## Parameters") as params:
-                for param in parameters.body:
-                    with params(param.content) as param_blk:
-                        # param_blk /= param.body
+                for i, param in enumerate(parameters.body):
+                    with params(f"{i + 1}.", tags=["param", param.content]) as param_blk: 
+                        param_blk /= "  name: " + param.content
                         if hasattr(param, 'type_str') and param.type_str is not None:
-                            param_blk /= "Type:", param.type_str
+                            param_blk /= "  Type: ", param.type_str
                         if hasattr(param, 'is_required'):
-                            param_blk /= "Required:", param.is_required                        
+                            param_blk /= "  Required: ", param.is_required                        
+                    # with params("name: " + param.content) as param_blk:                        
+                    #     if hasattr(param, 'type_str') and param.type_str is not None:
+                    #         param_blk /= "  Type:", param.type_str
+                    #     if hasattr(param, 'is_required'):
+                    #         param_blk /= "  Required:", param.is_required                        
         return blk
 
     

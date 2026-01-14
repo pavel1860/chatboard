@@ -467,17 +467,23 @@ class Block:
             child: Block or content to append
             **kwargs: Passed to Block() if creating new block
         """
+        from .transform import is_transforming
         if child is None:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
 
         child = self._raw_append_child(child, to_body=to_body)
-        if to_body and self._should_use_mutator("on_append_child"):
-            for event in self.mutator.on_append_child(child=child):
-                pass  # Events handled by mutator
-        if to_body:
-            stylizers_events = self._apply_child_stylizers(child)
+        if is_transforming():
+            prev = child.prev()
+            if not prev.is_wrapper and not prev.has_newline():
+                prev.append("\n")    
+        else:
+            if to_body and self._should_use_mutator("on_append_child"):
+                for event in self.mutator.on_append_child(child=child):
+                    pass  # Events handled by mutator
+            if to_body:
+                stylizers_events = self._apply_child_stylizers(child)
         return child
 
     def prepend_child(
@@ -1486,7 +1492,8 @@ class Block:
             style=style,
             attrs=attrs,
         )
-        return self._raw_append_child(child)
+        # return self._raw_append_child(child)
+        return self.append_child(child)
     
     
 
@@ -1502,7 +1509,8 @@ class Block:
     ) -> "BlockSchema":
         from .schema import BlockSchema
         schema = BlockSchema(name, type=type, role=role, tags=tags, style=style, attrs=attrs, is_required=is_required)
-        self._raw_append_child(schema)
+        # self._raw_append_child(schema)
+        return self.append_child(schema)
         return schema
     
     @classmethod
@@ -1546,7 +1554,8 @@ class Block:
             attrs=attrs,
             style=style,
         )
-        self._raw_append_child(schema_block)
+        return self.append_child(schema_block)
+        # self._raw_append_child(schema_block)
         return schema_block
 
 
