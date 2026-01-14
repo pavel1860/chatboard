@@ -20,6 +20,9 @@ from .chunk import BlockChunk
 #     from .chunk import ChunkMeta
 
 
+class RenderError(Exception):
+    pass
+
 
 @dataclass
 class MutatorConfig:
@@ -50,6 +53,38 @@ class MutatorConfig:
         for target in order:
             if transformer := self.get(target):
                 yield (target, transformer)
+                
+                
+    def create_block(self, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
+        block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+        block = self.mutator.init(block)
+        block = _apply_metadata(block, tags, role, style, attrs)
+        block.mutator = self.mutator(block, is_streaming=is_streaming)
+        block.stylizers = [stylizer() for stylizer in self.stylizers]
+        return block
+    
+    
+    def _get_reused_blocks(self, block: Block, orig_block: Block):
+        new_ids = set()
+        for b in block.iter_depth_first():
+            new_ids.add(id(b))
+        reused_blocks = []
+        for b in orig_block.iter_depth_first():
+            if id(b) in new_ids:
+                reused_blocks.append(b)
+        return reused_blocks
+    
+    def build_block(self, orig_block: Block) -> Block:
+        block = self.mutator.init(orig_block)
+        if reused_blocks := self._get_reused_blocks(block, orig_block):
+            raise RenderError(f"You cannot reuse original blocks in a Mutator. Please use the block content instead.\n Reused blocks: {reused_blocks}")
+        
+        
+        block = _apply_metadata(block, orig_block.tags, orig_block.role, orig_block.style, orig_block.attrs)
+        block.mutator = self.mutator(block, is_streaming=False)
+        block.stylizers = [stylizer() for stylizer in self.stylizers]
+        return block
+
 
 
 # Global registry of style -> mutator class
@@ -126,7 +161,7 @@ class Stylizer(metaclass=MutatorMeta):
         raise NotImplementedError("Stylizer.append is not implemented")
         
         
-    def on_child(self, child: Block):
+    def on_append_child(self, child: Block):
         raise NotImplementedError("Stylizer.append_child is not implemented")
         
      
@@ -219,7 +254,7 @@ class Mutator(metaclass=MutatorMeta):
     
     @classmethod
     def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
-        block = Block(content)
+        block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
         block.mutator = cls(block, is_streaming=is_streaming)
@@ -227,7 +262,7 @@ class Mutator(metaclass=MutatorMeta):
     
     @classmethod
     def init(cls, block: Block) -> Block:
-        return block
+        return block.copy_head()
     
     
     def on_append(self, content: Block) -> Generator[Block | BlockChunk, Any, Any]:
@@ -325,6 +360,17 @@ class XmlMutator(Mutator):
         if self.head:
             return self.head.content
         return ""
+    
+    @classmethod
+    def render_attrs(cls, block: Block) -> str:
+        attrs = ""
+        for k, v in block.attrs.items():
+            attrs += f"{k}=\"{v}\""
+            
+        if attrs:
+            attrs = " " + attrs
+        return attrs
+
 
     # =========================================================================
     # Lifecycle Methods
@@ -338,6 +384,7 @@ class XmlMutator(Mutator):
         
         with Block(tags=["xml-container"]) as blk:
             with blk(content, tags=["xml-opening-tag"]) as opening_tag:
+                opening_tag.append(cls.render_attrs(block), style="xml")
                 opening_tag.prepend(prefix, style="xml")
                 opening_tag.append(postfix, style="xml")
                 # with opening_tag() as body:
@@ -368,3 +415,111 @@ class XmlMutator(Mutator):
         
         
         
+        
+        
+        
+
+
+class MarkdownMutator(Mutator):
+    styles = ("md",)
+    
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        block = block.copy_head()
+        block.prepend("\n" + "#" * (block.path.depth + 1) + " ", style="md")
+        return block
+    
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        prev = child.prev()
+        if not self.is_streaming and not prev.has_newline():
+            yield prev.add_newline(style="markdown")
+        # yield child.indent(style="markdown")
+        
+        
+        
+        
+class BannerMutator(Mutator):
+    styles = ("banner",)
+    
+    @property
+    def head(self) -> Block:
+        return self.block.children[0].children[1]
+    
+    @property
+    def body(self) -> BlockChildren:
+        return self.block.children[1].children
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        with Block() as blk:
+            with blk() as header:
+                header /= "=" * 51 + "\n"
+                header /= block.content + "\n"
+                header /= "=" * 51 + "\n"
+            with blk() as body:
+                pass
+        return blk
+        
+        
+        
+        
+class MarkdownListStylizer(Stylizer):
+    styles = ["li"]
+    
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        yield child.prepend("- ", style="li")
+        
+class MarkdownAstrixListStylizer(Stylizer):
+    styles = ["li-ast"]
+    
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        yield child.prepend("* ", style="li-ast")
+        
+        
+        
+        
+class MarkdownNumberListStylizer(Stylizer):
+    styles = ["li-num"]
+    
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        
+        yield child.prepend(f"{child.path[-1] + 1}. ", style="li")
+        # yield child.prepend(child.path[-1], style="li-num")
+        
+        
+        
+class XmlDefMutator(Mutator):
+    styles = ("xml-def",)
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        block = " " * (block.path.depth - 1) + "<" + block + "> - "
+        return block
+    
+    
+class ToolDescriptionMutator(Mutator):
+    styles = ("tool-desc",)
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        description = block.get_by_tag("description")
+        parameters = block.get_by_tag("parameters")
+
+        # Build new output
+        with Block("# Name: " + block.attrs.get("name", "")) as blk:
+            with blk("## Purpose") as purpose:
+                purpose /= description.body[0].content
+            with blk("## Parameters") as params:
+                for param in parameters.body:
+                    with params(param.content) as param_blk:
+                        # param_blk /= param.body
+                        if hasattr(param, 'type_str') and param.type_str is not None:
+                            param_blk /= "Type:", param.type_str
+                        if hasattr(param, 'is_required'):
+                            param_blk /= "Required:", param.is_required                        
+        return blk
+
+    
+    
+    

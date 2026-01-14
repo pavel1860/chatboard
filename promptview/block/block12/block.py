@@ -16,6 +16,8 @@ Usage:
 from __future__ import annotations
 from typing import Any, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsIndex, overload
 from collections import UserList
+from pydantic import BaseModel, GetCoreSchemaHandler
+from pydantic_core import core_schema
 import re
 
 from promptview.utils.function_utils import is_overridden
@@ -25,6 +27,7 @@ from .chunk import ChunkMeta, BlockChunk
 if TYPE_CHECKING:
     from .mutator import Mutator
     from .schema import BlockSchema, BlockListSchema
+    from .path import IndexPath, TagPath
 
 
 def _generate_id() -> str:
@@ -197,7 +200,7 @@ class Block:
 
     __slots__ = [
         "parent", "children", "chunks",
-        "role", "tags", "style", "attrs", "_text", "id", "mutator"
+        "role", "tags", "style", "attrs", "_text", "id", "mutator", "stylizers"
     ]
 
     def __init__(
@@ -219,7 +222,7 @@ class Block:
             style: Style string or list of styles
             attrs: Arbitrary attributes
         """
-        from .mutator import Mutator
+        from .mutator import Mutator, Stylizer
         # Tree structure
         self.parent: Block | None = None
         self.children: BlockChildren = BlockChildren(parent=self)
@@ -241,7 +244,7 @@ class Block:
 
         # Mutator (lazy initialized)
         self.mutator: Mutator = Mutator(self)
-
+        self.stylizers: list[Stylizer] = []
         # Handle initial content
         if content is not None:
             if isinstance(content, Block):
@@ -288,6 +291,12 @@ class Block:
         """True if this block has been rendered."""
         from .mutator import Mutator
         return self.mutator is not None and not type(self.mutator) is Mutator
+    
+    
+    def is_leaf(self) -> bool:
+        """True if block has no children."""
+        return len(self.body) == 0
+
 
     @property
     def depth(self) -> int:
@@ -308,6 +317,32 @@ class Block:
     def is_empty(self) -> bool:
         """True if block has no local text content."""
         return len(self._text) == 0
+
+    @property
+    def path(self) -> "IndexPath":
+        """
+        Get the index path for this block.
+
+        Returns an IndexPath representing the block's position in the
+        logical tree via indices (e.g., "0.2.1").
+
+        Uses mutator.body for navigation, making style wrappers transparent.
+        """
+        from .path import compute_index_path
+        return compute_index_path(self)
+
+    @property
+    def tag_path(self) -> "TagPath":
+        """
+        Get the tag path for this block.
+
+        Returns a TagPath representing the block's semantic position
+        via tags (e.g., "response.thinking").
+
+        Collects the first tag from each block in the path.
+        """
+        from .path import compute_tag_path
+        return compute_tag_path(self)
 
     # =========================================================================
     # Mutator Structure Properties
@@ -381,6 +416,7 @@ class Block:
         events.append(event)
         return events
 
+
     def prepend(
         self,
         content: ContentType,
@@ -398,6 +434,7 @@ class Block:
             content = str(content)
         return self._raw_prepend(content, style=style, logprob=logprob)
 
+
     def _should_use_mutator(self, method: str) -> bool:
         from .mutator import Mutator
         if type(self.mutator) is Mutator:
@@ -405,6 +442,15 @@ class Block:
         if is_overridden(self.mutator.__class__, method, Mutator):
             return True
         return False
+    
+    def _apply_child_stylizers(self, block: Block) -> list[Block | BlockChunk]:
+        from .mutator import Stylizer
+        events = []
+        for stylizer in self.stylizers:
+            if is_overridden(stylizer.__class__, "on_append_child", Stylizer):
+                for event in stylizer.on_append_child(block):
+                    events.append(event)
+        return events
 
     def append_child(
         self,
@@ -430,7 +476,8 @@ class Block:
         if to_body and self._should_use_mutator("on_append_child"):
             for event in self.mutator.on_append_child(child=child):
                 pass  # Events handled by mutator
-
+        if to_body:
+            stylizers_events = self._apply_child_stylizers(child)
         return child
 
     def prepend_child(
@@ -1342,6 +1389,25 @@ class Block:
         for child in self.children:
             child.indent(spaces, style=style)
         return self
+    
+    
+    def apply_style(self, style: str, only_views: bool = False, copy: bool = True, recursive: bool = True):
+        from .schema import BlockSchema
+
+        block_copy = self.copy(copy) if copy else self
+        styles = _parse_style(style)
+        
+        if recursive:
+            for block in block_copy.iter_depth_first():
+                if only_views and not isinstance(block, BlockSchema):
+                    continue
+                if block.is_leaf():
+                    continue
+                block.style.extend(styles)
+        else:
+            block_copy.style.extend(styles)
+        return block_copy
+
 
     # =========================================================================
     # Tag-based Search
@@ -1421,6 +1487,8 @@ class Block:
             attrs=attrs,
         )
         return self._raw_append_child(child)
+    
+    
 
     def view(
         self,
@@ -1437,6 +1505,27 @@ class Block:
         self._raw_append_child(schema)
         return schema
     
+    @classmethod
+    def schema_view(
+        cls, 
+        name: str | None = None, 
+        type: Type | None = None, 
+        tags: list[str] | None = None, 
+        style: str | None = None, 
+        attrs: dict[str, Any] | None = None,
+        is_required: bool = True,
+    ) -> "BlockSchema":
+        from .schema import BlockSchema
+        schema_block = BlockSchema(
+            name,
+            type=type,
+            tags=tags,
+            attrs=attrs,
+            # style=["xml"] if style is None and name is not None else parse_style(style),
+            style=style, 
+            is_required=is_required,
+        )
+        return schema_block
     
     
     def view_list(
@@ -1491,6 +1580,9 @@ class Block:
 
         return new_block
 
+    
+    def copy_head(self) -> Block:
+        return self.copy(deep=False)
     # =========================================================================
     # Serialization
     # =========================================================================
@@ -1499,6 +1591,7 @@ class Block:
         """Serialize block to dictionary."""
         return {
             "id": self.id,
+            "path": str(self.path),
             "text": self._text,
             "role": self.role,
             "tags": self.tags,
@@ -1672,6 +1765,38 @@ class Block:
             else:
                 # Keep searching deeper
                 self._collect_nested_schemas(child, result, style=style)
+                
+                
+    # =========================================================================
+    # pydantic support
+    # =========================================================================
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize
+            )
+        )
+        
+    @staticmethod
+    def _validate(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v
+        elif isinstance(v, dict):
+            # if "_type" in v and v["_type"] == "Block":
+            #     return Block.model_validate(v)
+            return Block.model_load(v)
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
+    @staticmethod
+    def _serialize(v: Any) -> Any:
+        if isinstance(v, Block):
+            return v.model_dump()
+        else:
+            raise ValueError(f"Invalid block: {v}")
 
     # =========================================================================
     # Debug

@@ -898,7 +898,7 @@ def _serialize_for_hash(value: Any) -> Any:
         return value
     # Handle Block specially - use Merkle hash from dump_block for deterministic hashing
     if isinstance(value, Block):
-        from ..model.block_models.block11_storage import dump_block
+        from ..model.block_models.block12_storage import dump_block
         root_data, _, _ = dump_block(value)
         return root_data["id"]  # Merkle hash of entire block tree
     if hasattr(value, 'model_dump'):
@@ -1288,7 +1288,7 @@ class Stream(Process):
                         if delay > 0:
                             await asyncio.sleep(delay)
                         data = json.loads(line)
-                        block = BlockChunk.model_validate(data)
+                        block = BlockChunk.model_load(data)
                         yield block
 
         return cls(load_stream(), name=f"stream_from_{filepath}")
@@ -1915,7 +1915,7 @@ class StreamController(ObservableProcess):
         """
         from .events import StreamEvent
         from ..model.versioning.artifact_log import ArtifactLog
-        from ..block.block11.parsers import ParserEvent
+        from ..block.block12.parsers import ParserEvent
 
          
         if type(payload) == ParserEvent:     
@@ -1997,7 +1997,7 @@ class StreamController(ObservableProcess):
         In replay mode, yields saved outputs from the span instead of executing
         the generator function.
         """
-        from ..block.block11.parsers import ParserEvent
+        from ..block.block12.parsers import ParserEvent
         if not self._did_start:
             await self.on_start()
             self._did_start = True

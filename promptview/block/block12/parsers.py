@@ -34,6 +34,12 @@ class ParserEvent:
     type: Literal["block_init", "block_commit", "block_delta"]
     block: Block
     chunks: list[BlockChunk] | None = None
+    
+    @property
+    def value(self) -> Block | list[BlockChunk]:
+        if self.chunks is None:
+            return self.block
+        return self.chunks
 
 
 

@@ -102,6 +102,12 @@ class BlockSchema(Block):
     def type(self) -> Type | None:
         """Get the type annotation for this schema."""
         return self._type
+    
+    
+    @property
+    def type_str(self) -> str | None:
+        from ...utils.type_utils import type_to_str
+        return type_to_str(self.type) if self.type is not None else None
 
     # -------------------------------------------------------------------------
     # Instantiation
@@ -112,7 +118,8 @@ class BlockSchema(Block):
         from .mutator import BlockMutator
         content = content if use_mutator else self.name        
         config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
-        tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
+        # tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
+        tran_block = config.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
         return tran_block
 
 
@@ -811,6 +818,17 @@ class BlockListSchema(BlockSchema):
         return block_list
 
     # -------------------------------------------------------------------------
+    # Child Management
+    # -------------------------------------------------------------------------
+
+    def _raw_append_child(self, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
+        """Override to maintain list_schemas when adding schema children."""
+        result = super()._raw_append_child(child, content, to_body=to_body)
+        if isinstance(result, BlockSchema):
+            self.list_schemas.append(result)
+        return result
+
+    # -------------------------------------------------------------------------
     # Copy
     # -------------------------------------------------------------------------
 
@@ -829,12 +847,10 @@ class BlockListSchema(BlockSchema):
         )
 
         if deep:
-            # Deep copy children and rebuild list_schemas
+            # Deep copy children - _raw_append_child auto-populates list_schemas
             for child in self.children:
                 child_copy = child.copy(deep=True)
                 new_schema._raw_append_child(child_copy)
-                if isinstance(child_copy, BlockSchema):
-                    new_schema.list_schemas.append(child_copy)
 
         new_schema.list_models = self.list_models.copy()
 
@@ -883,7 +899,7 @@ class BlockListSchema(BlockSchema):
             for c in data.get("chunks", [])
         ]
 
-        # Recursively load children
+        # Recursively load children - _raw_append_child auto-populates list_schemas
         for child_data in data.get("children", []):
             if "item_name" in child_data:
                 child = BlockListSchema.model_load(child_data)
@@ -891,10 +907,7 @@ class BlockListSchema(BlockSchema):
                 child = BlockSchema.model_load(child_data)
             else:
                 child = Block.model_load(child_data)
-            child.parent = schema
-            schema.children.append(child)
-            if isinstance(child, BlockSchema):
-                schema.list_schemas.append(child)
+            schema._raw_append_child(child)
 
         return schema
 

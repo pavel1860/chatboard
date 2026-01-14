@@ -7,9 +7,11 @@ This module provides:
 - BlockList: List container for multiple items
 - BlockListSchema: Schema for defining list structures
 - ChunkMeta: Lightweight metadata for text regions
-- Chunk: Text content with metadata for frontend consumption
+- BlockChunk: Text content with metadata for frontend consumption
 - Mutator: Strategy for style-aware block operations
 - XmlParser: Streaming XML parser for building blocks from schema
+- IndexPath: Block position via indices (e.g., "0.2.1")
+- TagPath: Block position via tags (e.g., "response.thinking")
 - pydantic_to_schema: Convert Pydantic models to BlockSchema
 """
 
@@ -22,6 +24,7 @@ from .mutator import (
 )
 from .parsers import XmlParser, ParserEvent, ParserError
 from .object_helpers import pydantic_to_schema, block_to_object, block_to_dict
+from .path import IndexPath, TagPath
 
 __all__ = [
     "Block",
@@ -35,6 +38,8 @@ __all__ = [
     "XmlParser",
     "ParserEvent",
     "ParserError",
+    "IndexPath",
+    "TagPath",
     "pydantic_to_schema",
     "block_to_object",
     "block_to_dict",
