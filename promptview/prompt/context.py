@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterator, Literal, Type
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 # Context variable for implicit context passing across async boundaries
 _context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
 
-
+CACHE_DIR = os.getenv("CACHE_DIR", None)
 
 @dataclass
 class LoadTurn:
@@ -115,7 +116,7 @@ class Context(BaseModel):
         self.message = message
         self.state = state
         self._verbose = verbose
-        self.cache_dir = cache_dir
+        self.cache_dir = cache_dir or CACHE_DIR
         
     @property
     def request_id(self):

@@ -95,7 +95,7 @@ class ArtifactLog:
     async def populate_turns(cls, turns: List[Turn]):
         from collections import defaultdict
         from ..namespace_manager2 import NamespaceManager
-        from ..block_models.block11_storage import get_blocks
+        from ..block_models.block12_storage import get_blocks
         from .models import BlockTree, Artifact
         def kind2table(k: str):
             if k == "parameter":
@@ -126,7 +126,7 @@ class ArtifactLog:
                 models = await Artifact.query(include_branch_turn=True).where(Artifact.id.isin(models_to_load[k]))
                 model_lookup["list"] = {m.id: m for m in models}
             elif k == "block_trees":
-                models = await get_blocks(models_to_load[k], dump_models=False, include_branch_turn=True)
+                models = await get_blocks(models_to_load[k], dump_models=False)
                 model_lookup[k] = models
             # elif k == "execution_spans":
             #     value_dict[k] = {s.artifact_id: s for s in spans}

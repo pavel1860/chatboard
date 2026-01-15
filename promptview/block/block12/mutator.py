@@ -56,11 +56,13 @@ class MutatorConfig:
                 
                 
     def create_block(self, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
-        block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
-        block = self.mutator.init(block)
-        block = _apply_metadata(block, tags, role, style, attrs)
-        block.mutator = self.mutator(block, is_streaming=is_streaming)
-        block.stylizers = [stylizer() for stylizer in self.stylizers]
+        from .transform import transform_context   
+        with transform_context(True):
+            block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+            block = self.mutator.init(block)
+            block = _apply_metadata(block, tags, role, style, attrs)
+            block.mutator = self.mutator(block, is_streaming=is_streaming)
+            block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
     
     
@@ -74,14 +76,14 @@ class MutatorConfig:
                 reused_blocks.append(b)
         return reused_blocks
     
-    def build_block(self, orig_block: Block) -> Block:
+    def build_block(self, orig_block: Block, is_streaming: bool = False) -> Block:
         from .transform import transform_context        
         with transform_context(True):
             block = self.mutator.init(orig_block)
             if reused_blocks := self._get_reused_blocks(block, orig_block):
                 raise RenderError(f"You cannot reuse original blocks in a Mutator. Please use the block content instead.\n Reused blocks: {reused_blocks}")
             block = _apply_metadata(block, orig_block.tags, orig_block.role, orig_block.style, orig_block.attrs)
-            block.mutator = self.mutator(block, is_streaming=False)
+            block.mutator = self.mutator(block, is_streaming=is_streaming)
             block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
 
@@ -153,6 +155,15 @@ def _apply_metadata(to_block: Block, tags: list[str] | None = None, role: str | 
     to_block.style = style or to_block.style
     to_block.attrs = attrs or to_block.attrs
     return to_block
+
+
+
+def _transfer_metadata(from_block: Block, to_block: Block):        
+    to_block.tags = from_block.tags.copy()
+    to_block.role = from_block.role
+    to_block.style = from_block.style.copy()
+    to_block.attrs = from_block.attrs.copy()
+    return from_block, to_block
 
 
 class Stylizer(metaclass=MutatorMeta):
@@ -251,9 +262,28 @@ class Mutator(metaclass=MutatorMeta):
             if chunk.style is None:
                 content_parts.append(block._text[chunk.start:chunk.end])
         return "".join(content_parts)
-        
 
-    
+    def content_chunks(self) -> list[BlockChunk]:
+        """
+        Get content chunks only (chunks without a style).
+
+        Returns:
+            List of BlockChunk objects containing only unstyled content.
+        """
+        block = self.block.head
+        if not block.chunks:
+            if block._text:
+                return [BlockChunk(block._text)]
+            return []
+
+        result = []
+        for chunk in block.chunks:
+            if chunk.style is None:
+                content = block._text[chunk.start:chunk.end]
+                if content:
+                    result.append(BlockChunk(content, logprob=chunk.logprob))
+        return result
+
     @classmethod
     def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
         block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
@@ -267,11 +297,16 @@ class Mutator(metaclass=MutatorMeta):
         return block.copy_head()
     
     
+    def extract(self) -> Block:
+        return Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
+    
+    
     def on_append(self, content: Block) -> Generator[Block | BlockChunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append is not implemented")
     
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append_child is not implemented")
+    
 
     def call_commit(self, postfix: Block | None = None) -> Block | None:
         if self._committed:
@@ -507,8 +542,8 @@ class ToolDescriptionMutator(Mutator):
     
     @classmethod
     def init(cls, block: Block) -> Block:
-        description = block.get_by_tag("description")
-        parameters = block.get_by_tag("parameters")
+        description = block.get("description")
+        parameters = block.get("parameters")
 
         # Build new output
         with Block("# Name: " + block.attrs.get("name", "")) as blk:

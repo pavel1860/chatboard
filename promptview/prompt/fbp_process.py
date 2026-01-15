@@ -959,7 +959,7 @@ def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
 
     # Compute hash
     hash_value = hashlib.sha256(json_str.encode('utf-8')).hexdigest()[:16]
-
+    print(f"[CACHE DEBUG] hash_value={hash_value}")
     return f"{name}_{hash_value}.json"
 
 
@@ -2512,6 +2512,8 @@ class FlowRunner:
 
                 # If value is a Process (from PipeController), push to stack
                 if isinstance(value, (StreamController, PipeController)):
+                    if isinstance(value, StreamController):
+                        value._name = process._name + "_" + value._name
                     self.push(value)
                     # Emit event for child process if needed
                     if self.should_output_events:

@@ -45,7 +45,7 @@ class BlockSchema(Block):
         # <response>Hello</response>
     """
 
-    __slots__ = ["name", "_type", "is_required"]
+    __slots__ = ["name", "_type", "is_required", "is_root"]
 
     def __init__(
         self,
@@ -57,6 +57,7 @@ class BlockSchema(Block):
         role: str | None = None,
         is_required: bool = True,
         attrs: dict[str, Any] | None = None,
+        is_root: bool = False,
     ):
         """
         Create a block schema.
@@ -74,10 +75,12 @@ class BlockSchema(Block):
         tags = list(tags) if tags else []
         if name and name not in tags:
             tags.insert(0, name)
+            
+        style = style or "xml" if not is_root else "block"
 
         # Initialize Block with name as content
         super().__init__(
-            content=name,
+            content=name if not is_root else None,
             role=role,
             tags=tags,
             style=style,
@@ -88,7 +91,8 @@ class BlockSchema(Block):
         self.name = name
         self._type = type
         self.is_required = is_required
-
+        self.is_root = is_root
+        
     # -------------------------------------------------------------------------
     # Schema Properties
     # -------------------------------------------------------------------------
@@ -96,7 +100,7 @@ class BlockSchema(Block):
     @property
     def is_wrapper(self) -> bool:
         """True if this is a wrapper schema (no name)."""
-        return self.name is None
+        return self.name is None or self.is_root
 
     @property
     def type(self) -> Type | None:
@@ -120,6 +124,7 @@ class BlockSchema(Block):
         config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
         # tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
         tran_block = config.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
+        # tran_block = config.build_block(self, is_streaming=is_streaming)        
         return tran_block
 
 
@@ -303,6 +308,7 @@ class BlockSchema(Block):
             role=self.role,
             is_required=self.is_required,
             attrs=dict(self.attrs),
+            is_root=self.is_root,
         )
 
         if deep:
@@ -359,6 +365,7 @@ class BlockSchema(Block):
             role=data.get("role"),
             is_required=is_required,
             attrs=data.get("attrs", {}),
+            is_root=data.get("is_root", False),
         )
 
         # Restore ID and text

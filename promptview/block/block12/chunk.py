@@ -166,22 +166,18 @@ class BlockChunk:
         """Length of content."""
         return len(self.content)
 
-    @property
     def is_empty(self) -> bool:
         """True if chunk has no content."""
         return len(self.content) == 0
 
-    @property
     def is_newline(self) -> bool:
         """True if chunk is just a newline."""
         return self.content == "\n"
 
-    @property
     def is_line_end(self) -> bool:
         """True if chunk ends with a newline."""
         return self.content.endswith("\n") if self.content else False
 
-    @property
     def is_whitespace(self) -> bool:
         """True if chunk is only whitespace."""
         return self.content.isspace() if self.content else True

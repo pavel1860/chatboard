@@ -26,7 +26,7 @@ from .chunk import ChunkMeta, BlockChunk
 
 if TYPE_CHECKING:
     from .mutator import Mutator
-    from .schema import BlockSchema, BlockListSchema
+    from .schema import BlockSchema, BlockListSchema, BlockList
     from .path import IndexPath, TagPath
 
 
@@ -249,8 +249,9 @@ class Block:
         if content is not None:
             if isinstance(content, Block):
                 # Copy content from another block
-                self._raw_append(content.text)
-            elif isinstance(content, (list, tuple)) and all(isinstance(item, BlockChunk) for item in content):
+                content = content.get_chunks()
+                # self._raw_append(content.text)
+            if isinstance(content, (list, tuple)) and all(isinstance(item, BlockChunk) for item in content):
                 for chunk in content:
                     self._raw_append(chunk.content, logprob=chunk.logprob, style=chunk.style)
             elif isinstance(content, (str, int, float, bool)):
@@ -388,6 +389,10 @@ class Block:
         For structured blocks (e.g., XML), returns the closing tag block after commit.
         """
         return self.mutator.tail
+    
+    
+    def content_chunks(self) -> list[BlockChunk]:
+        return self.mutator.content_chunks()
 
     # =========================================================================
     # Public API (delegates to mutator)
@@ -398,12 +403,15 @@ class Block:
         content: ContentType,
         style: str | None = None,
         logprob: float | None = None,
+        use_mutator_style: bool = False,
     ) -> list[Block | BlockChunk]:
         """
         Append content to this block.
 
         Delegates to mutator for style-aware placement.
         """
+        if use_mutator_style:
+            style = self.mutator.styles[0]
         if isinstance(content, Block):
             content = content.text
         elif not isinstance(content, str):
@@ -439,6 +447,8 @@ class Block:
         from .mutator import Mutator
         if type(self.mutator) is Mutator:
             return False
+        if self.mutator.is_streaming:
+            return False
         if is_overridden(self.mutator.__class__, method, Mutator):
             return True
         return False
@@ -447,6 +457,8 @@ class Block:
         from .mutator import Stylizer
         events = []
         for stylizer in self.stylizers:
+            if self.mutator.is_streaming:
+                continue
             if is_overridden(stylizer.__class__, "on_append_child", Stylizer):
                 for event in stylizer.on_append_child(block):
                     events.append(event)
@@ -1422,36 +1434,60 @@ class Block:
     def __iter__(self):
         return iter(self.body)
 
-    def __getitem__(self, key: str | int) -> Block:
+    def __getitem__(self, key: str | int | tuple[int,...]) -> Block:
         if isinstance(key, int):
             return self.body[key]
         elif isinstance(key, str):
-            return self.get_by_tag(key)
+            return self.get(key)
+        elif isinstance(key, tuple):
+            return self.get_index(key)
         else:
             raise ValueError(f"Invalid key: {key}")
 
-    def get_by_tag(self, tag: str) -> Block:
+    def get(self, tag: str) -> Block:
         """Get first descendant with the given tag."""
         for block in self.iter_depth_first():
             if tag in block.tags:
                 return block
         raise ValueError(f"Block with tag {tag} not found")
     
+    
+    def get_index(self, index: int | tuple[int,...]) -> Block:
+        if isinstance(index, int):
+            return self.body[index]
+        else:
+            return self.body[index[0]].get_index(index[1:] if len(index) > 2 else index[1])
+    
+    def get_or_none(self, tag: str) -> "Block | None":
+        for block in self.iter_depth_first():
+            if tag in block.tags:
+                return block
+        return None
+    
     def get_schema(self, tag: str) -> "BlockSchema":
         from .schema import BlockSchema
-        res = self.get_by_tag(tag)
+        res = self.get(tag)
         if not isinstance(res, BlockSchema):
             raise ValueError(f"Block {res} is not a BlockSchema")
         return res
+    
+    def get_list(self, tag: str) -> "BlockList":
+        from .schema import BlockList
+        res = self.get_or_none(tag)        
+        if res is None:
+            return BlockList()        
+        if not isinstance(res, BlockList):
+            raise ValueError(f"Block {res} is not a BlockList")        
+        return res
 
-    def get_all_by_tag(self, tag: str) -> list[Block]:
+    def get_all(self, tag: str) -> list[Block]:
         """Get all descendants with the given tag."""
         return [b for b in self.iter_depth_first() if tag in b.tags]
     
     
     def get_all_schemas(self, tag: str) -> list["BlockSchema"]:
         from .schema import BlockSchema
-        res = self.get_all_by_tag(tag)
+        res = self.get_all(tag)
         if not all(isinstance(b, BlockSchema) for b in res):
             raise ValueError(f"Blocks {res} are not all BlockSchemas")
         return res
@@ -1562,6 +1598,14 @@ class Block:
     # =========================================================================
     # Copy Operations
     # =========================================================================
+    
+    def extract(self) -> Block:        
+        ex_block = self.mutator.extract()        
+        for child in self.body:
+            ex_child = child.extract()
+            ex_block.append_child(ex_child)
+        return ex_block
+        
 
     def copy(self, deep: bool = True) -> Block:
         """
@@ -1663,12 +1707,13 @@ class Block:
     def render(self) -> str:
         """Render this block tree to a string by concatenating all text depth-first."""
         parts = []
-        for block in self.iter_depth_first():
+        tran_block = self.transform()
+        for block in tran_block.iter_depth_first():
             parts.append(block._text)
         return "".join(parts)
 
     def print(self) -> None:
-        print(self.transform().render())
+        print(self.render())
 
     # =========================================================================
     # Schema Extraction
@@ -1742,6 +1787,8 @@ class Block:
                     return None
                 wrapper_schema = BlockSchema(
                     name=root,
+                    style="block",
+                    is_root=True,
                     # style=_parse_style(style) if style else [],
                 )
                 for child_schema in schema_children:
@@ -1814,13 +1861,19 @@ class Block:
     def debug_tree(self, indent: int = 0) -> str:
         """Generate debug representation of block tree."""
         prefix = "  " * indent
-        parts = [f"{prefix}Block("]
+        cls_name = self.__class__.__name__
+        parts = [f"{prefix}{cls_name}[{self.path}]("]
         
         
         content_preview = self._text[:30]
         if len(self._text) > 30:
             content_preview += "..."
-        parts.append(f"{content_preview!r}")
+            
+        if len(self._text) > 0:        
+            parts.append(f"{content_preview!r}")
+            
+            
+        # parts.append(f", path={self.path}")
 
         if self.tags:
             parts.append(f", tags={self.tags}")
@@ -1853,15 +1906,17 @@ class Block:
         content_preview = self._text[:20] if self._text else ""
         if len(self._text) > 20:
             content_preview += "..."
+        
+        block_meta = ""
         if self.tags:
-            content_preview += f", tags={self.tags}"
+            block_meta += f", tags={self.tags}"
         if self.role:
-            content_preview += f", role={self.role}"
+            block_meta += f", role={self.role}"
         if self.style:
-            content_preview += f", style={self.style}"
+            block_meta += f", style={self.style}"
         if self.attrs:
-            content_preview += f", attrs={self.attrs}"
-        return f"Block({content_preview!r}, children={len(self.children)})"
+            block_meta += f", attrs={self.attrs}"
+        return f"Block({content_preview!r}{block_meta}, children={len(self.children)})"
 
 
 def _parse_style(style: str | list[str] | None) -> list[str]:

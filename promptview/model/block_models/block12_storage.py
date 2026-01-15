@@ -94,8 +94,21 @@ def compute_block_hash(
 # Serialization (Dump)
 # =============================================================================
 
+def dump_chunks_for_hash(chunks: list["ChunkMeta"]) -> list[dict]:
+    """Serialize ChunkMeta for hashing (excludes random id for determinism)."""
+    return [
+        {
+            "start": c.start,
+            "end": c.end,
+            "logprob": c.logprob,
+            "style": c.style,
+        }
+        for c in chunks
+    ]
+
+
 def dump_chunks(chunks: list["ChunkMeta"]) -> list[dict]:
-    """Serialize ChunkMeta list to list of dicts."""
+    """Serialize ChunkMeta list to list of dicts (includes id for storage)."""
     return [
         {
             "id": c.id,
@@ -142,8 +155,12 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
         span_id = None
         text = blk.text
         if text or blk.chunks:
+            # Use hash-only chunks (no random id) for deterministic hashing
+            chunks_for_hash = dump_chunks_for_hash(blk.chunks)
+            span_id = compute_text_hash(text, chunks_for_hash)
+
+            # Use full chunks (with id) for storage
             chunks_data = dump_chunks(blk.chunks)
-            span_id = compute_text_hash(text, chunks_data)
 
             # Store in spans table format (reusing BlockSpan structure)
             # We store text in content_text, chunks in content_chunks
