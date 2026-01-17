@@ -234,10 +234,12 @@ def load_block(
 
     Creates proper Block/BlockSchema instances based on block_type.
     Reconstructs chunks from stored data.
+    Resolves and attaches the appropriate Mutator based on stored styles.
 
     Each block gets its own local text from its span. No shared string.
     """
     from ...block.block12 import Block, BlockSchema, ChunkMeta
+    from ...block.block12.mutator import MutatorMeta
 
     def get_span_data(block_data: dict) -> tuple[str, list[dict]]:
         """Extract text and chunks from a block's span."""
@@ -258,15 +260,16 @@ def load_block(
         return "", []
 
     def create_block_instance(block_data: dict) -> "Block":
-        """Create a Block/BlockSchema instance with metadata."""
+        """Create a Block/BlockSchema instance with metadata and resolved mutator."""
         block_type = block_data.get("block_type", "block")
         styles = block_data.get("styles") or []
         tags = block_data.get("tags") or []
         role = block_data.get("role")
         attrs = block_data.get("attrs") or {}
 
+        # Create the block instance
         if block_type == "schema":
-            return BlockSchema(
+            blk = BlockSchema(
                 name=block_data.get("name"),
                 role=role,
                 tags=tags,
@@ -274,12 +277,19 @@ def load_block(
                 attrs=attrs,
             )
         else:
-            return Block(
+            blk = Block(
                 role=role,
                 tags=tags,
                 style=styles,
                 attrs=attrs,
             )
+
+        # Resolve and attach mutator from styles
+        mutator_config = MutatorMeta.resolve(styles)
+        blk.mutator = mutator_config.mutator(blk)
+        blk.stylizers = [stylizer() for stylizer in mutator_config.stylizers]
+
+        return blk
 
     def build_tree(block_id: str) -> "Block":
         """

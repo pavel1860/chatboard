@@ -172,6 +172,7 @@ class ContextStack:
         self._pending_pop: SchemaCtx | None = None
         self._did_start = False
         self._root_name = root_name
+        self._pending_chunks: list[BlockChunk] = []
     
     @property
     def curr_block(self) -> Block:
@@ -199,6 +200,13 @@ class ContextStack:
     
     def is_root(self) -> bool:
         return len(self._stack) == 1 and self._stack[0].schema == self._schema
+    
+    
+    def _append_pending_chunks(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
+        if self._pending_chunks:
+            chunks = self._pending_chunks + chunks
+            self._pending_chunks = []
+        return chunks
         
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         self._pending_pop = None
@@ -209,22 +217,30 @@ class ContextStack:
             schema_ctx = BlockSchemaCtx(self._schema, is_root=self._root_name == name)
         else:
             schema_ctx = self.top().build_child_schema(name, attrs)
+            
+        chunks = self._append_pending_chunks(chunks)
         ctx_list = schema_ctx.init(name, attrs, chunks)
         self.push(ctx_list)
     
     def commit(self, name: str, chunks: list[BlockChunk]):
+        chunks = self._append_pending_chunks(chunks)
         schema_ctx = self.pop()
         postfix = schema_ctx.commit(name, chunks)                
         self._commited_stack.append(schema_ctx)        
         return postfix
     
         
-    def append(self, chunks: list[BlockChunk]):
+    def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
         if self._pending_pop is not None:
             if chunks[0] != "\n":
                 self._pending_pop = None
             if self.is_root():
                 self.top().block.append_child("")
+        if all(chunk.isspace() for chunk in chunks):            
+            self._pending_chunks.extend(chunks)
+            return []
+        else:
+            chunks = self._append_pending_chunks(chunks)
         return self.top().append(chunks)
     
     
@@ -295,6 +311,7 @@ class XmlParser(Process):
         # Chunk tracking for logprobs - stores (start_byte, end_byte, Chunk)
         self._chunks: list[tuple[int, int, BlockChunk]] = []
         self._total_bytes = 0
+        self._chunk_cursor: int = 0  # Track last consumed chunk for O(N) iteration
 
         # Pending event for deferred processing
         self._pending: tuple[str, Any, int] | None = None
@@ -468,20 +485,42 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
 
     def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
-        """Get chunks overlapping the byte range [start, end)."""
-        result = []
+        """Get chunks overlapping the byte range [start, end).
 
-        for chunk_start, chunk_end, chunk in self._chunks:
-            if chunk_start < end and chunk_end > start:
-                # Check if we need to split the chunk
-                if chunk_end > end:
-                    # Split off the part after our range
-                    chunk, _ = chunk.split(end - chunk_start)
-                if chunk_start < start:
-                    # Split off the part before our range
-                    _, chunk = chunk.split(start - chunk_start)
-                if chunk.content:
-                    result.append(chunk)
+        Uses cursor tracking for O(N) total iteration instead of O(N²).
+        Since the parser processes sequentially, we can skip fully consumed chunks.
+        """
+        result = []
+        chunks = self._chunks
+        n = len(chunks)
+        i = self._chunk_cursor
+
+        # Skip chunks that are fully consumed (end before our range starts)
+        while i < n and chunks[i][1] <= start:
+            i += 1
+
+        # Update cursor to skip fully consumed chunks on next call
+        self._chunk_cursor = i
+
+        # Collect overlapping chunks
+        while i < n:
+            chunk_start, chunk_end, chunk = chunks[i]
+
+            # Stop if chunk starts at or after our range end
+            if chunk_start >= end:
+                break
+
+            # Check if we need to split the chunk
+            if chunk_end > end:
+                # Split off the part after our range
+                chunk, _ = chunk.split(end - chunk_start)
+            if chunk_start < start:
+                # Split off the part before our range
+                _, chunk = chunk.split(start - chunk_start)
+            if chunk.content:
+                result.append(chunk)
+
+            i += 1
 
         return result
 
@@ -507,7 +546,7 @@ class XmlParser(Process):
             print("__________________")
             print(f"Event {self._index}: {event_type}, data={event_data!r}, chunks={chunks}")
             if event_type == "end":
-                print(f"----------------------- {event_data} -------------------------")
+                print(f"####################### {event_data} #########################")
             
 
         if event_type == "start":
@@ -563,8 +602,9 @@ class XmlParser(Process):
         
     def _handle_chardata(self, chunks: list[BlockChunk]):
         """Handle character data - append to current block."""
-        self._ctx_stack.append(chunks)
-        self._emit_event("block_delta", chunks)
+        appended_chunks = self._ctx_stack.append(chunks)
+        if appended_chunks:
+            self._emit_event("block_delta", appended_chunks)
 
 
     def _handle_start2(self, name: str, attrs: dict, chunks: list[BlockChunk]):

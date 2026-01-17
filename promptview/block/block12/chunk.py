@@ -184,7 +184,7 @@ class BlockChunk:
 
     def isspace(self) -> bool:
         """Check if content is whitespace (method form for compatibility)."""
-        return self.content.isspace() if self.content else True
+        return self.content.isspace() and not self.content == "\n" if self.content else True
 
     def split(self, position: int) -> tuple["BlockChunk", "BlockChunk"]:
         """

@@ -1886,7 +1886,7 @@ class StreamController(ObservableProcess):
 
         # Wrap in Stream process and pipe through Accumulator
         if self._load_filepath is not None:
-            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.0)
+            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.1)
         else:
             gen_instance = self._gen_func(*bound.args, **bound.kwargs)
             stream = Stream(gen_instance, name=f"{self._name}_stream")
