@@ -81,7 +81,7 @@ class SchemaCtx[TxSchema]:
             raise ValueError(f"Unknown schema type: {type(schema)}")
         
     def add_newline(self):
-        self.block.append_child("")
+        self.block.append_child()
         self._should_add_newline = False
     
 class BlockSchemaCtx(SchemaCtx[BlockSchema]):
@@ -112,23 +112,49 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
     #                 self.block.append_child("")
     #             events = self.block.tail.append(chunk.content, logprob=chunk.logprob)
     #     return chunks
+    
+    
+    # def append(self, chunks: list[BlockChunk]):        
+    #     for chunk in chunks:
+    #         style = None
+    #         if chunk.content:
+    #             if not self.block.mutator._initialized:
+    #                 if not chunk.is_newline():
+    #                     self.add_newline()
+    #                     self.block.mutator._initialized = True
+    #             else:
+    #                 if self._should_add_newline:
+    #                     self.add_newline()
+    #                 if chunk.is_newline():
+    #                     self._should_add_newline = True
+    #                     style = self.block.mutator.styles[0]                
+                    
+    #             # elif chunk.isspace():
+    #             #     style = self.block.mutator.styles[0]
+    #             events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)                
+    #     return chunks
+    
     def append(self, chunks: list[BlockChunk]):        
         for chunk in chunks:
             style = None
-            if chunk.content:
+            if chunk.content:                
                 if self._should_add_newline:
                     self.add_newline()
                 if chunk.is_newline():
                     self._should_add_newline = True
-                    style = self.block.mutator.styles[0]
+                    style = self.block.mutator.styles[0]                    
                 elif chunk.isspace():
                     style = self.block.mutator.styles[0]
-                events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style)                
+                elif not self.block.body:
+                    self.add_newline()
+                events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)                
         return chunks
+
     
     
     def commit(self, name: str, chunks: list[BlockChunk]):
         postfix = Block(chunks)
+        self._should_add_newline = False
         self.block.commit(postfix)
         return postfix
 
@@ -199,12 +225,17 @@ class ContextStack:
         return not self._stack
     
     def is_root(self) -> bool:
-        return len(self._stack) == 1 and self._stack[0].schema == self._schema
+        return len(self._stack) == 1 and self.top().schema == self._schema
     
     
     def _append_pending_chunks(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
         if self._pending_chunks:
-            chunks = self._pending_chunks + chunks
+            pending_chunks = []
+            style = self.top().block.mutator.styles[0]
+            for c in self._pending_chunks:
+                c.meta.style = style
+                pending_chunks.append(c)
+            chunks = pending_chunks + chunks
             self._pending_chunks = []
         return chunks
         
@@ -235,7 +266,7 @@ class ContextStack:
             if chunks[0] != "\n":
                 self._pending_pop = None
             if self.is_root():
-                self.top().block.append_child("")
+                self.top().add_newline()
         if all(chunk.isspace() for chunk in chunks):            
             self._pending_chunks.extend(chunks)
             return []
@@ -518,6 +549,9 @@ class XmlParser(Process):
                 # Split off the part before our range
                 _, chunk = chunk.split(start - chunk_start)
             if chunk.content:
+                if chunk.starts_with_tab():
+                    lchunk, chunk = chunk.split_tab()
+                    result.append(lchunk)                    
                 result.append(chunk)
 
             i += 1

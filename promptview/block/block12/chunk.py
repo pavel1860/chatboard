@@ -185,7 +185,17 @@ class BlockChunk:
     def isspace(self) -> bool:
         """Check if content is whitespace (method form for compatibility)."""
         return self.content.isspace() and not self.content == "\n" if self.content else True
-
+    
+    def starts_with_tab(self) -> bool:
+        """True if chunk starts with whitespace."""
+        return self.content.startswith(('  ', '\t'))
+    
+    def split_tab(self) -> tuple["BlockChunk", "BlockChunk"]:
+        """Split chunk at the first tab."""
+        content = self.content.lstrip()
+        position = len(self.content) - len(content)
+        return self.split(position)
+        
     def split(self, position: int) -> tuple["BlockChunk", "BlockChunk"]:
         """
         Split chunk at the given position (relative to chunk start).

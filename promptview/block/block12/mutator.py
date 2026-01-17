@@ -197,6 +197,7 @@ class Mutator(metaclass=MutatorMeta):
 
     styles: tuple[str, ...] = ()
     target: str = "content"
+    _initialized: bool = False
     _committed: bool = False
 
 
@@ -417,6 +418,7 @@ class XmlMutator(Mutator):
     def init(cls, block: Block) -> Block:
         prefix, suffix = block.split_prefix("<", create_on_empty=True)
         content, postfix = suffix.split_postfix(">", create_on_empty=True)
+        content,_, _ = content.split(" ")
         content.snake_case()
         
         with Block(tags=["xml-container"]) as blk:
