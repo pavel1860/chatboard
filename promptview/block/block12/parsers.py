@@ -293,7 +293,7 @@ class XmlParser(Process):
         self._has_synthetic_root = True
 
         # Extract schema with root tag for wrapping multiple schemas
-        self.schema = schema.extract_schema(style="xml", root=self._root_tag)
+        self.schema = schema.extract_schema(style="xml", root=self._root_tag, role="assistant")
         if self.schema is None:
             raise ParserError("No schema found to parse against")
 
@@ -333,7 +333,7 @@ class XmlParser(Process):
             self._wrapper_schema = self.schema
         else:
             # Single schema - wrap it
-            self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True)
+            self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
             self._wrapper_schema._raw_append_child(self.schema)
         self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, root_name=self._root_tag)
         self._index = 0

@@ -122,8 +122,8 @@ class BlockSchema(Block):
         from .mutator import BlockMutator
         content = content if use_mutator else self.name        
         config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
-        # tran_block = config.mutator.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
-        tran_block = config.create_block(content, tags=self.tags, role=self.role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
+        # tran_block = config.mutator.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)
+        tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
         # tran_block = config.build_block(self, is_streaming=is_streaming)        
         return tran_block
 
@@ -204,7 +204,7 @@ class BlockSchema(Block):
         # Name becomes the block's text (used for XML tag)
         block = Block(
             content=self.name,
-            role=role if role is not None else self.role,
+            role=role if role is not None else self._role,
             tags=tags if tags is not None else list(self.tags),
             style=style if style is not None else list(self.style),
             attrs=attrs if attrs is not None else dict(self.attrs),
@@ -305,7 +305,7 @@ class BlockSchema(Block):
             type=self._type,
             style=list(self.style),
             tags=list(self.tags),
-            role=self.role,
+            role=self._role,
             is_required=self.is_required,
             attrs=dict(self.attrs),
             is_root=self.is_root,
@@ -497,7 +497,7 @@ class BlockList(Block):
         """Copy this list."""
         new_list = BlockList(
             item_schema=self.item_schema.copy() if self.item_schema else None,
-            role=self.role,
+            role=self._role,
             tags=list(self.tags),
             style=list(self.style),
             attrs=dict(self.attrs),
@@ -690,7 +690,7 @@ class BlockListSchema(BlockSchema):
 
         block_list = BlockList(
             item_schema=item_schema,
-            role=role if role is not None else self.role,
+            role=role if role is not None else self._role,
             tags=tags if tags is not None else list(self.tags),
             style=style if style is not None else list(self.style),
             attrs=attrs if attrs is not None else dict(self.attrs),
@@ -731,7 +731,7 @@ class BlockListSchema(BlockSchema):
             item_tags = [self.item_name] + (tags or [])
             return Block(
                 content=content if not isinstance(content, BaseModel) else None,
-                role=role if role is not None else self.role,
+                role=role if role is not None else self._role,
                 tags=item_tags,
                 style=style if style is not None else list(self.style),
             )
@@ -848,7 +848,7 @@ class BlockListSchema(BlockSchema):
             type=self._type,
             style=list(self.style),
             tags=list(self.tags),
-            role=self.role,
+            role=self._role,
             is_required=self.is_required,
             attrs=dict(self.attrs),
         )

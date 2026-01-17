@@ -1,5 +1,5 @@
 from typing import AsyncContextManager, Type, List
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Query
 from .model_router import create_model_router
 from ..prompt.context import Context
 from ..model.query_url_params import parse_query_params, QueryListType
@@ -31,7 +31,8 @@ def create_turn_router(context_cls: Type[Context] | None = None):
     async def get_turn_data(
         list_params: ListParams = Depends(get_list_params),
         filters: QueryListType | None = Depends(query_filters),
-        ctx = Depends(get_model_ctx)
+        ctx = Depends(get_model_ctx),
+        extract: bool = Query(default=True)
     ):
         """
         Get turns with their span trees using the new SpanTree architecture.
@@ -53,8 +54,9 @@ def create_turn_router(context_cls: Type[Context] | None = None):
                 .offset(0)
                 .order_by("-created_at")
             )
-            for turn in turns:
-                turn.extract_blocks()
+            if extract:
+                for turn in turns:
+                    turn.extract_blocks()
             return turns
     
     @turn_router.get("/spans3")

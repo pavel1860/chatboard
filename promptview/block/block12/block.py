@@ -200,7 +200,7 @@ class Block:
 
     __slots__ = [
         "parent", "children", "chunks",
-        "role", "tags", "style", "attrs", "_text", "id", "mutator", "stylizers"
+        "_role", "tags", "style", "attrs", "_text", "id", "mutator", "stylizers"
     ]
 
     def __init__(
@@ -231,7 +231,7 @@ class Block:
         self.chunks: list[ChunkMeta] = []
 
         # Block metadata
-        self.role = role
+        self._role = role
         self.tags = tags or []
         self.style = _parse_style(style)
         self.attrs = attrs or {}
@@ -281,6 +281,33 @@ class Block:
     def is_root(self) -> bool:
         """True if this is the root block."""
         return self.parent is None
+
+    @property
+    def role(self) -> str:
+        """
+        Get the role for this block.
+
+        Returns the block's own role if set, otherwise "user" as default.
+        Role is inherited from parent when a block is added as a child.
+        """
+        if self._role is not None:
+            return self._role
+        return "user"
+
+    @role.setter
+    def role(self, value: str | None) -> None:
+        """
+        Set the role for this block and propagate to nested children.
+
+        When setting a role, all nested children that don't have an explicitly
+        set role will inherit this role.
+        """
+        self._role = value
+        if value is not None:
+            for child in self.children:
+                for block in child.iter_depth_first():
+                    if block._role is None:
+                        block._role = value
 
     @property
     def is_wrapper(self) -> bool:
@@ -825,6 +852,27 @@ class Block:
     # Raw Tree Operations (used by mutators)
     # =========================================================================
 
+    def _connect_block(self, child: Block, parent: Block) -> None:
+        """
+        Connect a block to a parent, setting parent reference and inheriting role.
+
+        Sets the parent for the child block and inherits the role for the child
+        and all its descendants if their role is not explicitly set.
+
+        Only inherits role if the parent has an explicitly set role (_role is not None).
+        This prevents the default "user" role from being applied prematurely.
+
+        Args:
+            child: Block to connect
+            parent: Parent block to connect to
+        """
+        child.parent = parent
+        if parent is not None and parent._role is not None:
+            parent_role = parent._role
+            for block in child.iter_depth_first():
+                if block._role is None:
+                    block._role = parent_role
+
     def _raw_append_child(self, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
         """
         Low-level append child.
@@ -840,7 +888,7 @@ class Block:
                 child._raw_append(content)
 
         target = self.body if to_body else self.children
-        child.parent = target.parent
+        self._connect_block(child, target.parent)
         target.append(child)
 
         return child
@@ -860,7 +908,7 @@ class Block:
                 child._raw_append(content)
 
         target = self.body if to_body else self.children
-        child.parent = target.parent
+        self._connect_block(child, target.parent)
         target.insert(0, child)
 
         return child
@@ -887,7 +935,7 @@ class Block:
         if index >= len(target):
             return self._raw_append_child(child, to_body=to_body)
 
-        child.parent = target.parent
+        self._connect_block(child, target.parent)
         target.insert(index, child)
 
         return child
@@ -995,7 +1043,7 @@ class Block:
         """
         if inherit:
             block = Block(
-                role=self.role,
+                role=self._role,
                 tags=list(self.tags),
                 style=list(self.style),
                 attrs=dict(self.attrs),
@@ -1618,7 +1666,7 @@ class Block:
             New block with copied content
         """
         new_block = Block(
-            role=self.role,
+            role=self._role,
             tags=list(self.tags),
             style=list(self.style),
             attrs=dict(self.attrs),
@@ -1646,7 +1694,7 @@ class Block:
             "id": self.id,
             "path": str(self.path),
             "text": self._text,
-            "role": self.role,
+            "role": self._role,
             "tags": self.tags,
             "style": self.style,
             "attrs": self.attrs,
@@ -1723,6 +1771,7 @@ class Block:
         self,
         style: str | list[str] | None = None,
         root: str | None = None,
+        role: str | None = None,
     ) -> "BlockSchema | None":
         """
         Extract a new BlockSchema tree containing only BlockSchema nodes.
@@ -1736,6 +1785,7 @@ class Block:
             root: Optional root tag name. Only used when extracting from a
                   regular Block with multiple schema children. If not provided
                   and multiple schemas exist at root level, returns None.
+            role: Optional role to set on each extracted schema block
 
         Returns:
             A new BlockSchema tree with only schema nodes, or None if no schemas found
@@ -1753,6 +1803,10 @@ class Block:
                 for s in styles:
                     if s not in new_schema.style:
                         new_schema.style.append(s)
+
+            # Apply role if provided
+            if role is not None:
+                new_schema.role = role
         else:
             # Regular block - don't create a schema, just collect children
             new_schema = None
@@ -1761,12 +1815,12 @@ class Block:
         schema_children = []
         for child in self.children:
             if isinstance(child, (BlockSchema, BlockListSchema)):
-                child_schema = child.extract_schema(style=style)
+                child_schema = child.extract_schema(style=style, role=role)
                 if child_schema is not None:
                     schema_children.append(child_schema)
             else:
                 # For regular blocks, search their children for nested schemas
-                self._collect_nested_schemas(child, schema_children, style=style)
+                self._collect_nested_schemas(child, schema_children, style=style, role=role)
 
         if new_schema is not None:
             # Already have a root schema - add collected children
@@ -1789,6 +1843,7 @@ class Block:
                     name=root,
                     style="block",
                     is_root=True,
+                    role=role,
                     # style=_parse_style(style) if style else [],
                 )
                 for child_schema in schema_children:
@@ -1799,7 +1854,8 @@ class Block:
         self,
         block: "Block",
         result: list,
-        style: str | list[str] | None = None
+        style: str | list[str] | None = None,
+        role: str | None = None,
     ) -> None:
         """
         Recursively search a Block's children for BlockSchema nodes.
@@ -1810,17 +1866,18 @@ class Block:
             block: Block to search
             result: List to append found schemas to
             style: Style to apply to extracted schemas
+            role: Role to set on extracted schemas
         """
         from .schema import BlockSchema, BlockListSchema
 
         for child in block.children:
             if isinstance(child, (BlockSchema, BlockListSchema)):
-                child_schema = child.extract_schema(style=style)
+                child_schema = child.extract_schema(style=style, role=role)
                 if child_schema is not None:
                     result.append(child_schema)
             else:
                 # Keep searching deeper
-                self._collect_nested_schemas(child, result, style=style)
+                self._collect_nested_schemas(child, result, style=style, role=role)
                 
                 
     # =========================================================================
