@@ -365,6 +365,102 @@ class PgQueryBuilder(Generic[Ts]):
         return self
     
     
+    def agg(
+        self,
+        name: str,
+        target: "Type[Model] | PgQueryBuilder",
+        on: tuple[str, str] | None = None
+    ) -> "PgQueryBuilder[Ts]":
+        """
+        Add an aggregated subquery to the selection.
+
+        Similar to include(), but allows specifying custom correlation conditions
+        and a custom name for the aggregated result.
+
+        Args:
+            name: The alias for the aggregated result in the output
+            target: The Model class or PgQueryBuilder to aggregate
+            on: Optional tuple of (primary_key_field, foreign_key_field) for correlation.
+                If not provided, attempts to infer the relation from model metadata.
+
+        Usage:
+            # Basic usage with inferred relation
+            select(Post).agg("comments", Comment)
+
+            # With explicit correlation
+            select(Post).agg("replies", Comment, on=("id", "parent_post_id"))
+
+            # With pre-configured query builder
+            recent_comments = select(Comment).where(created_at__gt=yesterday)
+            select(Post).agg("recent_comments", recent_comments, on=("id", "post_id"))
+
+        Returns:
+            Self for method chaining
+        """
+        from .relations import NsRelation
+
+        # Resolve target to a query builder if it's a Model class
+        if isinstance(target, PgQueryBuilder):
+            target_query_builder = target
+            model_cls = target.get_cls()
+        else:
+            model_cls = target
+            target_query_builder = None
+
+        # Get source for correlation
+        if not self.query.sources:
+            raise ValueError("Query has no sources to correlate with")
+
+        # Determine correlation fields
+        if on is not None:
+            # Explicit correlation provided
+            primary_key, foreign_key = on
+            # Get the first source for correlation
+            relation_source = self.query.sources[0]
+        else:
+            # Try to infer relation from model metadata
+            rel, relation_source = self._infer_relation(target)
+            if rel is None:
+                raise ValueError(
+                    f"No relation found for {target}. "
+                    f"Please provide an explicit 'on' parameter: on=(primary_key, foreign_key)"
+                )
+            primary_key = rel.primary_key
+            foreign_key = rel.foreign_key
+
+        # Ensure fields are selected from main query sources
+        if self.query.projection_fields is None:
+            fields_to_select = []
+            for source in self.query.sources:
+                for field in source.iter_fields():
+                    fields_to_select.append(f"{source.final_name}.{field.name}")
+            if fields_to_select:
+                self.query.select(*fields_to_select)
+
+        # Create target relation and query
+        target_ns = model_cls.get_namespace()
+        target_rel = NsRelation(target_ns)
+
+        if target_query_builder:
+            target_query = target_query_builder.query
+        else:
+            target_query = SelectQuerySet(target_rel)
+
+        # Add correlation WHERE clause
+        # WHERE target.foreign_key = source.primary_key
+        target_query.where(
+            target_rel.get(foreign_key) == relation_source.get(primary_key)
+        )
+
+        # Aggregate into JSON
+        json_query = json_agg(target_query, name)
+        self.query.select_expr(
+            Coalesce(json_query, Value("'[]'", inline=True)),
+            alias=name
+        )
+
+        return self
+
     def include(self, target: "Type[Model] | PgQueryBuilder") -> "PgQueryBuilder[Ts]":
         from ..versioning.models import VersionedModel
         # Check if target is already a query builder with nested includes
