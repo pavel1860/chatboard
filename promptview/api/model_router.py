@@ -4,7 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from ..model.query_url_params import parse_query_params, QueryListType
-from ..model import Model, TurnStatus
+from ..model import Model
+from ..versioning.models import TurnStatus
 from .utils import query_filters
 
 

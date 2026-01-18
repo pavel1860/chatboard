@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, Request
 from .utils import get_auth
 from ..auth.user_manager2 import AuthModel
 from pydantic import BaseModel
-from ..model import NamespaceManager, Turn, Branch
+from ..model import NamespaceManager
+from ..versioning.models import Turn, Branch
 
 
 

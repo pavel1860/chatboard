@@ -10,12 +10,13 @@ os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptv
 
 from promptview.auth.user_manager2 import AuthModel
 from promptview.model.fields import ModelField, KeyField, RelationField
-from promptview.model import Model, VersionedModel, ArtifactModel
+from promptview.model import Model
+from promptview.versioning import VersionedModel, ArtifactModel
 from promptview.model.namespace_manager2 import NamespaceManager
 from promptview.model.relation_model import RelationModel
 from promptview.model.postgres2.pg_query_set import select
-from promptview.model.context import Context
-from promptview.model.versioning.models import Branch, Turn, TurnStatus
+from promptview.prompt.context import Context
+from promptview.versioning import Branch, Turn, TurnStatus
 import datetime as dt
 
 # -------------------------

@@ -462,7 +462,7 @@ class PgQueryBuilder(Generic[Ts]):
         return self
 
     def include(self, target: "Type[Model] | PgQueryBuilder") -> "PgQueryBuilder[Ts]":
-        from ..versioning.models import VersionedModel
+        from ...versioning.models import VersionedModel
         # Check if target is already a query builder with nested includes
         if isinstance(target, PgQueryBuilder):
             # Extract model type from the query builder's first source
@@ -566,7 +566,7 @@ class PgQueryBuilder(Generic[Ts]):
     
     
     def add_versioning_to_query(self, target_query) -> "PgQueryBuilder[Ts]":
-        from ..versioning.models import Artifact
+        from ...versioning.models import Artifact
         from .relations import Source
 
         VERSIONING_CTE_NAMES = {"turn_liniage", "artifact_cte", "artifacts_turns", "artifacts_turns_branch_hierarchy"}
@@ -604,14 +604,14 @@ class PgQueryBuilder(Generic[Ts]):
             
     
     def checkout(self, branch_id: int) -> "PgQueryBuilder[Ts]":
-        from ..versioning.models import Artifact
+        from ...versioning.models import Artifact
         art_query = Artifact.query(branch_id=branch_id)
         self.join_cte(art_query, cte_name="artifact_cte", alias="ac")
         return self
     
     
     def use_versioning(self) -> "PgQueryBuilder[Ts]":
-        from ..versioning.models import Artifact
+        from ...versioning.models import Artifact
         art_query = Artifact.query()
         self.join_cte(art_query, cte_name="artifact_cte", alias="ac")
         return self

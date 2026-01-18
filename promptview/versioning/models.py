@@ -10,29 +10,29 @@ from pydantic import BaseModel, Field
 from promptview.model.base.types import ArtifactKind
 from promptview.model.db_types import Tree
 
-from ..sql2.expressions import Raw
-from ..sql2.relations import RawRelation
+from ..model.sql2.expressions import Raw
+from ..model.sql2.relations import RawRelation
 
 from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
 
 
 
-from .. import Model
-from ..fields import KeyField, ModelField, RelationField
-from ..postgres2.pg_query_set import PgSelectQuerySet
-from ..postgres2.rowset import RowsetNode
-from ..sql.queries import CTENode, RawSQL
-from ..sql.expressions import RawValue
-from ...utils.db_connections import PGConnectionManager
+from ..model.model3 import Model
+from ..model.fields import KeyField, ModelField, RelationField
+from ..model.postgres2.pg_query_set import PgSelectQuerySet
+from ..model.postgres2.rowset import RowsetNode
+from ..model.sql.queries import CTENode, RawSQL
+from ..model.sql.expressions import RawValue
+from ..utils.db_connections import PGConnectionManager
 
-from ...block import Block
+
 
 if TYPE_CHECKING:
-    from ...block import Block
-    from ..sql2.relational_queries import SelectQuerySet
-    from ..sql2.pg_query_builder import PgQueryBuilder
+    from ..block import Block
+    from ..model.sql2.relational_queries import SelectQuerySet
+    from ..model.sql2.pg_query_builder import PgQueryBuilder
     from .artifact_log import ArtifactLog
-    from ...prompt.context import Context
+    from ..prompt.context import Context
 
 # ContextVars for current branch/turn
 _curr_branch = contextvars.ContextVar("curr_branch", default=None)
@@ -398,8 +398,7 @@ class Turn(Model):
         include_executions: bool = False,
         **kwargs
     ) -> "PgQueryBuilder[Self]":
-        from ..postgres2.pg_query_set import PgSelectQuerySet
-        from ..sql2.pg_query_builder import PgQueryBuilder, select
+        from ..model.sql2.pg_query_builder import PgQueryBuilder, select
         from ..versioning.artifact_log import ArtifactLog
         
         query = PgQueryBuilder().select(cls)       
@@ -447,7 +446,7 @@ class Turn(Model):
         branch: Branch | None = None, 
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
-        from ..postgres2.pg_query_set import PgSelectQuerySet
+        from ..model.postgres2.pg_query_set import PgSelectQuerySet
         branch_id = Branch.resolve_target_id(branch)
         branch_cte = Branch.recursive_query(branch_id)
         col = branch_cte.get_field("start_turn_index")
@@ -591,7 +590,7 @@ class VersionedModel(Model):
         exclude: set[str] | None = None
     ):
         # Import here to avoid circular dependency        
-        from ...prompt.context import Context, ContextError
+        from ..prompt.context import Context, ContextError
         ctx = Context.current_or_none()
         if ctx is None:            
             raise ContextError("Context not found")
@@ -671,7 +670,7 @@ class VersionedModel(Model):
         **kwargs
     ) -> "PgQueryBuilder[Self]":
         # from ..postgres2.pg_query_set import PgSelectQuerySet
-        from ..sql2.pg_query_builder import select, PgQueryBuilder
+        from ..model.sql2.pg_query_builder import select, PgQueryBuilder
         
         # if turn_cte is None:
         #     turn_cte = Turn.query(branch=branch, to_select=True)
@@ -722,7 +721,7 @@ class VersionedModel(Model):
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
         **kwargs
     ):
-        from ..postgres2.pg_query_set import PgSelectQuerySet
+        from ..model.postgres2.pg_query_set import PgSelectQuerySet
         turn_cte = Turn.vquery().select(*fields or "*")
         # .where(lambda t: t.status.isin([TurnStatus.COMMITTED, TurnStatus.STAGED]))
         if statuses:
@@ -995,7 +994,7 @@ class BlockTree(VersionedModel):
         direction: Literal["asc", "desc"] = "desc",
 
     ):
-        from ..sql2.pg_query_builder import select, PgQueryBuilder
+        from ..model.sql2.pg_query_builder import select, PgQueryBuilder
         async def to_block(trees: list[BlockTree]):
             blocks = []
             for tree in trees:
@@ -1085,7 +1084,7 @@ class ArtifactModel(VersionedModel):
         include_branch_turn: bool = False,
         **kwargs
     ) -> "PgQueryBuilder[Self]":
-        from ..sql2.pg_query_builder import PgQueryBuilder
+        from ..model.sql2.pg_query_builder import PgQueryBuilder
         
         art_cte = Artifact.query(
             statuses=statuses, 
@@ -1156,7 +1155,7 @@ class ArtifactModel(VersionedModel):
         statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
         **kwargs
     ) -> "PgSelectQuerySet[Self]":
-        from ..postgres2.pg_query_set import PgSelectQuerySet
+        from ..model.postgres2.pg_query_set import PgSelectQuerySet
 
         # Build turn CTE with versioning context
         turn_cte = Turn.vquery().select(*fields or "*")
@@ -1268,7 +1267,7 @@ class DataFlowNode(Model):
     
     @property
     def value(self) -> Any:
-        from ...block import Block
+        from ..block import Block
         if self._value is None:
             raise ValueError(f"no value for DataFlowNode {self.id}")
         
@@ -1286,7 +1285,7 @@ class DataFlowNode(Model):
     
     @property
     def list_kind(self) -> list[str] | None:
-        from ...block import Block
+        from ..block import Block
         if self.kind != "list" or self._value is None:
             return None
         result = []
@@ -1311,7 +1310,7 @@ class DataFlowNode(Model):
     
     def extract(self) -> Any:
         """ turns blocks into simplified blocks """
-        from ...block import Block
+        from ..block import Block
         if self.kind == "block":
             self._value = self._value.extract()
         elif self.kind == "list":
@@ -1383,7 +1382,7 @@ class ExecutionSpan(VersionedModel):
     
     @property
     def ctx(self) -> "Context":
-        from ...prompt.context import Context
+        from ..prompt.context import Context
         ctx = Context.current_or_none()
         if ctx is None:
             raise ValueError("Context is not set")

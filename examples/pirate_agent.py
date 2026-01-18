@@ -6,7 +6,8 @@ from promptview.llms import LLM
 from promptview.context.execution_context import ExecutionContext
 import datetime as dt
 from uuid import UUID, uuid4
-from promptview.model import BlockLog, ArtifactModel, ModelField, KeyField, RelationField
+from promptview.model import ModelField, KeyField, RelationField
+from promptview.versioning import BlockLog, ArtifactModel
 from promptview import AuthModel
 
 from pydantic import BaseModel, Field

@@ -1,5 +1,5 @@
 from typing import Type
-from ..model import Branch, Turn
+from ..versioning.models import Branch, Turn
 from .model_router import create_model_router
 from ..prompt.context import Context
 from fastapi import Request, Depends, Query, Body

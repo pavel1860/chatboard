@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING, Any, Callable
 from dataclasses import dataclass, field
 
 # from .models import EvaluatorConfig, ValueEval, EvaluationFailure
-from ..model import Branch, EvaluatorConfig, ValueEval, EvaluationFailure
+from ..versioning.models import Branch, EvaluatorConfig, ValueEval, EvaluationFailure
 from .decorators import get_evaluator, EvalCtx, evaluator_registry
 from .matching import match_value_to_evaluators
-from ..model import TestCase, TestRun, TurnEval, TestTurn, Turn, DataFlowNode
-from ..model.versioning.artifact_log import ArtifactLog
+from ..versioning.models import TestCase, TestRun, TurnEval, TestTurn, Turn, DataFlowNode
+from ..versioning.artifact_log import ArtifactLog
 if TYPE_CHECKING:
     from ..prompt.span_tree import DataFlow, SpanTree
     from ..prompt.fbp_process import EvaluatorController

@@ -3,10 +3,10 @@ from fastapi import Depends, Request, Query
 from .model_router import create_model_router
 from ..prompt.context import Context
 from ..model.query_url_params import parse_query_params, QueryListType
-from ..model import EvaluatorConfig, TurnStatus
+from ..versioning.models import EvaluatorConfig, TurnStatus
 from .utils import query_filters
-from ..model.versioning.models import Turn, ExecutionSpan, DataFlowNode, Log, Artifact, TestTurn
-from ..model.versioning.models import Branch
+from ..versioning.models import Turn, ExecutionSpan, DataFlowNode, Log, Artifact, TestTurn
+from ..versioning.models import Branch
 from .utils import ListParams, get_list_params
 
 

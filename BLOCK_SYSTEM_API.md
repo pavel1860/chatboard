@@ -164,7 +164,7 @@ blocks = await BlockLog.span("my_component").last(5)
 ### Filter by Status
 
 ```python
-from promptview.model.versioning.models import TurnStatus
+from promptview.versioning.models import TurnStatus
 
 # Only committed turns (default)
 blocks = await BlockLog.last(5)
@@ -200,7 +200,7 @@ blocks = await query
 For advanced queries, use the ORM directly:
 
 ```python
-from promptview.model.versioning.models import BlockTree, BlockNode, BlockSignature, BlockModel
+from promptview.versioning.models import BlockTree, BlockNode, BlockSignature, BlockModel
 
 # Get all trees from last 7 days
 trees = await BlockTree.vquery(
@@ -423,7 +423,7 @@ if diff.has_changes:
 ### 6. Clean Up Experiments
 
 ```python
-from promptview.model.versioning.models import TurnStatus
+from promptview.versioning.models import TurnStatus
 
 # Mark experimental turns as reverted
 async with Context().start_turn() as ctx:

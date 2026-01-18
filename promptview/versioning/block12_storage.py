@@ -28,12 +28,12 @@ import json
 import datetime as dt
 from typing import TYPE_CHECKING, Any
 
-from ..versioning.models import BlockTree, BlockModel, BlockSpan, BlockTreeBlock
-from ...utils.db_connections import PGConnectionManager
+from .models import BlockTree, BlockModel, BlockSpan, BlockTreeBlock
+from ..utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
-    from ...block.block12 import Block, BlockSchema, ChunkMeta, BlockList
-    from ..sql2.pg_query_builder import PgQueryBuilder
+    from ..block.block12 import Block, BlockSchema, ChunkMeta, BlockList
+    from ..model.sql2.pg_query_builder import PgQueryBuilder
 
 
 # =============================================================================
@@ -131,7 +131,7 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
     The blocks dict is keyed by Merkle hash, spans dict by content hash.
     Duplicate subtrees will naturally have same hash and overwrite.
     """
-    from ...block.block12 import BlockSchema
+    from ..block.block12 import BlockSchema
 
     all_spans: dict[str, dict] = {}
     all_blocks: dict[str, dict] = {}
@@ -232,8 +232,8 @@ def load_block(
 
     Each block gets its own local text from its span. No shared string.
     """
-    from ...block.block12 import Block, BlockSchema, ChunkMeta
-    from ...block.block12.mutator import MutatorMeta
+    from ..block.block12 import Block, BlockSchema, ChunkMeta
+    from ..block.block12.mutator import MutatorMeta
 
     def get_span_data(block_data: dict) -> tuple[str, list[dict]]:
         """Extract text and chunks from a block's span."""
@@ -838,7 +838,7 @@ class BlockLogQuery:
         if self._span_name is None:
             return None
 
-        from ..versioning.models import ExecutionSpan
+        from .models import ExecutionSpan
         spans = await ExecutionSpan.query().where(name=self._span_name)
         return [s.id for s in spans]
 
@@ -862,7 +862,7 @@ class BlockLogQuery:
         return block_tree_query
 
     async def execute(self) -> "BlockList":
-        from ...block.block12 import BlockList
+        from ..block.block12 import BlockList
         # Resolve span name to IDs if provided
         span_ids = await self._resolve_span_ids()
         if self._span_name is not None and not span_ids:
