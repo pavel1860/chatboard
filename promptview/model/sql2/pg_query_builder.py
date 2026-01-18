@@ -567,10 +567,36 @@ class PgQueryBuilder(Generic[Ts]):
     
     def add_versioning_to_query(self, target_query) -> "PgQueryBuilder[Ts]":
         from ..versioning.models import Artifact
-        version_cte = next((cte for cte in self.query.ctes if cte.name == "artifacts_turns_branch_hierarchy"), None)
+        from .relations import Source
+
+        VERSIONING_CTE_NAMES = {"turn_liniage", "artifact_cte", "artifacts_turns", "artifacts_turns_branch_hierarchy"}
+
+        version_cte = next((cte for cte in self.query.ctes if cte.name in VERSIONING_CTE_NAMES), None)
+
         if version_cte is None:
+            # Parent doesn't have versioning CTE, create one
             version_cte = Artifact.query()
             self.use_cte(version_cte, cte_name="artifact_cte")
+        else:
+            # Parent has versioning CTE - remove target's versioning elements
+
+            # Remove versioning CTEs from target
+            target_query.ctes = [
+                cte for cte in target_query.ctes
+                if cte.name not in VERSIONING_CTE_NAMES
+            ]
+
+            # Remove versioning sources (joins on artifact_id)
+            target_query.sources = tuple(
+                src for src in target_query.sources
+                if not (
+                    isinstance(src, Source) and
+                    src.join_on is not None and
+                    src.join_on[0].name == "artifact_id"
+                )
+            )
+
+        # Add the versioning join using parent's CTE
         target_query.join(version_cte, on=("artifact_id", "id"), alias="ac")
         return target_query
 
@@ -633,7 +659,7 @@ class PgQueryBuilder(Generic[Ts]):
         return model_cls
 
 
-    def parse_row(self, row: dict[str, Any], return_json: bool = False) -> dict[str, Any] | Ts:
+    def parse_row(self, row: dict[str, Any], return_json: bool = False) -> dict[str, Any]:
         """
         Parse a database row, deserializing JSON fields from included relations.
 
@@ -671,22 +697,35 @@ class PgQueryBuilder(Generic[Ts]):
                     parsed[field_name] = value
 
         # Return dict if json() was called, otherwise return Model instance
-        if return_json:
-            return parsed
-        else:
-            # Get the model class from the first source namespace
-            first_source = self.query.sources[0]
-            namespace = first_source.base.namespace
-            model_cls = namespace._model_cls
-            if not model_cls:
-                raise ValueError("Model class not set on namespace")
-            return model_cls(**parsed)
+        return parsed
+    
+    
+    def pack_model(self, row: dict[str, Any]) -> Ts:
+        first_source = self.query.sources[0]
+        namespace = first_source.base.namespace
+        model_cls = namespace._model_cls
+        if not model_cls:
+            raise ValueError("Model class not set on namespace")
+        return model_cls(**row)
+        # if return_json:
+        #     return parsed
+        # else:
+        #     # Get the model class from the first source namespace
+        #     first_source = self.query.sources[0]
+        #     namespace = first_source.base.namespace
+        #     model_cls = namespace._model_cls
+        #     if not model_cls:
+        #         raise ValueError("Model class not set on namespace")
+        #     return model_cls(**parsed)
         
         
     async def json(self) -> list[dict[str, Any]]:
         sql, params = self.render()
         rows = await PGConnectionManager.fetch(sql, *params)
-        return [self.parse_row(row, return_json=True) for row in rows]
+        parsed = [self.parse_row(row, return_json=True) for row in rows]
+        if self._parse_rows is not None:
+            parsed = await self._parse_rows(parsed)
+        return parsed
 
     
     async def json_parse(self, func: Callable[[list[dict[str, Any]]],  RetModel]) -> RetModel:
@@ -705,6 +744,9 @@ class PgQueryBuilder(Generic[Ts]):
 
         model_cls = self.get_cls()
         rows = [self.parse_row(row) for row in rows]
+        if self._parse_rows is not None:
+            rows = await self._parse_rows(rows)
+        rows = [self.pack_model(row) for row in rows]
         if self._parse_models is not None:
             rows = await self._parse_models(rows)
         return rows

@@ -192,3 +192,14 @@ def VectorField(
 
 
 
+
+
+def BlockField(
+    default: Any = None,
+    *,
+    description: str | None = _Unset,
+) -> Any:
+    extra = {}
+    extra["is_model_field"] = True
+    extra["is_block"] = True
+    return Field(default, json_schema_extra=extra, description=description)

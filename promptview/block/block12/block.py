@@ -423,6 +423,22 @@ class Block:
         return self.mutator.tail
     
     
+    def hash(self) -> str:
+        from promptview.model.block_models.block12_storage import compute_block_hash
+        children = [child.hash() for child in self.children]
+        return compute_block_hash(
+            span_id=None,
+            role=self.role,
+            tags=self.tags,
+            styles=self.style,
+            name=None,
+            attrs=self.attrs,
+            children=children,
+            block_type="block",
+            # path=str(self.path),
+        )
+    
+    
     def content_chunks(self) -> list[BlockChunk]:
         return self.mutator.content_chunks()
 

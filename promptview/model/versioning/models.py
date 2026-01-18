@@ -9,8 +9,9 @@ from pydantic import BaseModel, Field
 
 from promptview.model.base.types import ArtifactKind
 from promptview.model.db_types import Tree
-from promptview.model.sql2.expressions import Raw
-from promptview.model.sql2.relations import RawRelation
+
+from ..sql2.expressions import Raw
+from ..sql2.relations import RawRelation
 
 from promptview.utils.type_utils import SerializableType, UnknownType, deserialize_value, serialize_value, type_to_str, str_to_type, type_to_str_or_none
 
@@ -24,11 +25,13 @@ from ..sql.queries import CTENode, RawSQL
 from ..sql.expressions import RawValue
 from ...utils.db_connections import PGConnectionManager
 
+from ...block import Block
+
 if TYPE_CHECKING:
     from ...block import Block
-    from promptview.model.sql2.relational_queries import SelectQuerySet
-    from promptview.model.sql2.pg_query_builder import PgQueryBuilder
-    from promptview.model.versioning.artifact_log import ArtifactLog
+    from ..sql2.relational_queries import SelectQuerySet
+    from ..sql2.pg_query_builder import PgQueryBuilder
+    from .artifact_log import ArtifactLog
     from ...prompt.context import Context
 
 # ContextVars for current branch/turn
@@ -1066,8 +1069,6 @@ class ArtifactModel(VersionedModel):
         self._dirty_fields = {}
         return result
     
-
-    
     @classmethod
     def query(
         cls: Type[Self], 
@@ -1102,15 +1103,45 @@ class ArtifactModel(VersionedModel):
             .order_by("-id", "-version")
             .join_cte(art_cte, "artifact_cte", alias="ac")
         )
-        # return (
-        #     PgSelectQuerySet(cls, alias=alias) \
-        #     .use_cte(
-        #         art_cte,
-        #         name="artifact_cte",
-        #         alias="ac",
-        #     )
-        #     .select(*fields if fields else "*")
-        # )
+
+    
+    # @classmethod
+    # def query(
+    #     cls: Type[Self], 
+    #     fields: list[str] | None = None, 
+    #     alias: str | None = None, 
+    #     use_ctx: bool = True,
+    #     branch: Branch | int | None = None,
+    #     turn_cte: "PgSelectQuerySet[Turn] | None" = None,
+    #     use_liniage: bool = True,
+    #     limit: int | None = None, 
+    #     offset: int | None = None, 
+    #     statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
+    #     direction: Literal["asc", "desc"] = "desc",
+    #     include_branch_turn: bool = False,
+    #     **kwargs
+    # ) -> "PgQueryBuilder[Self]":
+    #     from ..sql2.pg_query_builder import PgQueryBuilder
+        
+    #     art_cte = Artifact.query(
+    #         statuses=statuses,
+    #         limit=limit,
+    #         offset=offset,
+    #         direction=direction,
+    #         use_liniage=use_liniage,
+    #         turn_cte=turn_cte,
+    #         include_branch_turn=include_branch_turn
+    #     )
+    #     ns = cls.get_namespace()
+    #     table_name = ns.name
+    #     pk = ns.primary_key
+    #     return (
+    #         PgQueryBuilder()
+    #         .select(cls)
+    #         .distinct_on(f"{table_name}.{pk}")
+    #         .order_by(f"-{table_name}.{pk}", "-ac.version")
+    #         .join_cte(art_cte, "artifact_cte", alias="ac")
+    #     )
 
     
         
