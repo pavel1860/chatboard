@@ -211,6 +211,7 @@ class Block:
         tags: list[str] | None = None,
         style: str | list[str] | None = None,
         attrs: dict[str, Any] | None = None,
+        children: list[Block] | None = None,
     ):
         """
         Create a block with optional initial content.
@@ -225,7 +226,7 @@ class Block:
         from .mutator import Mutator, Stylizer
         # Tree structure
         self.parent: Block | None = None
-        self.children: BlockChildren = BlockChildren(parent=self)
+        self.children: BlockChildren = BlockChildren(parent=self)        
 
         # Chunk metadata (relative to local _text)
         self.chunks: list[ChunkMeta] = []
@@ -258,6 +259,10 @@ class Block:
                 self._raw_append(str(content))
             else:
                 raise ValueError(f"Invalid content type: {type(content)}")
+            
+        if children is not None:
+            for child in children:
+                self.append_child(child)
 
     # =========================================================================
     # Basic Properties

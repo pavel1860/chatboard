@@ -32,7 +32,7 @@ from ..versioning.models import BlockTree, BlockModel, BlockSpan, BlockTreeBlock
 from ...utils.db_connections import PGConnectionManager
 
 if TYPE_CHECKING:
-    from ...block.block12 import Block, BlockSchema, ChunkMeta
+    from ...block.block12 import Block, BlockSchema, ChunkMeta, BlockList
     from ..sql2.pg_query_builder import PgQueryBuilder
 
 
@@ -162,16 +162,10 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             # Use full chunks (with id) for storage
             chunks_data = dump_chunks(blk.chunks)
 
-            # Store in spans table format (reusing BlockSpan structure)
-            # We store text in content_text, chunks in content_chunks
             all_spans[span_id] = {
                 "id": span_id,
-                "prefix_text": "",
-                "content_text": text,
-                "postfix_text": "",
-                "prefix_chunks": [],
-                "content_chunks": chunks_data,
-                "postfix_chunks": [],
+                "text": text,
+                "chunks": chunks_data,
             }
 
         # Determine block type
@@ -250,12 +244,12 @@ def load_block(
         # Check for inline span (from include query)
         span_data = block_data.get("span")
         if span_data and isinstance(span_data, dict):
-            return span_data.get("content_text", ""), span_data.get("content_chunks", [])
+            return span_data.get("text", ""), span_data.get("chunks", [])
 
         # Look up in spans dict
         span_data = spans.get(span_id)
         if span_data:
-            return span_data.get("content_text", ""), span_data.get("content_chunks", [])
+            return span_data.get("text", ""), span_data.get("chunks", [])
 
         return "", []
 
@@ -349,7 +343,7 @@ def parse_block_tree_query_result(trees: list[dict]) -> list["Block"]:
                 {
                     'id': 'hash...',
                     'path': '',
-                    'span': {'content_text': '...', 'content_chunks': [...]},
+                    'span': {'text': '...', 'chunks': [...]},
                     'children': ['child_hash1', 'child_hash2'],
                     ...
                 },
@@ -462,12 +456,8 @@ async def parse_block_trees(trees: list["BlockTree"]) -> list["Block"]:
                     span = block_model.span
                     block_dict["span"] = {
                         "id": span.id,
-                        "content_text": span.content_text,
-                        "content_chunks": span.content_chunks,
-                        "prefix_text": span.prefix_text,
-                        "prefix_chunks": span.prefix_chunks,
-                        "postfix_text": span.postfix_text,
-                        "postfix_chunks": span.postfix_chunks,
+                        "text": span.text,
+                        "chunks": span.chunks,
                     }
 
             tree_dict["blocks"].append(block_dict)
@@ -494,6 +484,9 @@ async def insert_block(
     Only new spans/blocks are inserted; existing ones are reused.
     Creates junction table entries for BlockTree ↔ BlockModel relationship.
 
+    Blocks are transformed before storage to ensure consistent formatting
+    (markdown headers, XML tags, etc.) is persisted.
+
     Args:
         block: Root block to insert
         branch_id: Branch ID for versioning
@@ -503,6 +496,8 @@ async def insert_block(
     Returns:
         BlockTree model instance
     """
+    # Transform block before storage to ensure formatting is applied
+    block = block.transform()
     root_data, all_blocks, all_spans = dump_block(block)
     root_id = root_data["id"]
 
@@ -512,21 +507,16 @@ async def insert_block(
             span_rows = [
                 (
                     span["id"],
-                    span["prefix_text"],
-                    span["content_text"],
-                    span["postfix_text"],
-                    json.dumps(span["prefix_chunks"]),
-                    json.dumps(span["content_chunks"]),
-                    json.dumps(span["postfix_chunks"]),
+                    span["text"],
+                    json.dumps(span["chunks"]),
                     dt.datetime.now(),
                 )
                 for span in all_spans.values()
             ]
             await tx.executemany(
                 """INSERT INTO block_spans
-                   (id, prefix_text, content_text, postfix_text,
-                    prefix_chunks, content_chunks, postfix_chunks, created_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   (id, text, chunks, created_at)
+                   VALUES ($1, $2, $3, $4)
                    ON CONFLICT (id) DO NOTHING""",
                 span_rows
             )
@@ -688,16 +678,14 @@ async def load_block_from_junction(tree_id: int) -> "Block | None":
     spans: dict[str, dict] = {}
     if span_ids_to_fetch:
         span_rows = await PGConnectionManager.fetch(
-            """SELECT id, prefix_text, content_text, postfix_text,
-                      prefix_chunks, content_chunks, postfix_chunks
+            """SELECT id, text, chunks
                FROM block_spans WHERE id = ANY($1)""",
             list(span_ids_to_fetch)
         )
         for row in span_rows:
             span_data = dict(row)
-            for key in ("prefix_chunks", "content_chunks", "postfix_chunks"):
-                if isinstance(span_data.get(key), str):
-                    span_data[key] = json.loads(span_data[key])
+            if isinstance(span_data.get("chunks"), str):
+                span_data["chunks"] = json.loads(span_data["chunks"])
             spans[span_data["id"]] = span_data
 
     # Step 4: Reconstruct tree
@@ -790,14 +778,17 @@ async def get_block_usage_count(block_id: str) -> int:
 # =============================================================================
 
 class BlockLogQuery:
-    
+
     def __init__(self, *args, **kwargs):
         self._query = None
         self._limit = None
         self._offset = None
         self._order_by = "created_at"
         self._filters = {}
-        
+        self._span_name: str | None = None
+        self._span_ids: list[int] | None = None
+        self._should_extract: bool = True
+        self._reverse: bool = False
         
     def __await__(self):
         return self.execute().__await__()
@@ -805,11 +796,13 @@ class BlockLogQuery:
     def tail(self, limit: int) -> "BlockLogQuery":
         self._limit = limit
         self._order_by = "-created_at"
+        self._reverse = True
         return self
     
     def head(self, limit: int) -> "BlockLogQuery":
         self._limit = limit
         self._order_by = "created_at"
+        self._reverse = False
         return self
     
     
@@ -819,23 +812,44 @@ class BlockLogQuery:
         return self
     
     def where(
-        self, 
-        role: str | None = None, 
+        self,
+        role: str | None = None,
+        span: str | None = None,
     ) -> "BlockLogQuery":
         if role is not None:
             self._filters["role"] = role
+        if span is not None:
+            self._span_name = span
         if not self._filters:
             raise ValueError("No filters provided")
         return self
+
+    def span(self, span_name: str) -> "BlockLogQuery":
+        """Filter by execution span name."""
+        self._span_name = span_name
+        return self
     
-    
-    def build_query(self) -> "PgQueryBuilder[BlockTree]":
+    def extract(self, should_extract: bool = True) -> "BlockLogQuery":
+        self._should_extract = should_extract
+        return self
+
+    async def _resolve_span_ids(self) -> list[int] | None:
+        """Resolve span name to span IDs."""
+        if self._span_name is None:
+            return None
+
+        from ..versioning.models import ExecutionSpan
+        spans = await ExecutionSpan.query().where(name=self._span_name)
+        return [s.id for s in spans]
+
+    def build_query(self, span_ids: list[int] | None = None) -> "PgQueryBuilder[BlockTree]":
         from ..versioning.models import BlockTree, BlockModel, BlockSpan, BlockTreeBlock
-        
+
         block_model_query = BlockModel.query().include(BlockSpan)
         if self._filters:
-            block_model_query = block_model_query.where(**self._filters)
-            
+            # block_model_query = block_model_query.where(**self._filters)
+            block_model_query = block_model_query.where(BlockModel.role.isin(self._filters["role"]))
+
         block_tree_query = BlockTree.query().include(block_model_query)
         if self._limit is not None:
             block_tree_query = block_tree_query.limit(self._limit)
@@ -843,12 +857,25 @@ class BlockLogQuery:
             block_tree_query = block_tree_query.offset(self._offset)
         if self._order_by is not None:
             block_tree_query = block_tree_query.order_by(self._order_by)
+        if span_ids is not None:
+            block_tree_query = block_tree_query.where(BlockTree.span_id.isin(span_ids))
         return block_tree_query
-    
-    async def execute(self) -> list["Block"]:
-        query = self.build_query()
+
+    async def execute(self) -> "BlockList":
+        from ...block.block12 import BlockList
+        # Resolve span name to IDs if provided
+        span_ids = await self._resolve_span_ids()
+        if self._span_name is not None and not span_ids:
+            # Span name was provided but no matching spans found
+            return BlockList([])
+
+        query = self.build_query(span_ids=span_ids)
         blocks = await query.json_parse(parse_block_tree_query_result)
-        return blocks
+        if self._reverse:
+            blocks = list(reversed(blocks))
+        if self._should_extract:
+            blocks = [b.extract() for b in blocks]
+        return BlockList(blocks)
 
 
 class BlockLog:

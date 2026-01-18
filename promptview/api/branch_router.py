@@ -31,7 +31,8 @@ def create_branch_router(context_cls: Type[Context] | None = None):
         if filters:
             condition = parse_query_params(Branch, filters, model_query.from_table)
             model_query.query.where(condition)
-        instances = await model_query.json()
+        # instances = await model_query.json()
+        instances = await model_query
         return [instance for instance in instances]
     
     @branch_router.post("/fork")

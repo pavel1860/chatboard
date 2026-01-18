@@ -81,8 +81,9 @@ class SchemaCtx[TxSchema]:
             raise ValueError(f"Unknown schema type: {type(schema)}")
         
     def add_newline(self):
-        self.block.append_child()
+        block = self.block.append_child()
         self._should_add_newline = False
+        return block
     
 class BlockSchemaCtx(SchemaCtx[BlockSchema]):
     
@@ -134,20 +135,23 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
     #             events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)                
     #     return chunks
     
-    def append(self, chunks: list[BlockChunk]):        
+    def append(self, chunks: list[BlockChunk]):  
+        block = None      
         for chunk in chunks:
             style = None
             if chunk.content:                
                 if self._should_add_newline:
-                    self.add_newline()
+                    block = self.add_newline()
                 if chunk.is_newline():
                     self._should_add_newline = True
                     style = self.block.mutator.styles[0]                    
                 elif chunk.isspace():
                     style = self.block.mutator.styles[0]
                 elif not self.block.body:
-                    self.add_newline()
+                    block = self.add_newline()
                 events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)                
+        if block is not None:
+            return block
         return chunks
 
     
@@ -636,9 +640,12 @@ class XmlParser(Process):
         
     def _handle_chardata(self, chunks: list[BlockChunk]):
         """Handle character data - append to current block."""
-        appended_chunks = self._ctx_stack.append(chunks)
-        if appended_chunks:
-            self._emit_event("block_delta", appended_chunks)
+        output = self._ctx_stack.append(chunks)
+        if output:
+            if isinstance(output, Block):
+                self._emit_event("block", output)
+            else:
+                self._emit_event("block_delta", output)
 
 
     def _handle_start2(self, name: str, attrs: dict, chunks: list[BlockChunk]):
@@ -729,7 +736,8 @@ class XmlParser(Process):
         """Emit a parser event."""
         # Build path from stack
         # path = "/".join(str(i) for i, _ in enumerate(self._stack))
-        path = self._ctx_stack.top().block.path
+        # path = self._ctx_stack.top().block.path
+        path = self._ctx_stack.top().block.tail.path
         event = ParserEvent(path=str(path), type=event_type, value=value)
         self._output_queue.append(event)
 

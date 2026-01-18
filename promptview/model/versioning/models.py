@@ -888,20 +888,16 @@ class Parameter(VersionedModel):
 
 class BlockSpan(Model):
     """
-    Content-addressed span storage.
+    Content-addressed text and chunk storage for Block12.
 
-    Deduplicated by hash of (prefix + content + postfix + chunks).
-    Stores both text (for queries) and structured chunks (for reconstruction).
+    Each block's text and chunks are stored together, deduplicated by
+    content hash. Chunk positions are relative to the block's local text.
     """
     _namespace_name: str = "block_spans"
 
-    id: str = KeyField(primary_key=True)  # SHA256 hash
-    prefix_text: str = ModelField(default="")
-    content_text: str = ModelField(default="")
-    postfix_text: str = ModelField(default="")
-    prefix_chunks: list[dict] = ModelField(default_factory=list)  # [{content, logprob}, ...]
-    content_chunks: list[dict] = ModelField(default_factory=list)
-    postfix_chunks: list[dict] = ModelField(default_factory=list)
+    id: str = KeyField(primary_key=True)  # SHA256 hash of text + chunks
+    text: str = ModelField(default="")
+    chunks: list[dict] = ModelField(default_factory=list)  # [{id, start, end, logprob, style}, ...]
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
 
@@ -997,7 +993,6 @@ class BlockTree(VersionedModel):
 
     ):
         from ..sql2.pg_query_builder import select, PgQueryBuilder
-        from ..block_models.block11_storage import load_block
         async def to_block(trees: list[BlockTree]):
             blocks = []
             for tree in trees:

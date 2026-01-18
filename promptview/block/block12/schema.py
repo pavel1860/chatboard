@@ -9,7 +9,7 @@ BlockListSchema - Schema for defining list structures with item schemas.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Type, Any
+from typing import TYPE_CHECKING, Callable, Type, Any
 
 from pydantic import BaseModel
 
@@ -427,6 +427,7 @@ class BlockList(Block):
 
     def __init__(
         self,
+        children: list[Block] | None = None,
         *,
         item_schema: BlockSchema | None = None,
         role: str | None = None,
@@ -446,6 +447,7 @@ class BlockList(Block):
         """
         super().__init__(
             content=None,  # List is a wrapper - no content
+            children=children,
             role=role,
             tags=tags,
             style=style,
@@ -488,6 +490,12 @@ class BlockList(Block):
 
         self.append_child(item)
         return item
+    
+    # -------------------------------------------------------------------------
+    # Copy
+    # -------------------------------------------------------------------------
+    def apply(self, func: Callable[[Block], Block]) -> "BlockList":
+        return BlockList(children=[func(b) for b in self.body], item_schema=self.item_schema, role=self.role, tags=self.tags, style=self.style, attrs=self.attrs)
 
     # -------------------------------------------------------------------------
     # Copy
@@ -511,14 +519,50 @@ class BlockList(Block):
         return new_list
 
     def __repr__(self) -> str:
-        parts = [f"items={len(self.body)}"]
+        import textwrap
+        # parts = [f"items={len(self.body)}"]
+        children = [str(b) for b in self.body]
+        children_str = '\n'.join(children)
+        if len(children) > 1:
+            children_str = f"\n{children_str}\n"
+            children_str = textwrap.indent(children_str, "  ")
+        parts = [f"[{children_str}]"]
         if self.item_schema:
             parts.append(f"item_schema={self.item_schema.name!r}")
         if self.role:
             parts.append(f"role={self.role!r}")
         return f"BlockList({', '.join(parts)})"
 
-
+    
+    def reverse(self) -> "BlockList":
+        return BlockList(children=list(reversed(self.body)), item_schema=self.item_schema, role=self.role, tags=self.tags, style=self.style, attrs=self.attrs)
+    
+    def render_list(self, delimiter: str = "") -> str:        
+        delimiter = f"\n{delimiter}\n" if delimiter else "\n\n"
+        return delimiter.join([b.render() for b in self.body])
+    
+    
+    def print_list_debug(self, metadata: bool = True, reverse: bool = True):
+        target = reversed(self.body) if reverse else self.body
+        for b in target:
+            if metadata:
+                # print(f"=============== [ {b.role} message ] | style: {b.style} | mutator: {b.mutator.__class__.__name__}\n")
+                print(f"=============== [ {b.role} message ] ===============")
+            b.print_debug()            
+            print("\n")
+    
+    def print_list(self, metadata: bool = True, reverse: bool = False, delimiter: str = "\n\n"):
+        # str_list = self.render_list(delimiter=delimiter)
+        parts = []
+        target = reversed(self.body) if reverse else self.body
+        for b in target:
+            part = ""
+            if metadata:
+                part += f"=============== [ {b.role} message ] | style: {b.style} | mutator: {b.mutator.__class__.__name__}\n"
+            part += b.render()
+            parts.append(part)        
+        print(delimiter.join(parts))
+    
 class BlockListSchema(BlockSchema):
     """
     Schema for a list of blocks.
