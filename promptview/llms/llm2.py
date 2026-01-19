@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 
 from ..block import BlockChunk, Block, BlockList
 # from ..prompt.flow_components import StreamController
-from ..prompt.fbp_process import StreamController
+from ..prompt.fbp_process import StreamController, Stream, compute_stream_cache_key, Accumulator
+from dataclasses import dataclass
 
 
 
@@ -30,9 +31,56 @@ class LlmConfig(BaseModel):
 
 
 
+class LLMResponse(BaseModel):
+    id: str
+    item_id: str
+
+
+class LLMUsage(BaseModel):
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    cached_tokens: int | None = None
+    reasoning_tokens: int | None = None
+
+
+
+class LLMStream(Stream):
+    response: LLMResponse | None = None
+    usage: LLMUsage | None = None
+    
+    async def __anext__(self):
+        """
+        Receive next IP from wrapped generator.
+
+        If persistence is enabled, collects IP for later save.
+        Only saves to JSONL on successful stream completion (not on errors).
+        """
+        from ..block import BlockChunk
+        for i in range(10):
+            ip = await super().__anext__()
+            
+            if isinstance(ip, LLMResponse):
+                self.response = ip
+                continue
+            elif isinstance(ip, LLMUsage):
+                self.usage = ip
+                continue
+            # Collect for save if persistence enabled
+            if self._save_stream_path is not None:
+                if hasattr(ip, "model_dump"):
+                    data = ip.model_dump()
+                else:
+                    data = ip
+                self._collected_chunks.append(data)
+
+            return ip
+        else:
+            raise ValueError("more than 10 tries to get chunks")
+        
     
 
-class LLMStream(StreamController):
+class LLMStreamController(StreamController):
     blocks: BlockList
     llm_config: LlmConfig
     tools: List[Type[BaseModel]] | None = None
@@ -40,12 +88,48 @@ class LLMStream(StreamController):
     models: List[str] = []
     
     
-    def __init__(self, blocks: BlockList, config: LlmConfig, tools: List[Type[BaseModel]] | None = None, model: str | None = None):
-        super().__init__(self.stream, acc_factory=lambda : BlockList([], style="stream"), name="openai_llm", span_type="llm")
+    def __init__(
+        self, 
+        gen_func: Callable[..., AsyncGenerator], 
+        blocks: BlockList, 
+        config: LlmConfig, 
+        tools: List[Type[BaseModel]] | None = None, 
+        args: tuple = (), 
+        kwargs: dict = {}
+    ):
+        # super().__init__(self.stream, acc_factory=lambda : BlockList([], style="stream"), name="openai_llm", span_type="llm")
+        super().__init__(gen_func=gen_func, args=args, kwargs=kwargs, name="openai_llm", span_type="llm")
         self.blocks = blocks
         self.llm_config = config
         self.tools = tools
-        self.model = model
+        self.model = config.model
+        
+        
+
+    def _init_stream(self, args: tuple, kwargs: dict):
+        gen_instance = self._gen_func(*args, **kwargs)
+        stream = LLMStream(gen_instance, name=f"{self._name}_stream")
+        return stream
+    
+    
+    async def on_stop(self):
+        """
+        Mark span as completed when process exhausts.
+        """
+        if self.span:
+            self.span.status = "completed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            self.span.usage = self._stream.usage.model_dump()
+            self.span.request_id = self._stream.response.id
+            self.span.message_id = self._stream.response.item_id
+            await self.span.save()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+        
+    
         
 
 
@@ -134,7 +218,8 @@ def llm_stream(
             # gen = method(self, blocks, *extra_args, **kwargs)
             # return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
             # return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name or method.__name__, span_type="llm")
-            return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name, span_type="llm")
+            # return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name, span_type="llm")
+            return LLMStreamController(gen_func=method, blocks=blocks, config=kwargs["config"], tools=kwargs["tools"], args=(self, blocks, *extra_args), kwargs=kwargs)
         return wrapper
     return llm_stream_decorator
     
@@ -217,7 +302,7 @@ class LLM():
         *blocks: BlockChunk | Block |BlockList | str,
         model: str | None = None,
         config: LlmConfig | None = None,
-    ) -> LLMStream:                                
+    ) -> LLMStreamController:                                
         
         
         llm_blocks, extra_args = pack_blocks(blocks)

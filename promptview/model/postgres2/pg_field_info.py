@@ -136,7 +136,7 @@ class PgFieldInfo(BaseFieldInfo):
         elif self.data_type == dict:
             if isinstance(value, str):
                 value = json.loads(value)
-        elif issubclass(self.data_type, BaseModel):
+        elif isinstance(self.data_type, type) and issubclass(self.data_type, BaseModel):
             if isinstance(value, str):
                 value = json.loads(value)
             if self.is_list:

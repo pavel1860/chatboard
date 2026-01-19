@@ -1340,7 +1340,9 @@ class DataFlowNode(Model):
         else:
             dump["value"] = None
         return dump
-   
+
+
+  
 
 class ExecutionSpan(VersionedModel):
     """Represents a single execution unit (component call, stream, etc.)"""
@@ -1354,8 +1356,12 @@ class ExecutionSpan(VersionedModel):
     end_time: dt.datetime | None = ModelField(default=None)
     tags: list[str] | None = ModelField(default=None)
     metadata: dict[str, Any] = ModelField(default={})
+    usage: dict[str, Any] = ModelField(default={})
+    config: dict[str, Any] = ModelField(default={})
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
     turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
+    request_id: str | None = ModelField(default=None)
+    message_id: str | None = ModelField(default=None)
     
     # Relations
     data: List["DataFlowNode"] = RelationField([], foreign_key="span_id")
@@ -1391,7 +1397,7 @@ class ExecutionSpan(VersionedModel):
     
     async def log_value(self, target: Any, alias: str | None = None, io_kind: ValueIOKind = "output", name: str | None = None):
         # from ...prompt.context import Context
-        from ...model.versioning.artifact_log import ArtifactLog
+        from .artifact_log import ArtifactLog
         return await ArtifactLog.log_value(target, alias, io_kind, name)
     
     

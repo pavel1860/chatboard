@@ -13,7 +13,7 @@ from ..utils.type_utils import SerializableType, serialize_value, type_to_str_or
 from .models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanType, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
 from ..block import BlockList, Block
 # from ..block_models.block_log import insert_block, get_blocks
-from ..versioning.block12_storage import insert_block
+from .block12_storage import insert_block
 
 from collections import defaultdict
 from ..prompt.context import Context
@@ -35,7 +35,7 @@ def is_artifact_list(target_list: Any) -> bool:
 
 
 def _get_target_meta(target: Any) -> tuple[ArtifactKindEnum, int | None]:
-    from ...block import Block
+    from ..block import Block
     if isinstance(target, Block):
         return "block", None
     elif isinstance(target, Log):
@@ -94,8 +94,8 @@ class ArtifactLog:
     @classmethod
     async def populate_turns(cls, turns: List[Turn]):
         from collections import defaultdict
-        from ..namespace_manager2 import NamespaceManager
-        from ..block_models.block12_storage import get_blocks
+        from ..model import NamespaceManager
+        from .block12_storage import get_blocks
         from .models import BlockTree, Artifact
         def kind2table(k: str):
             if k == "parameter":

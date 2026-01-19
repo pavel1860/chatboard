@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from ..block import BlockChunk, BlockList
 from ..block.util import LLMEvent, ToolCall
 from ..context.execution_context import ExecutionContext
-from ..llms.llm2 import BaseLLM, LLMStream, LlmConfig, llm_stream
+from ..llms.llm2 import BaseLLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
 from openai.types.chat import ChatCompletionMessageParam
 from ..utils.model_utils import schema_to_function
 from ..tracer.langsmith_tracer import Tracer
@@ -17,11 +17,11 @@ class OpenAiLLM(BaseLLM):
     name: str = "OpenAiLLM"
     default_model: str= "gpt-4o"
     models = ["gpt-4o", "gpt-4o-mini"]
-    client: openai.AsyncClient
+    client: openai.AsyncOpenAI
     
     def __init__(self, config: LlmConfig | None = None):
         super().__init__(config)
-        self.client = openai.AsyncClient(api_key=os.getenv("OPENAI_API_KEY"))
+        self.client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
     def to_message(self, content: str, role: str, tool_calls: List[ToolCall] | None = None, tool_call_id: str | None = None, name: str | None = None) -> ChatCompletionMessageParam:
         message = {
@@ -83,33 +83,79 @@ class OpenAiLLM(BaseLLM):
             full_content = ""
             try:
                 
-                res_stream = await self.client.chat.completions.create(
-                        messages=messages,
+                response_id = None
+                
+                stream = await self.client.responses.create(
+                        input=messages,
                         tools=llm_tools,
                         model=config.model,
                         tool_choice=tool_choice,
-                        stream=True,
-                        logprobs=True,                
+                        stream=True,      
+                        include=["message.output_text.logprobs"]        
                     )
-                            
-                async for chunk in res_stream:                
-                    if chunk.choices[0].delta:
-                        choice = chunk.choices[0]                   
-                        content = choice.delta.content
-                        if content is not None:
-                            full_content += content
-                        if content is None:
-                            continue
-                        try:
-                            if choice.logprobs and choice.logprobs.content:                
-                                logprob = choice.logprobs.content[0].logprob
-                            else:
-                                logprob = 0  
-                        except:
-                            raise ValueError("No logprobs")        
-                        blk_chunk = BlockChunk(content, logprob=logprob)
-                        yield blk_chunk
-                llm_run.end(outputs={"content": full_content})
+                         
+                async for out in stream:
+                    if out.type == 'response.created':
+                        out.sequence_number
+                        response_id = out.response.id
+                    elif out.type == "repsonse.in_progress":
+                        out.sequence_number
+                    elif out.type == "response.output_item.added":
+                        item = out.item
+                        item.id
+                        if response_id is None:
+                            raise ValueError("Response ID is not set")
+                        response = LLMResponse(id=response_id, item_id=item.id)
+                        yield response
+                    elif out.type == "response.content_part.added":
+                        item_id = out.item_id
+                    elif out.type == "response.output_text.delta":
+                        out.delta
+                        out.sequence_number
+                        out.item_id
+                        if len(out.logprobs) > 1:
+                            raise ValueError("More than one logprob")
+                        logprob = out.logprobs[0].logprob
+                        chunk = BlockChunk(out.delta, logprob=logprob)
+                        yield chunk
+                    elif out.type == "response.output_text.done":
+                        out.text
+                    elif out.type == "response.content_part.done":        
+                        item_id = out.item_id
+                    elif out.type == "response.output_item.done":
+                        item = out.item        
+                    elif out.type == "response.completed":
+                        usage = out.response.usage
+                        usage.input_tokens
+                        usage.output_tokens
+                        usage.total_tokens
+                        llm_run.end(outputs=out.response)
+                        usage = LLMUsage(
+                            input_tokens=usage.input_tokens,
+                            output_tokens=usage.output_tokens,
+                            total_tokens=usage.total_tokens,
+                            cached_tokens=usage.input_tokens_details.cached_tokens,
+                            reasoning_tokens=usage.output_tokens_details.reasoning_tokens
+                        )
+                        yield usage
+
+                    # if chunk.choices[0].delta:
+                    #     choice = chunk.choices[0]                   
+                    #     content = choice.delta.content
+                    #     if content is not None:
+                    #         full_content += content
+                    #     if content is None:
+                    #         continue
+                    #     try:
+                    #         if choice.logprobs and choice.logprobs.content:                
+                    #             logprob = choice.logprobs.content[0].logprob
+                    #         else:
+                    #             logprob = 0  
+                    #     except:
+                    #         raise ValueError("No logprobs")        
+                    #     blk_chunk = BlockChunk(content, logprob=logprob)
+                    #     yield blk_chunk
+                # llm_run.end(outputs={"content": full_content})
                 return
             except Exception as e:
                 llm_run.end(outputs={"content": full_content}, errors=str(e))

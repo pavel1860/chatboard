@@ -349,3 +349,11 @@ class BlockChunk:
                 print("has content")
         """
         return len(self.content) > 0
+
+
+
+
+    
+    
+    
+    

@@ -18,8 +18,8 @@ from ..block import Block
 
 if TYPE_CHECKING:
     from fastapi import Request
-    from .span_tree import SpanTree
     from ..evaluation.eval_context import EvaluationContext
+    from ..versioning.models import DataFlowNode
 
 # Context variable for implicit context passing across async boundaries
 _context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
@@ -277,7 +277,7 @@ class Context(BaseModel):
         Returns:
             SpanTree instance for this component (either from replay or newly created)
         """
-        from ..model.versioning.artifact_log import ArtifactLog
+        from ..versioning.artifact_log import ArtifactLog
         tags = tags or []
 
         # Check if we should use a span from replay tree

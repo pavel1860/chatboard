@@ -726,7 +726,12 @@ class ObservableProcess(Process):
             raise ValueError("Path is not initialized")
         return self._data_flow.path
     
-
+    @property
+    def path_or_none(self):
+        """Get the path or None."""
+        if self._data_flow is None:
+            return None
+        return self._data_flow.path
 
     @property
     def span_id(self):
@@ -919,7 +924,7 @@ class ObservableProcess(Process):
         
         
         return self.ctx.build_event(
-            path=self.path,
+            path=self.path_or_none,
             kind=self._error_event_type,
             payload=error,
             name=self._name,
@@ -1081,6 +1086,11 @@ class StreamController(ObservableProcess):
             return self._accumulator.result
         return None
     
+    def _init_stream(self, args: tuple, kwargs: dict):
+        gen_instance = self._gen_func(*args, **kwargs)
+        stream = Stream(gen_instance, name=f"{self._name}_stream")
+        return stream
+    
     async def on_start(self):
         """
         Build subnetwork and register with context.
@@ -1121,8 +1131,9 @@ class StreamController(ObservableProcess):
         if self._load_filepath is not None:
             stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.1)
         else:
-            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
-            stream = Stream(gen_instance, name=f"{self._name}_stream")
+            stream = self._init_stream(bound.args, bound.kwargs)
+            # gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            # stream = Stream(gen_instance, name=f"{self._name}_stream")
 
         if self._save_filepath is not None:
             os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)

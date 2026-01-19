@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from ..block import BlockChunk, BlockList
 from ..block.util import LLMEvent, ToolCall
 from ..context.execution_context import ExecutionContext
-from .llm2 import LLMStream, LlmConfig
+from .llm2 import LLMStreamController, LlmConfig
 from openai.types.chat import ChatCompletionMessageParam
 
 
@@ -16,7 +16,7 @@ from ..utils.model_utils import schema_to_function
 
 
 
-class FakeLLM(LLMStream):
+class FakeLLM(LLMStreamController):
     name: str = "OpenAiLLM"    
     model: str | None = "pirate_stream.json"
     models = ["pirate_stream.json", "pirate_xml_reasoning_stream.json"]
