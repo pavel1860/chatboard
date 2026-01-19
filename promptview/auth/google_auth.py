@@ -2,9 +2,20 @@ from datetime import datetime, timedelta
 import jwt
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
 from authlib.integrations.starlette_client import OAuth
 
 class GoogleAuth:
+    SCOPES = [
+        "openid",
+        "email",
+        "profile",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/calendar",
+    ]
+
     def __init__(
         self,
         secret_key: str,
@@ -19,15 +30,18 @@ class GoogleAuth:
         self.client_id = client_id
         self.client_secret = client_secret
 
-        oauth = OAuth()
-        oauth.register(
+        self.oauth = OAuth()
+        self.oauth.register(
             name="google",
             client_id=self.client_id,
             client_secret=self.client_secret,
             server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
-            client_kwargs={"scope": "openid email profile"},
+            client_kwargs={
+                "scope": " ".join(self.SCOPES),
+                "access_type": "offline",
+                "prompt": "consent",
+            },
         )
-
 
     def create_access_token(self, data: dict, expires_delta: timedelta | None = None):
         to_encode = data.copy()
@@ -37,7 +51,27 @@ class GoogleAuth:
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
 
+    def verify_idinfo(self, token: str) -> dict:
+        return id_token.verify_oauth2_token(
+            token, google_requests.Request(), self.client_id
+        )
 
+    def _get_credentials(self, token: dict) -> Credentials:
+        """Convert authlib token to google-auth Credentials."""
+        return Credentials(
+            token=token["access_token"],
+            refresh_token=token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            scopes=self.SCOPES,
+        )
+
+    def get_gmail_service(self, token: dict):
+        return build("gmail", "v1", credentials=self._get_credentials(token))
+
+    def get_calendar_service(self, token: dict):
+        return build("calendar", "v3", credentials=self._get_credentials(token))
     # async def get_loggedin_user(
     #     request: Request
     # ) -> User:
@@ -149,7 +183,3 @@ class GoogleAuth:
     #     return user
 
 
-    def verify_idinfo(self, token: str) -> dict:
-        return id_token.verify_oauth2_token(
-            token, google_requests.Request(), self.client_id
-        )

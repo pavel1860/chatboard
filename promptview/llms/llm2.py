@@ -119,9 +119,10 @@ class LLMStreamController(StreamController):
         if self.span:
             self.span.status = "completed"
             self.span.end_time = __import__('datetime').datetime.now()
-            self.span.usage = self._stream.usage.model_dump()
-            self.span.request_id = self._stream.response.id
-            self.span.message_id = self._stream.response.item_id
+            if hasattr(self._stream, "usage"):
+                self.span.usage = self._stream.usage.model_dump()
+                self.span.request_id = self._stream.response.id
+                self.span.message_id = self._stream.response.item_id
             await self.span.save()
 
         # Pop from context execution stack
