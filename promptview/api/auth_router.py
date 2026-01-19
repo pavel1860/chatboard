@@ -1,6 +1,14 @@
-from typing import Any, Dict, TypeVar
+from typing import Any, Dict, Optional, TypeVar
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from ..auth.user_manager2 import AuthManager, AuthModel, UserNotFound
+
+
+class TokenExchangePayload(BaseModel):
+    id_token: str
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    expires_at: Optional[int] = None  # Unix timestamp in seconds
 
 
 
@@ -110,18 +118,17 @@ def create_auth_router(auth_model: AUTH_MODEL):
 
 
     @router.post("/exchange")
-    async def exchange_token(        
-        payload: dict, 
+    async def exchange_token(
+        payload: TokenExchangePayload,
         request: Request,
         user_manager: AuthManager[AUTH_MODEL] = Depends(get_user_manager),
-        
     ):
-        print(request.headers)
-        token = payload.get("id_token")
-        if not token:
-            raise HTTPException(status_code=400, detail="Missing id_token")
-
-        res = await user_manager.token_exchange(token)
+        res = await user_manager.token_exchange(
+            id_token=payload.id_token,
+            access_token=payload.access_token,
+            refresh_token=payload.refresh_token,
+            expires_at=payload.expires_at,
+        )
         return res
 
     

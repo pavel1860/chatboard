@@ -1,7 +1,8 @@
 from typing import Any, Dict, Generic, List, Optional, Type, final, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 import os
+import aiohttp
 from fastapi import HTTPException, Request
 from typing_extensions import TypeVar
 
@@ -31,6 +32,11 @@ class AuthModel(Model):
     guest_token: UUID | None = ModelField(None)
     is_admin: bool = ModelField(default=False)
     created_at: datetime = ModelField(default_factory=datetime.now, order_by=True)
+
+    # Google OAuth tokens for Gmail/Calendar API access
+    google_access_token: str | None = ModelField(None)
+    google_refresh_token: str | None = ModelField(None)
+    google_token_expires_at: datetime | None = ModelField(None)
     # branches: List[Branch] = RelationField("Branch", foreign_key="user_id")
     # branches: List[Branch] = RelationField(
     #     primary_key="id",
@@ -174,22 +180,34 @@ class AuthManager(Generic[UserT]):
         
         return user
     
-    async def token_exchange(self, token: str) -> dict:
+    async def token_exchange(
+        self,
+        id_token: str,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
+        expires_at: int | None = None,
+    ) -> dict:
         try:
             # Verify the Google token
-            idinfo = self.providers["google"].verify_idinfo(token=token)
+            idinfo = self.providers["google"].verify_idinfo(token=id_token)
             # idinfo has: email, name, picture...
         except ValueError:
             raise HTTPException(status_code=401, detail="Invalid token")
 
         # Create or fetch user
-        # user, created = user_interface.get_or_create_user(user_info=idinfo, db=db)
         user = await self.fetch_by_auth_user_id(idinfo['sub'])
-        
+
         if not user:
-            # user = await self.register_user(idinfo['sub'], {"email": idinfo['email'], "name": idinfo['name'], "picture": idinfo['picture']})
             user = await self.register_user(idinfo['sub'], idinfo)
-            # raise HTTPException(status_code=401, detail="User not found")
+
+        # Store OAuth tokens for Gmail/Calendar API access
+        if access_token:
+            user.google_access_token = access_token
+            if refresh_token:
+                user.google_refresh_token = refresh_token
+            if expires_at:
+                user.google_token_expires_at = datetime.fromtimestamp(expires_at)
+            user = await user.save()
 
         # Generate JWT
         jwt_token = self.providers["google"].create_access_token(data={"sub": user.auth_user_id})
@@ -201,6 +219,70 @@ class AuthManager(Generic[UserT]):
             "user": user,
         }
 
+    async def _refresh_google_token(self, user: UserT) -> UserT:
+        """Refresh the user's Google access token using their refresh token."""
+        if not user.google_refresh_token:
+            raise HTTPException(401, "No refresh token available. User needs to re-authenticate.")
+
+        google_provider = self.providers.get("google")
+        if not google_provider:
+            raise HTTPException(500, "Google provider not configured")
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": google_provider.client_id,
+                    "client_secret": google_provider.client_secret,
+                    "grant_type": "refresh_token",
+                    "refresh_token": user.google_refresh_token,
+                },
+            ) as response:
+                if response.status != 200:
+                    error_data = await response.json()
+                    raise HTTPException(401, f"Failed to refresh token: {error_data}")
+
+                tokens = await response.json()
+
+        # Update user with new tokens
+        user.google_access_token = tokens["access_token"]
+        user.google_token_expires_at = datetime.utcnow() + timedelta(seconds=tokens["expires_in"])
+        # Google may return a new refresh token
+        if "refresh_token" in tokens:
+            user.google_refresh_token = tokens["refresh_token"]
+
+        user = await user.save()
+        return user
+
+    async def get_valid_google_token(self, user: UserT) -> str:
+        """Get a valid Google access token, refreshing if necessary."""
+        if not user.google_access_token:
+            raise HTTPException(401, "User hasn't granted Google API access")
+
+        # Check if token is expired (with 5 minute buffer)
+        if user.google_token_expires_at:
+            if user.google_token_expires_at < datetime.utcnow() + timedelta(minutes=5):
+                user = await self._refresh_google_token(user)
+
+        return user.google_access_token
+
+    async def get_gmail_service(self, user: UserT):
+        """Get Gmail service for a user, refreshing token if needed."""
+        access_token = await self.get_valid_google_token(user)
+        token = {
+            "access_token": access_token,
+            "refresh_token": user.google_refresh_token,
+        }
+        return self.providers["google"].get_gmail_service(token)
+
+    async def get_calendar_service(self, user: UserT):
+        """Get Calendar service for a user, refreshing token if needed."""
+        access_token = await self.get_valid_google_token(user)
+        token = {
+            "access_token": access_token,
+            "refresh_token": user.google_refresh_token,
+        }
+        return self.providers["google"].get_calendar_service(token)
 
     def get_user(self):
         async def _get_user_dep(request: Request):
