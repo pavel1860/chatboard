@@ -294,7 +294,7 @@ class BlockChunk:
             parts.append(f"logprob={self.logprob:.3f}")
         if self.style:
             parts.append(f"style={self.style!r}")
-        return f"Chunk({', '.join(parts)})"
+        return f"BlockChunk({', '.join(parts)})"
 
     def __eq__(self, other: object) -> bool:
         """

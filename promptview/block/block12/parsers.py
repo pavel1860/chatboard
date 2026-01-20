@@ -762,6 +762,51 @@ class XmlParser(Process):
 # MarkdownParser
 # =============================================================================
 
+
+class MdContextStack:
+    def __init__(self):
+        self._stack: list[Block] = []
+        self._committed_stack: list[Block] = []
+        
+        
+    def add_newline(self):
+        block = self.top().append_child()
+        self._should_add_newline = False
+        return block
+
+
+    def push(self, block: Block):
+        self._stack.append(block)
+
+    def pop(self) -> Block:
+        return self._stack.pop()
+    
+    def is_empty(self) -> bool:
+        return not self._stack
+    
+    def top(self) -> Block:
+        return self._stack[-1]
+    
+    def result(self) -> Block:
+        return self._committed_stack[-1]
+    
+    def init(self, tag_name: str, attrs: dict, chunks: list[BlockChunk]):
+        pass
+    
+    
+    def commit(self, tag_name: str, chunks: list[BlockChunk]):
+        pass
+    
+    def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
+        pass
+    
+    def result(self) -> Block:
+        pass
+    
+    def top_event_block(self) -> Block:
+        pass
+
+
 class MarkdownParser:
     """
     Streaming markdown parser with incremental token processing.
@@ -809,6 +854,9 @@ class MarkdownParser:
 
         # Parser closed flag
         self._is_closed: bool = False
+        self._ctx_stack: MdContextStack = MdContextStack()
+        self._index: int = 0
+        
 
     def feed(self, chunk: BlockChunk | str, logprob: float | None = None) -> None:
         """
@@ -859,6 +907,7 @@ class MarkdownParser:
         Get chunks overlapping the byte range [start, end).
 
         Similar to XmlParser._get_chunks_in_range.
+        Splits chunks at newline boundaries.
         """
         result = []
 
@@ -873,13 +922,85 @@ class MarkdownParser:
                     # Full chunk is within range
                     result.append(chunk)
                 else:
-                    # Need to split the chunk
+                    # Need to split the chunk at byte boundaries
+                    working_chunk = chunk
                     if chunk_end > end:
-                        chunk, _ = chunk.split(end - chunk_start)
+                        working_chunk, _ = working_chunk.split(end - chunk_start)
                     if chunk_start < start:
-                        _, chunk = chunk.split(start - chunk_start)
-                    if chunk.content:
-                        result.append(chunk)
+                        _, working_chunk = working_chunk.split(start - chunk_start)
+                    if working_chunk.content:
+                        result.append(working_chunk)
+
+        return result
+
+    def _split_chunk_at_newlines(self, chunk: BlockChunk) -> list[BlockChunk]:
+        """
+        Split a chunk at newline boundaries.
+
+        Returns list of chunks, separating newlines from other content.
+        E.g., '\\nTh' -> ['\\n', 'Th']
+        E.g., 'Hello\\nWorld' -> ['Hello', '\\n', 'World']
+        """
+        result = []
+        content = chunk.content
+        current_pos = 0
+
+        while current_pos < len(content):
+            newline_pos = content.find('\n', current_pos)
+
+            if newline_pos == -1:
+                # No more newlines - add rest of content
+                if current_pos < len(content):
+                    remaining = content[current_pos:]
+                    if remaining:
+                        result.append(BlockChunk(
+                            remaining,
+                            logprob=chunk.logprob,
+                            style=chunk.style
+                        ))
+                break
+            else:
+                # Found a newline
+                # Add content before newline (if any)
+                if newline_pos > current_pos:
+                    before = content[current_pos:newline_pos]
+                    result.append(BlockChunk(
+                        before,
+                        logprob=chunk.logprob,
+                        style=chunk.style
+                    ))
+
+                # Add the newline itself
+                result.append(BlockChunk(
+                    '\n',
+                    logprob=chunk.logprob,
+                    style=chunk.style
+                ))
+
+                current_pos = newline_pos + 1
+
+        return result if result else [chunk]
+
+    def _get_chunks_for_content_with_newline_split(self, content: str, search_start: int = 0) -> list[BlockChunk]:
+        """
+        Get chunks for content, splitting at newline boundaries.
+
+        Args:
+            content: The content string to find
+            search_start: Character index to start searching from
+
+        Returns:
+            List of BlockChunks, with newlines split out
+        """
+        chunks = self._get_chunks_for_content(content, search_start)
+
+        # Split each chunk at newlines
+        result = []
+        for chunk in chunks:
+            if '\n' in chunk.content:
+                result.extend(self._split_chunk_at_newlines(chunk))
+            else:
+                result.append(chunk)
 
         return result
 
@@ -997,12 +1118,11 @@ class MarkdownParser:
                         # New content - emit only the delta
                         new_content = inline_content[len(prev_content):]
                         if new_content:
-                            # Get chunks for the new content
-                            # Find where this new content is in the buffer
+                            # Get chunks for the new content, splitting at newlines
                             full_content_in_buffer = self._buffer.find(inline_content)
                             if full_content_in_buffer != -1:
                                 delta_start = full_content_in_buffer + len(prev_content)
-                                delta_chunks = self._get_chunks_for_content(new_content, delta_start)
+                                delta_chunks = self._get_chunks_for_content_with_newline_split(new_content, delta_start)
                             else:
                                 delta_chunks = []
 
@@ -1111,6 +1231,7 @@ class MarkdownParser:
         Args:
             token: The markdown-it token
         """
+        self._index += 1
         chunks = []
         if token.map:
             start_byte, end_byte = self._get_line_byte_range(token.map[0], token.map[1])
@@ -1148,7 +1269,12 @@ class MarkdownParser:
         - token.map: [start_line, end_line]
         """
         tag_name = token.type.replace("_open", "")
-        print(f"[OPEN] {tag_name} chunks={[c.content for c in chunks]}")
+        print(f"{self._index} [OPEN] {tag_name} chunks={[c.content for c in chunks]}")
+        if tag_name == "heading":
+            self._ctx_stack.init(tag_name, {}, chunks)    
+        elif tag_name == "paragraph":
+            pass
+        
 
     def _handle_close(self, token, chunks: list[BlockChunk]) -> None:
         """
@@ -1161,7 +1287,7 @@ class MarkdownParser:
             chunks: BlockChunks that make up this closing
         """
         tag_name = token.type.replace("_close", "") if token else "unknown"
-        print(f"[CLOSE] {tag_name} chunks={[c.content for c in chunks]}")
+        print(f"{self._index} [CLOSE] {tag_name} chunks={[c.content for c in chunks]}")
 
     def _handle_inline(self, token, chunks: list[BlockChunk]) -> None:
         """
@@ -1175,7 +1301,7 @@ class MarkdownParser:
         - token.content: full text content
         - token.children: list of child tokens
         """
-        print(f"[INLINE] content={token.content!r} chunks={[c.content for c in chunks]}")
+        print(f"{self._index} [INLINE] content={token.content!r} chunks={[c.content for c in chunks]}")
 
     def _handle_inline_delta(self, new_content: str, token, chunks: list[BlockChunk]) -> None:
         """
@@ -1186,7 +1312,7 @@ class MarkdownParser:
             token: The full inline token (for context)
             chunks: BlockChunks that make up the NEW content only
         """
-        print(f"[INLINE_DELTA] +{new_content!r} chunks={[c.content for c in chunks]}")
+        print(f"{self._index} [INLINE_DELTA] +{new_content!r} chunks={[c.content for c in chunks]}")
 
     def _handle_code_block(self, token, chunks: list[BlockChunk]) -> None:
         """
