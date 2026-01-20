@@ -192,6 +192,10 @@ class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
         item_ctx = self.build_child_schema(item_name, attrs)
         item_ctx.init(item_name, attrs, chunks)
         return [self, item_ctx]
+    
+    
+class BlockMarkdownSchemaCtx(BlockSchemaCtx):
+    pass
 
 class ContextStack:
     
@@ -827,7 +831,7 @@ class MdContextStack:
         return chunks
     
     def result(self) -> Block:
-        pass
+        return self._stack[0].block
     
     def top_event_block(self) -> Block:
         pass
@@ -882,6 +886,11 @@ class MarkdownParser:
         self._is_closed: bool = False
         self._ctx_stack: MdContextStack = MdContextStack()
         self._index: int = 0
+        
+        
+    @property
+    def result(self) -> Block:
+        return self._ctx_stack.result()
         
 
     def feed(self, chunk: BlockChunk | str, logprob: float | None = None) -> None:
