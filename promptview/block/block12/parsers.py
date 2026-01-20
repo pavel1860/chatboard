@@ -756,3 +756,306 @@ class XmlParser(Process):
     def __iter__(self):
         """Synchronous iterator for events."""
         return self.events()
+
+
+# =============================================================================
+# MarkdownParser
+# =============================================================================
+
+class MarkdownParser:
+    """
+    Streaming markdown parser with incremental token processing.
+
+    Uses markdown-it-py for parsing. Tracks state to emit events only for
+    NEW tokens - open/close/inline handlers are called once per event.
+
+    Token nesting in markdown-it-py:
+    - nesting=1  → OPEN (like XML start tag)
+    - nesting=-1 → CLOSE (like XML end tag)
+    - nesting=0  → self-closing (inline content)
+
+    Example:
+        parser = MarkdownParser()
+        parser.feed("# Hello")
+        parser.feed("\\n\\nWorld")
+        parser.close()
+    """
+
+    def __init__(self, verbose: bool = False):
+        from markdown_it import MarkdownIt
+
+        self._md = MarkdownIt()
+        self._verbose = verbose
+
+        # Buffer for accumulating content
+        self._buffer: str = ""
+
+        # Stack for tracking currently open blocks
+        # Each entry is (tag_name, inline_content_so_far)
+        self._stack: list[tuple[str, str]] = []
+
+        # Track committed (closed) blocks count
+        self._committed_count: int = 0
+
+        # Track last inline content for the current open block
+        self._last_inline_content: str = ""
+
+        # Parser closed flag
+        self._is_closed: bool = False
+
+    def feed(self, chunk: str) -> None:
+        """
+        Feed a chunk to the parser.
+
+        Args:
+            chunk: String content to parse
+        """
+        if self._is_closed:
+            raise ParserError("Parser is closed")
+
+        self._buffer += chunk
+        self._parse_incremental()
+        print("--------------------------------")
+
+    def close(self) -> None:
+        """Close the parser and finalize."""
+        if self._is_closed:
+            return
+
+        self._is_closed = True
+        self._parse_final()
+
+    def _parse_incremental(self) -> None:
+        """
+        Parse and emit only NEW events by diffing against previous state.
+        """
+        tokens = self._md.parse(self._buffer)
+        self._process_tokens_incremental(tokens, is_final=False)
+
+    def _parse_final(self) -> None:
+        """Final parse - close any remaining open blocks."""
+        tokens = self._md.parse(self._buffer)
+        self._process_tokens_incremental(tokens, is_final=True)
+
+    def _process_tokens_incremental(self, tokens: list, is_final: bool) -> None:
+        """
+        Process tokens incrementally, emitting only new events.
+
+        Strategy:
+        1. Count complete blocks (open+inline+close sequences)
+        2. Skip already committed blocks
+        3. For the current (possibly incomplete) block:
+           - Emit OPEN if not yet opened
+           - Emit INLINE delta (new content only)
+           - Emit CLOSE only if block is complete AND is_final or next block started
+        """
+        # Parse tokens into block structures
+        blocks = self._parse_into_blocks(tokens)
+
+        # Process each block
+        for i, block in enumerate(blocks):
+            if i < self._committed_count:
+                # Already processed and committed
+                continue
+
+            is_complete = block["is_complete"]
+            tag_name = block["tag_name"]
+            inline_content = block["inline_content"]
+
+            # Check if this block is newly opened
+            current_stack_depth = len(self._stack)
+            block_index = i - self._committed_count
+
+            if block_index >= current_stack_depth:
+                # New block - emit OPEN
+                self._handle_open(block["open_token"])
+                self._stack.append((tag_name, ""))
+                self._last_inline_content = ""
+
+            # Emit inline delta if content changed
+            if len(self._stack) > 0:
+                stack_idx = block_index
+                if stack_idx < len(self._stack):
+                    _, prev_content = self._stack[stack_idx]
+                    if inline_content != prev_content:
+                        # New content - emit only the delta
+                        new_content = inline_content[len(prev_content):]
+                        if new_content:
+                            self._handle_inline_delta(new_content, block["inline_token"])
+                        self._stack[stack_idx] = (tag_name, inline_content)
+
+            # Check if we should close this block
+            if is_complete:
+                # Block is complete - check if we should commit it
+                # Commit if: is_final OR there's a next block
+                should_commit = is_final or (i < len(blocks) - 1)
+                if should_commit:
+                    self._handle_close(block["close_token"])
+                    self._stack.pop() if self._stack else None
+                    self._committed_count += 1
+
+    def _parse_into_blocks(self, tokens: list) -> list[dict]:
+        """
+        Parse flat token list into block structures.
+
+        Returns list of:
+        {
+            "tag_name": str,
+            "open_token": token,
+            "inline_token": token or None,
+            "inline_content": str,
+            "close_token": token or None,
+            "is_complete": bool
+        }
+        """
+        blocks = []
+        i = 0
+
+        while i < len(tokens):
+            token = tokens[i]
+
+            if token.nesting == 1:
+                # Opening token
+                tag_name = token.type.replace("_open", "")
+                block = {
+                    "tag_name": tag_name,
+                    "open_token": token,
+                    "inline_token": None,
+                    "inline_content": "",
+                    "close_token": None,
+                    "is_complete": False,
+                }
+
+                # Look for inline and close
+                j = i + 1
+                while j < len(tokens):
+                    next_token = tokens[j]
+                    if next_token.type == "inline":
+                        block["inline_token"] = next_token
+                        block["inline_content"] = next_token.content
+                    elif next_token.nesting == -1 and next_token.type == f"{tag_name}_close":
+                        block["close_token"] = next_token
+                        block["is_complete"] = True
+                        i = j
+                        break
+                    elif next_token.nesting == 1:
+                        # Nested block - stop here
+                        i = j - 1
+                        break
+                    j += 1
+
+                blocks.append(block)
+
+            elif token.type == "fence" or token.type == "code_block":
+                # Self-contained code block
+                blocks.append({
+                    "tag_name": "code_block",
+                    "open_token": token,
+                    "inline_token": token,
+                    "inline_content": token.content,
+                    "close_token": token,
+                    "is_complete": True,
+                })
+
+            elif token.type == "hr":
+                # Self-contained hr
+                blocks.append({
+                    "tag_name": "hr",
+                    "open_token": token,
+                    "inline_token": None,
+                    "inline_content": "",
+                    "close_token": token,
+                    "is_complete": True,
+                })
+
+            i += 1
+
+        return blocks
+
+    def _process_token(self, token, is_stable: bool = False) -> None:
+        """
+        Route token to appropriate handler.
+
+        Args:
+            token: The markdown-it token
+            is_stable: True if from stable content (finalized)
+        """
+        if token.nesting == 1:
+            self._handle_open(token)
+        elif token.nesting == -1:
+            self._handle_close(token)
+        elif token.type == "inline":
+            self._handle_inline(token)
+        elif token.type == "fence" or token.type == "code_block":
+            self._handle_code_block(token)
+        elif token.type == "hr":
+            self._handle_hr(token)
+
+    # =========================================================================
+    # Handlers - Override these to build your block structure
+    # =========================================================================
+
+    def _handle_open(self, token) -> None:
+        """
+        Handle OPEN token (nesting=1).
+
+        Called ONCE when a block-level element opens.
+
+        Token attributes:
+        - token.type: e.g., "heading_open"
+        - token.tag: e.g., "h1"
+        - token.markup: e.g., "#" for h1
+        - token.map: [start_line, end_line]
+        """
+        tag_name = token.type.replace("_open", "")
+        print(f"[OPEN] {tag_name}")
+
+    def _handle_close(self, token) -> None:
+        """
+        Handle CLOSE token (nesting=-1).
+
+        Called ONCE when a block-level element closes.
+        """
+        tag_name = token.type.replace("_close", "")
+        print(f"[CLOSE] {tag_name}")
+
+    def _handle_inline(self, token) -> None:
+        """
+        Handle full INLINE token (for non-incremental use).
+
+        Token attributes:
+        - token.content: full text content
+        - token.children: list of child tokens
+        """
+        print(f"[INLINE] content={token.content!r}")
+
+    def _handle_inline_delta(self, new_content: str, token) -> None:
+        """
+        Handle INLINE delta - only the NEW content since last parse.
+
+        Args:
+            new_content: Only the new text (delta from previous)
+            token: The full inline token (for context)
+        """
+        print(f"[INLINE_DELTA] +{new_content!r}")
+
+    def _handle_code_block(self, token) -> None:
+        """
+        Handle CODE BLOCK token (fence or code_block).
+
+        Token attributes:
+        - token.info: language (e.g., "python")
+        - token.content: the code content
+        - token.markup: "```" or "~~~"
+        """
+        print(f"[CODE_BLOCK] lang={token.info!r}")
+        print(f"  content={token.content!r}")
+
+    def _handle_hr(self, token) -> None:
+        """
+        Handle HORIZONTAL RULE token.
+
+        Token attributes:
+        - token.markup: "---" or "***" or "___"
+        """
+        print(f"[HR] markup={token.markup!r}")

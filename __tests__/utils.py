@@ -4,7 +4,7 @@ from promptview.model import NamespaceManager
 from promptview.utils.db_connections import PGConnectionManager
 import textwrap
 import random
-
+from promptview.block.block12.block import BlockChunk
 @pytest_asyncio.fixture(scope="function")
 async def test_db_pool():
     """Create an isolated connection pool for each test."""
@@ -41,10 +41,11 @@ async def clean_database(test_db_pool):
     
     
     
-def chunk_xml_for_llm_simulation(xml_str: str, seed: int | None = None) -> list[str]:
+def chunk_xml_for_llm_simulation(xml_str: str, seed: int | None = None, as_chunks: bool = False) -> list[str]:
     """
     Break an XML string into irregular chunks simulating LLM streaming output.
     """
+    xml_str = strip_text(xml_str)
     if seed is not None:
         random.seed(seed)
     
@@ -119,7 +120,8 @@ def chunk_xml_for_llm_simulation(xml_str: str, seed: int | None = None) -> list[
                 i += 1
             if text:
                 chunks.extend(chunk_text_llm_style(text))
-    
+    if as_chunks:
+        return [BlockChunk(content=chunk) for chunk in chunks]
     return chunks
 
 
