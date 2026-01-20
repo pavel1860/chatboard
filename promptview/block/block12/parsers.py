@@ -769,6 +769,8 @@ class MarkdownParser:
     Uses markdown-it-py for parsing. Tracks state to emit events only for
     NEW tokens - open/close/inline handlers are called once per event.
 
+    Accepts BlockChunk objects and maps events to their corresponding chunks.
+
     Token nesting in markdown-it-py:
     - nesting=1  → OPEN (like XML start tag)
     - nesting=-1 → CLOSE (like XML end tag)
@@ -776,8 +778,8 @@ class MarkdownParser:
 
     Example:
         parser = MarkdownParser()
-        parser.feed("# Hello")
-        parser.feed("\\n\\nWorld")
+        parser.feed(BlockChunk("# Hello"))
+        parser.feed(BlockChunk("\\n\\nWorld"))
         parser.close()
     """
 
@@ -787,12 +789,17 @@ class MarkdownParser:
         self._md = MarkdownIt()
         self._verbose = verbose
 
-        # Buffer for accumulating content
+        # Buffer for accumulating content (string)
         self._buffer: str = ""
 
+        # Chunk tracking for mapping events to BlockChunks
+        # Each entry is (start_byte, end_byte, BlockChunk)
+        self._chunks: list[tuple[int, int, BlockChunk]] = []
+        self._total_bytes: int = 0
+
         # Stack for tracking currently open blocks
-        # Each entry is (tag_name, inline_content_so_far)
-        self._stack: list[tuple[str, str]] = []
+        # Each entry is (tag_name, inline_content_so_far, content_start_byte)
+        self._stack: list[tuple[str, str, int]] = []
 
         # Track committed (closed) blocks count
         self._committed_count: int = 0
@@ -803,17 +810,31 @@ class MarkdownParser:
         # Parser closed flag
         self._is_closed: bool = False
 
-    def feed(self, chunk: str) -> None:
+    def feed(self, chunk: BlockChunk | str, logprob: float | None = None) -> None:
         """
         Feed a chunk to the parser.
 
         Args:
-            chunk: String content to parse
+            chunk: BlockChunk or string content to parse
+            logprob: Optional log probability (used if chunk is a string)
         """
         if self._is_closed:
             raise ParserError("Parser is closed")
 
-        self._buffer += chunk
+        # Convert string to BlockChunk if needed
+        if isinstance(chunk, str):
+            chunk = BlockChunk(chunk, logprob=logprob)
+
+        # Track chunk with byte positions
+        content = chunk.content
+        data = content.encode("utf-8")
+        start = self._total_bytes
+        end = start + len(data)
+        self._chunks.append((start, end, chunk))
+        self._total_bytes = end
+
+        # Append to buffer
+        self._buffer += content
         self._parse_incremental()
         print("--------------------------------")
 
@@ -824,6 +845,89 @@ class MarkdownParser:
 
         self._is_closed = True
         self._parse_final()
+
+    # =========================================================================
+    # Chunk tracking and retrieval
+    # =========================================================================
+
+    def _get_byte_position_for_char_index(self, char_index: int) -> int:
+        """Convert character index in buffer to byte position."""
+        return len(self._buffer[:char_index].encode("utf-8"))
+
+    def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
+        """
+        Get chunks overlapping the byte range [start, end).
+
+        Similar to XmlParser._get_chunks_in_range.
+        """
+        result = []
+
+        for chunk_start, chunk_end, chunk in self._chunks:
+            # Check if chunk overlaps with [start, end)
+            if chunk_start < end and chunk_end > start:
+                # Calculate the overlap
+                overlap_start = max(chunk_start, start)
+                overlap_end = min(chunk_end, end)
+
+                if overlap_start == chunk_start and overlap_end == chunk_end:
+                    # Full chunk is within range
+                    result.append(chunk)
+                else:
+                    # Need to split the chunk
+                    if chunk_end > end:
+                        chunk, _ = chunk.split(end - chunk_start)
+                    if chunk_start < start:
+                        _, chunk = chunk.split(start - chunk_start)
+                    if chunk.content:
+                        result.append(chunk)
+
+        return result
+
+    def _get_chunks_for_content(self, content: str, search_start: int = 0) -> list[BlockChunk]:
+        """
+        Get chunks that correspond to the given content string.
+
+        Args:
+            content: The content string to find
+            search_start: Character index to start searching from
+
+        Returns:
+            List of BlockChunks that make up this content
+        """
+        # Find content in buffer
+        char_index = self._buffer.find(content, search_start)
+        if char_index == -1:
+            return []
+
+        # Convert to byte positions
+        start_byte = self._get_byte_position_for_char_index(char_index)
+        end_byte = self._get_byte_position_for_char_index(char_index + len(content))
+
+        return self._get_chunks_in_range(start_byte, end_byte)
+
+    def _get_line_byte_range(self, line_start: int, line_end: int) -> tuple[int, int]:
+        """
+        Get byte range for a line range from token.map.
+
+        Args:
+            line_start: Start line number (0-indexed)
+            line_end: End line number (exclusive)
+
+        Returns:
+            (start_byte, end_byte)
+        """
+        lines = self._buffer.split("\n")
+
+        # Calculate character index for start of line_start
+        char_start = sum(len(lines[i]) + 1 for i in range(line_start))
+
+        # Calculate character index for end of line_end - 1
+        char_end = sum(len(lines[i]) + 1 for i in range(line_end))
+
+        start_byte = self._get_byte_position_for_char_index(char_start)
+        end_byte = self._get_byte_position_for_char_index(char_end)
+
+        return start_byte, end_byte
 
     def _parse_incremental(self) -> None:
         """
@@ -861,6 +965,7 @@ class MarkdownParser:
             is_complete = block["is_complete"]
             tag_name = block["tag_name"]
             inline_content = block["inline_content"]
+            open_token = block["open_token"]
 
             # Check if this block is newly opened
             current_stack_depth = len(self._stack)
@@ -868,21 +973,41 @@ class MarkdownParser:
 
             if block_index >= current_stack_depth:
                 # New block - emit OPEN
-                self._handle_open(block["open_token"])
-                self._stack.append((tag_name, ""))
+                # Get chunks for the opening (markup like # or ##)
+                open_chunks = []
+                if open_token.map:
+                    start_byte, end_byte = self._get_line_byte_range(open_token.map[0], open_token.map[0] + 1)
+                    open_chunks = self._get_chunks_in_range(start_byte, end_byte)
+
+                self._handle_open(open_token, open_chunks)
+
+                # Track: (tag_name, content_so_far, byte_position_of_content_start)
+                content_start_byte = self._total_bytes - len(self._buffer.encode("utf-8"))
+                if open_token.map:
+                    content_start_byte, _ = self._get_line_byte_range(open_token.map[0], open_token.map[1])
+                self._stack.append((tag_name, "", content_start_byte))
                 self._last_inline_content = ""
 
             # Emit inline delta if content changed
             if len(self._stack) > 0:
                 stack_idx = block_index
                 if stack_idx < len(self._stack):
-                    _, prev_content = self._stack[stack_idx]
+                    _, prev_content, content_start_byte = self._stack[stack_idx]
                     if inline_content != prev_content:
                         # New content - emit only the delta
                         new_content = inline_content[len(prev_content):]
                         if new_content:
-                            self._handle_inline_delta(new_content, block["inline_token"])
-                        self._stack[stack_idx] = (tag_name, inline_content)
+                            # Get chunks for the new content
+                            # Find where this new content is in the buffer
+                            full_content_in_buffer = self._buffer.find(inline_content)
+                            if full_content_in_buffer != -1:
+                                delta_start = full_content_in_buffer + len(prev_content)
+                                delta_chunks = self._get_chunks_for_content(new_content, delta_start)
+                            else:
+                                delta_chunks = []
+
+                            self._handle_inline_delta(new_content, block["inline_token"], delta_chunks)
+                        self._stack[stack_idx] = (tag_name, inline_content, content_start_byte)
 
             # Check if we should close this block
             if is_complete:
@@ -890,7 +1015,14 @@ class MarkdownParser:
                 # Commit if: is_final OR there's a next block
                 should_commit = is_final or (i < len(blocks) - 1)
                 if should_commit:
-                    self._handle_close(block["close_token"])
+                    # Get chunks for closing
+                    close_chunks = []
+                    close_token = block["close_token"]
+                    if close_token and close_token.map:
+                        start_byte, end_byte = self._get_line_byte_range(close_token.map[0], close_token.map[1])
+                        close_chunks = self._get_chunks_in_range(start_byte, end_byte)
+
+                    self._handle_close(close_token, close_chunks)
                     self._stack.pop() if self._stack else None
                     self._committed_count += 1
 
@@ -972,34 +1104,42 @@ class MarkdownParser:
 
         return blocks
 
-    def _process_token(self, token, is_stable: bool = False) -> None:
+    def _process_token(self, token) -> None:
         """
-        Route token to appropriate handler.
+        Route token to appropriate handler (non-incremental).
 
         Args:
             token: The markdown-it token
-            is_stable: True if from stable content (finalized)
         """
+        chunks = []
+        if token.map:
+            start_byte, end_byte = self._get_line_byte_range(token.map[0], token.map[1])
+            chunks = self._get_chunks_in_range(start_byte, end_byte)
+
         if token.nesting == 1:
-            self._handle_open(token)
+            self._handle_open(token, chunks)
         elif token.nesting == -1:
-            self._handle_close(token)
+            self._handle_close(token, chunks)
         elif token.type == "inline":
-            self._handle_inline(token)
+            self._handle_inline(token, chunks)
         elif token.type == "fence" or token.type == "code_block":
-            self._handle_code_block(token)
+            self._handle_code_block(token, chunks)
         elif token.type == "hr":
-            self._handle_hr(token)
+            self._handle_hr(token, chunks)
 
     # =========================================================================
     # Handlers - Override these to build your block structure
     # =========================================================================
 
-    def _handle_open(self, token) -> None:
+    def _handle_open(self, token, chunks: list[BlockChunk]) -> None:
         """
         Handle OPEN token (nesting=1).
 
         Called ONCE when a block-level element opens.
+
+        Args:
+            token: The markdown-it token
+            chunks: BlockChunks that make up this opening
 
         Token attributes:
         - token.type: e.g., "heading_open"
@@ -1008,54 +1148,70 @@ class MarkdownParser:
         - token.map: [start_line, end_line]
         """
         tag_name = token.type.replace("_open", "")
-        print(f"[OPEN] {tag_name}")
+        print(f"[OPEN] {tag_name} chunks={[c.content for c in chunks]}")
 
-    def _handle_close(self, token) -> None:
+    def _handle_close(self, token, chunks: list[BlockChunk]) -> None:
         """
         Handle CLOSE token (nesting=-1).
 
         Called ONCE when a block-level element closes.
-        """
-        tag_name = token.type.replace("_close", "")
-        print(f"[CLOSE] {tag_name}")
 
-    def _handle_inline(self, token) -> None:
+        Args:
+            token: The markdown-it token
+            chunks: BlockChunks that make up this closing
+        """
+        tag_name = token.type.replace("_close", "") if token else "unknown"
+        print(f"[CLOSE] {tag_name} chunks={[c.content for c in chunks]}")
+
+    def _handle_inline(self, token, chunks: list[BlockChunk]) -> None:
         """
         Handle full INLINE token (for non-incremental use).
+
+        Args:
+            token: The markdown-it token
+            chunks: BlockChunks that make up this content
 
         Token attributes:
         - token.content: full text content
         - token.children: list of child tokens
         """
-        print(f"[INLINE] content={token.content!r}")
+        print(f"[INLINE] content={token.content!r} chunks={[c.content for c in chunks]}")
 
-    def _handle_inline_delta(self, new_content: str, token) -> None:
+    def _handle_inline_delta(self, new_content: str, token, chunks: list[BlockChunk]) -> None:
         """
         Handle INLINE delta - only the NEW content since last parse.
 
         Args:
             new_content: Only the new text (delta from previous)
             token: The full inline token (for context)
+            chunks: BlockChunks that make up the NEW content only
         """
-        print(f"[INLINE_DELTA] +{new_content!r}")
+        print(f"[INLINE_DELTA] +{new_content!r} chunks={[c.content for c in chunks]}")
 
-    def _handle_code_block(self, token) -> None:
+    def _handle_code_block(self, token, chunks: list[BlockChunk]) -> None:
         """
         Handle CODE BLOCK token (fence or code_block).
+
+        Args:
+            token: The markdown-it token
+            chunks: BlockChunks that make up this code block
 
         Token attributes:
         - token.info: language (e.g., "python")
         - token.content: the code content
         - token.markup: "```" or "~~~"
         """
-        print(f"[CODE_BLOCK] lang={token.info!r}")
-        print(f"  content={token.content!r}")
+        print(f"[CODE_BLOCK] lang={token.info!r} chunks={[c.content for c in chunks]}")
 
-    def _handle_hr(self, token) -> None:
+    def _handle_hr(self, token, chunks: list[BlockChunk]) -> None:
         """
         Handle HORIZONTAL RULE token.
+
+        Args:
+            token: The markdown-it token
+            chunks: BlockChunks that make up this hr
 
         Token attributes:
         - token.markup: "---" or "***" or "___"
         """
-        print(f"[HR] markup={token.markup!r}")
+        print(f"[HR] markup={token.markup!r} chunks={[c.content for c in chunks]}")
