@@ -763,10 +763,32 @@ class XmlParser(Process):
 # =============================================================================
 
 
+class MdBlockCtx:
+    def __init__(self, tag_name: str, style: str, depth: int):
+        self.block = Block(style=style)
+        self._should_add_newline = False
+        self._tag_name = tag_name
+        self.depth = depth
+        
+    
+        
+    def add_newline(self):
+        block = self.block.append_child()
+        self._should_add_newline = False
+        return block
+    
+    
+    def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
+        for chunk in chunks:
+            if chunk.content:
+                self.block.tail.append(chunk.content, style=chunk.style, logprob=chunk.logprob)                
+        return chunks
+
 class MdContextStack:
     def __init__(self):
-        self._stack: list[Block] = []
-        self._committed_stack: list[Block] = []
+        self._stack: list[MdBlockCtx] = []
+        self._committed_stack: list[MdBlockCtx] = []
+        self.init("root", {}, [], "root", 0)
         
         
     def add_newline(self):
@@ -775,30 +797,34 @@ class MdContextStack:
         return block
 
 
-    def push(self, block: Block):
-        self._stack.append(block)
+    def push(self, block_ctx: MdBlockCtx):
+        if self._stack:
+            self._stack[-1].block.append_child(block_ctx.block)
+        self._stack.append(block_ctx)
 
-    def pop(self) -> Block:
+    def pop(self) -> MdBlockCtx:
         return self._stack.pop()
     
     def is_empty(self) -> bool:
         return not self._stack
     
-    def top(self) -> Block:
+    def top(self) -> MdBlockCtx:
         return self._stack[-1]
     
     def result(self) -> Block:
-        return self._committed_stack[-1]
+        return self._committed_stack[-1].block
     
-    def init(self, tag_name: str, attrs: dict, chunks: list[BlockChunk]):
-        pass
+    def init(self, tag_name: str, attrs: dict, chunks: list[BlockChunk], style: str, depth: int):
+        block_ctx = MdBlockCtx(tag_name, style, depth)
+        self.push(block_ctx)
     
     
     def commit(self, tag_name: str, chunks: list[BlockChunk]):
         pass
     
     def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
-        pass
+        self.top().append(chunks)
+        return chunks
     
     def result(self) -> Block:
         pass
@@ -1263,11 +1289,14 @@ class MarkdownParser:
         # Use token.tag for the actual HTML tag (h1, h2, p, etc.)
         # Fall back to token.type without _open suffix
         tag_name = token.tag if token.tag else token.type.replace("_open", "")
-        print(f"{self._index} [OPEN] {tag_name} chunks={[c.content for c in chunks]}")
-        if tag_name == "heading":
-            self._ctx_stack.init(tag_name, {}, chunks)    
-        elif tag_name == "paragraph":
-            pass
+        print(f"{self._index} [OPEN] {tag_name} chunks={[c.content for c in chunks]} nesting={token.nesting}")        
+        if token.type == "heading_open":
+            depth = int(token.tag.replace("h", ""))
+            if not self._ctx_stack.is_empty() and depth <= self._ctx_stack.top().depth:
+                self._ctx_stack.pop()
+            self._ctx_stack.init(tag_name, {}, chunks, style="md", depth=depth)    
+        elif token.type == "paragraph_open":
+            self._ctx_stack.init(tag_name, {}, chunks, style="p", depth=token.nesting)
         
 
     def _handle_close(self, token, chunks: list[BlockChunk]) -> None:
@@ -1287,6 +1316,11 @@ class MarkdownParser:
         # Use token.tag for the actual HTML tag (h1, h2, p, etc.)
         tag_name = token.tag if token and token.tag else (token.type.replace("_close", "") if token else "unknown")
         print(f"{self._index} [CLOSE] {tag_name} chunks={[c.content for c in chunks]}")
+        if token.type == "heading_close":
+            # self._ctx_stack.
+            pass
+        elif token.type == "paragraph_close":
+            self._ctx_stack.pop()
 
     def _handle_inline(self, token, chunks: list[BlockChunk]) -> None:
         """
@@ -1301,6 +1335,7 @@ class MarkdownParser:
         - token.children: list of child tokens
         """
         print(f"{self._index} [INLINE] content={token.content!r} chunks={[c.content for c in chunks]}")
+        self._ctx_stack.append(chunks)
 
     def _handle_inline_delta(self, new_content: str, token, chunks: list[BlockChunk]) -> None:
         """
@@ -1312,6 +1347,7 @@ class MarkdownParser:
             chunks: BlockChunks that make up the NEW content only
         """
         print(f"{self._index} [INLINE_DELTA] +{new_content!r} chunks={[c.content for c in chunks]}")
+        self._ctx_stack.append(chunks)
 
     def _handle_code_block(self, token, chunks: list[BlockChunk]) -> None:
         """

@@ -477,7 +477,6 @@ class MarkdownMutator(BlockMutator):
         
         
         
-        
 class BannerMutator(BlockMutator):
     styles = ("banner",)
     
