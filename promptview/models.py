@@ -16,7 +16,7 @@ from .prompt import Context
 
 
 
-class ContentModel(ArtifactModel):
+class BlockArtifact(ArtifactModel):
     _is_base: bool = True
     tree_id: int = ModelField(description="the id of the tree that the article belongs to", foreign_key=True, foreign_cls=BlockTree)
     tree: BlockTree = RelationField(description="the tree that the article belongs to", primary_key="tree_id", foreign_key="id")    
