@@ -1385,3 +1385,394 @@ class MarkdownParser:
         - token.markup: "---" or "***" or "___"
         """
         print(f"[HR] markup={token.markup!r} chunks={[c.content for c in chunks]}")
+
+
+# =============================================================================
+# HybridParser - Schema-aware parser that switches between XML and Markdown
+# =============================================================================
+
+
+class HybridParser(Process):
+    """
+    Schema-aware parser that switches between XML and Markdown parsing modes.
+
+    Uses the schema's type information to determine parsing mode:
+    - type == str (or no type) → parse content as plain text (XML mode)
+    - type == Block → parse content as markdown
+
+    Example schema:
+        with schema.view("thought", str) as t:    # XML mode - plain text
+            ...
+        with schema.view("content", Block) as c:  # Markdown mode
+            ...
+
+    Example input:
+        <thought>lets think...</thought>
+        <content>
+        # Title
+        Some markdown content.
+        </content>
+
+    The parser automatically switches modes based on the current tag's schema type.
+    """
+
+    def __init__(self, schema: "BlockSchema", upstream: Process | None = None, verbose: bool = False):
+        super().__init__(upstream)
+
+        self._verbose = verbose
+        self._schema = schema
+
+        # Synthetic root tag handling
+        self._root_tag = "_root_"
+        self._has_synthetic_root = True
+
+        # Extract schema with root tag for wrapping multiple schemas
+        self.schema = schema.extract_schema(style="xml", root=self._root_tag, role="assistant")
+        if self.schema is None:
+            raise ParserError("No schema found to parse against")
+
+        # Build schema lookup by tag name
+        self._schema_lookup: dict[str, BlockSchema] = {}
+        self._build_schema_lookup(self.schema)
+
+        # Create wrapper schema
+        if self.schema.name == self._root_tag:
+            self._wrapper_schema = self.schema
+        else:
+            self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
+            self._wrapper_schema._raw_append_child(self.schema)
+
+        # Context stack for block building
+        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, root_name=self._root_tag)
+
+        # Expat parser setup (for XML structure)
+        self._parser = expat.ParserCreate()
+        self._parser.buffer_text = False
+        self._parser.StartElementHandler = self._on_start
+        self._parser.EndElementHandler = self._on_end
+        self._parser.CharacterDataHandler = self._on_chardata
+
+        # Chunk tracking
+        self._chunks: list[tuple[int, int, BlockChunk]] = []
+        self._total_bytes = 0
+        self._chunk_cursor: int = 0
+
+        # Pending event for deferred processing
+        self._pending: tuple[str, Any, int] | None = None
+
+        # Output queue for events
+        self._output_queue: list[ParserEvent] = []
+
+        # Stream exhausted flag
+        self._is_stream_exhausted = False
+
+        # Parser closed flag
+        self._is_closed = False
+
+        # Markdown mode tracking
+        self._md_parser: MarkdownParser | None = None  # Active markdown parser
+        self._md_tag: str | None = None  # Tag we're parsing markdown for
+        self._md_schema: BlockSchema | None = None  # Schema of the markdown tag
+
+        self._index = 0
+
+        # Start with synthetic root
+        self.feed("<{}>".format(self._root_tag))
+
+    def _build_schema_lookup(self, schema: BlockSchema, prefix: str = ""):
+        """Build a lookup table of schemas by tag name."""
+        if schema.name:
+            self._schema_lookup[schema.name] = schema
+        for tag in schema.tags:
+            if tag and tag != schema.name:
+                self._schema_lookup[tag] = schema
+        for child in schema.children:
+            if isinstance(child, BlockSchema):
+                self._build_schema_lookup(child, prefix)
+
+    def _get_schema_for_tag(self, tag_name: str) -> BlockSchema | None:
+        """Get the schema for a given tag name."""
+        return self._schema_lookup.get(tag_name)
+
+    def _should_use_markdown(self, schema: BlockSchema | None) -> bool:
+        """Check if the schema indicates markdown parsing should be used."""
+        if schema is None:
+            return False
+        # Check if type is Block (markdown content)
+        return schema.type == Block
+
+    # -------------------------------------------------------------------------
+    # Properties
+    # -------------------------------------------------------------------------
+
+    @property
+    def result(self) -> Block | None:
+        """Get the built block tree."""
+        return self._ctx_stack.result()
+
+    # -------------------------------------------------------------------------
+    # Process interface
+    # -------------------------------------------------------------------------
+
+    async def on_stop(self):
+        """Called when upstream is exhausted - finalize parsing."""
+        self.close()
+
+    async def __anext__(self):
+        """Get next event from parser."""
+        if self._output_queue:
+            return self._output_queue.pop(0)
+        elif self._is_stream_exhausted:
+            raise StopAsyncIteration()
+
+        while not self._output_queue and not self._is_stream_exhausted:
+            try:
+                upstream_chunk = await super().__anext__()
+                if isinstance(upstream_chunk, BlockChunk):
+                    self.feed(upstream_chunk)
+                elif hasattr(upstream_chunk, 'content'):
+                    chunk = BlockChunk(
+                        upstream_chunk.content,
+                        logprob=getattr(upstream_chunk, 'logprob', None)
+                    )
+                    self.feed(chunk)
+                else:
+                    self.feed(str(upstream_chunk))
+            except StopAsyncIteration:
+                self._is_stream_exhausted = True
+                await self.on_stop()
+                if self._output_queue:
+                    return self._output_queue.pop(0)
+                raise
+
+        if self._output_queue:
+            return self._output_queue.pop(0)
+        raise StopAsyncIteration()
+
+    # -------------------------------------------------------------------------
+    # Feeding data
+    # -------------------------------------------------------------------------
+
+    def feed(self, chunk: BlockChunk | str, logprob: float | None = None, is_final: bool = False):
+        """
+        Feed a chunk to the parser.
+
+        Always feeds to expat for XML structure detection.
+        Character data is routed to markdown parser when in markdown mode.
+        """
+        if isinstance(chunk, str):
+            chunk = BlockChunk(chunk, logprob=logprob)
+
+        data = chunk.content.encode("utf-8")
+        start = self._total_bytes
+        end = start + len(data)
+        self._chunks.append((start, end, chunk))
+        self._total_bytes = end
+
+        # Always feed to expat for XML structure (tags, etc.)
+        try:
+            self._parser.Parse(data, is_final)
+        except expat.ExpatError as e:
+            current_data = "".join(c[2].content for c in self._chunks)
+            raise ParserError(f"XML parse error: {e}. Current data: {current_data}")
+
+    def close(self):
+        """Close the parser and finalize."""
+        if self._is_closed:
+            return
+        self._is_closed = True
+
+        # Close any active markdown parser
+        if self._md_parser is not None:
+            self._md_parser.close()
+            self._attach_markdown_result()
+
+        if self._has_synthetic_root:
+            self.feed("</{}>".format(self._root_tag))
+        self._parser.Parse(b"", True)
+        self._flush_pending(self._total_bytes)
+
+    # -------------------------------------------------------------------------
+    # Chunk retrieval
+    # -------------------------------------------------------------------------
+
+    def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
+        """Get chunks overlapping the byte range [start, end)."""
+        result = []
+        chunks = self._chunks
+        n = len(chunks)
+        i = self._chunk_cursor
+
+        while i < n and chunks[i][1] <= start:
+            i += 1
+        self._chunk_cursor = i
+
+        while i < n:
+            chunk_start, chunk_end, chunk = chunks[i]
+            if chunk_start >= end:
+                break
+
+            if chunk_end > end:
+                chunk, _ = chunk.split(end - chunk_start)
+            if chunk_start < start:
+                _, chunk = chunk.split(start - chunk_start)
+            if chunk.content:
+                if chunk.starts_with_tab():
+                    lchunk, chunk = chunk.split_tab()
+                    result.append(lchunk)
+                result.append(chunk)
+            i += 1
+
+        return result
+
+    # -------------------------------------------------------------------------
+    # Event handling
+    # -------------------------------------------------------------------------
+
+    def _flush_pending(self, end_byte: int):
+        """Process any pending event."""
+        if self._pending is None:
+            return
+        self._index += 1
+        event_type, event_data, start_byte = self._pending
+        chunks = self._get_chunks_in_range(start_byte, end_byte)
+        self._pending = None
+
+        if not chunks:
+            return
+
+        if self._verbose:
+            if event_type == "start":
+                print(f"[HYBRID] *** {event_data[0]} ***")
+            print(f"[HYBRID] Event {self._index}: {event_type}, data={event_data!r}, chunks={[c.content for c in chunks]}")
+
+        if event_type == "start":
+            name, attrs = event_data
+            self._handle_start(name, attrs, chunks)
+        elif event_type == "end":
+            name = event_data
+            self._handle_end(name, chunks)
+        elif event_type == "chardata":
+            self._handle_chardata(chunks)
+
+    def _on_start(self, name: str, attrs: dict):
+        """Handle start tag event from expat."""
+        current_pos = self._parser.CurrentByteIndex
+        self._flush_pending(current_pos)
+        self._pending = ("start", (name, attrs), current_pos)
+
+    def _on_end(self, name: str):
+        """Handle end tag event from expat."""
+        current_pos = self._parser.CurrentByteIndex
+        self._flush_pending(current_pos)
+        self._pending = ("end", name, current_pos)
+
+    def _on_chardata(self, data: str):
+        """Handle character data event from expat."""
+        current_pos = self._parser.CurrentByteIndex
+        self._flush_pending(current_pos)
+        self._pending = ("chardata", data, current_pos)
+
+    # -------------------------------------------------------------------------
+    # Block building with mode switching
+    # -------------------------------------------------------------------------
+
+    def _handle_start(self, name: str, attrs: dict, chunks: list[BlockChunk]):
+        """Handle opening tag - check if we should switch to markdown mode."""
+        if name == self._root_tag:
+            chunks = []
+
+        # Get schema for this tag
+        tag_schema = self._get_schema_for_tag(name)
+
+        if self._verbose:
+            type_info = tag_schema.type.__name__ if tag_schema and tag_schema.type else "None"
+            print(f"[HYBRID] START {name} schema_type={type_info}")
+
+        # Check if we should switch to markdown mode
+        if self._should_use_markdown(tag_schema):
+            if self._verbose:
+                print(f"[HYBRID] Switching to MARKDOWN mode for <{name}>")
+            self._md_parser = MarkdownParser(verbose=self._verbose)
+            self._md_tag = name
+            self._md_schema = tag_schema
+
+        # Initialize block in context stack
+        self._ctx_stack.init(name, attrs, chunks)
+        self._emit_event("block_init", self._ctx_stack.top_event_block())
+
+    def _handle_end(self, name: str, chunks: list[BlockChunk]):
+        """Handle closing tag - check if we should exit markdown mode."""
+        if name == self._root_tag:
+            chunks = []
+
+        if self._verbose:
+            print(f"[HYBRID] END {name}")
+
+        # Check if we're closing the markdown tag
+        if self._md_parser is not None and name == self._md_tag:
+            if self._verbose:
+                print(f"[HYBRID] Exiting MARKDOWN mode for </{name}>")
+            self._md_parser.close()
+            self._attach_markdown_result()
+            self._md_parser = None
+            self._md_tag = None
+            self._md_schema = None
+
+        # Commit block
+        postfix = self._ctx_stack.commit(name, chunks)
+        self._emit_event("block_commit", postfix)
+
+    def _handle_chardata(self, chunks: list[BlockChunk]):
+        """Handle character data - route to appropriate handler based on mode."""
+        if self._md_parser is not None:
+            # Markdown mode - feed chunks to markdown parser
+            for chunk in chunks:
+                self._md_parser.feed(chunk)
+            if self._verbose:
+                print(f"[HYBRID] MD chardata: {[c.content for c in chunks]}")
+            # Emit delta events from markdown parser could be done here
+            # For now, the markdown result is attached when tag closes
+            return
+
+        # XML mode - append to current block
+        output = self._ctx_stack.append(chunks)
+        if output:
+            if isinstance(output, Block):
+                self._emit_event("block", output)
+            else:
+                self._emit_event("block_delta", output)
+
+    def _attach_markdown_result(self):
+        """Attach the markdown parser result to the current block."""
+        if self._md_parser is None:
+            return
+
+        md_result = self._md_parser.result
+        if md_result is not None:
+            # Get the current block and attach markdown result as child
+            current_block = self._ctx_stack.curr_block
+            if current_block is not None:
+                # Append markdown block as child
+                current_block.append_child(md_result)
+                if self._verbose:
+                    print(f"[HYBRID] Attached markdown result to {current_block.tags}")
+
+    def _emit_event(self, event_type: str, value: Block | list[BlockChunk]):
+        """Emit a parser event."""
+        path = self._ctx_stack.top().block.tail.path
+        event = ParserEvent(path=str(path), type=event_type, value=value)
+        self._output_queue.append(event)
+
+    # -------------------------------------------------------------------------
+    # Iterator interface
+    # -------------------------------------------------------------------------
+
+    def events(self) -> Generator[ParserEvent, None, None]:
+        """Yield all queued events."""
+        while self._output_queue:
+            yield self._output_queue.pop(0)
+
+    def __iter__(self):
+        """Synchronous iterator for events."""
+        return self.events()
