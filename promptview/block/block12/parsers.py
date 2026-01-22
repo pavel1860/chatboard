@@ -216,13 +216,15 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
         
         
     def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:                      
+        events = []
         for chunk in chunks:
             if self._markdown_ended:
                 return super().append(chunks)
             if not self._found_content:
                 if chunk.is_newline():
                     self._found_content = True
-                self.block.tail.append(chunk.content, logprob=chunk.logprob, style=chunk.style)
+                res = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=chunk.style)
+                events.append(res)
             else:
                 # skip tabs
                 if chunk.starts_with_tab():
@@ -230,10 +232,12 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                 
                 if not self._markdown_started:
                     self._markdown_started = True
-                    self.block.append_child(self._md_parser.result, copy=False)
+                    block = self.block.append_child(self._md_parser.result, copy=False)
+                    events.append(block)
                 print(chunk)
-                self._md_parser.feed(chunk)
-        return chunks
+                res = self._md_parser.feed(chunk)
+                events.extend(res)
+        return events
     
     
     def commit(self, name: str, chunks: list[BlockChunk]):
@@ -834,27 +838,6 @@ class MdBlockCtx:
         return self.block.tail.append(chunk.content, style=chunk.style, logprob=chunk.logprob)                
         
     
-    def append1(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
-        for chunk in chunks:
-            if chunk.content:
-                self.block.tail.append(chunk.content, style=chunk.style, logprob=chunk.logprob)                
-        return chunks
-    
-    def append2(self, chunks: list[BlockChunk]) -> Block | list[BlockChunk]:
-        block = None
-        for chunk in chunks:
-            style = None
-            if self._should_add_newline:
-                block = self.add_newline()
-            if chunk.is_newline():
-                self._should_add_newline = True
-                style = self.block.mutator.get_style()
-            if chunk.content:
-                self.block.tail.append(chunk.content, style=style or chunk.style, logprob=chunk.logprob)                
-        if block:
-            return block
-        return chunks
-
 class MdContextStack:
     def __init__(self):
         self._stack: list[MdBlockCtx] = []
@@ -887,6 +870,8 @@ class MdContextStack:
         return self._committed_stack[-1].block
     
     def init(self, tag_name: str, attrs: dict, chunks: list[BlockChunk], style: str, depth: int):
+        # Reset newline flag when starting a new block
+        self._should_add_newline = False
         block_ctx = MdBlockCtx(tag_name, chunks, attrs, style, depth)
         self.push(block_ctx)
     
@@ -898,7 +883,7 @@ class MdContextStack:
     #     return self.top().append(chunks)
     
     def append(self, chunks: list[BlockChunk]) -> Block | list[BlockChunk]:
-        block = None
+        block = None        
         for chunk in chunks:
             style = None
             if self._should_add_newline:
@@ -921,578 +906,340 @@ class MdContextStack:
         pass
 
 
+@dataclass
+class MdEvent:
+    """Event from markdown state machine."""
+    type: Literal["open", "delta", "close"]
+    tag: str
+    content: str  # The actual content for this event (may be subset of chunk)
+    chunk: BlockChunk  # Original chunk (for logprob etc.)
+    level: int = 0  # For headings: 1-6
+
+
 class MarkdownParser:
     """
-    Streaming markdown parser with incremental token processing.
+    Line-based streaming markdown parser.
 
-    Uses markdown-it-py for parsing. Tracks state to emit events only for
-    NEW tokens - open/close/inline handlers are called once per event.
+    Uses a simple state machine instead of re-parsing. Each chunk is processed
+    incrementally and events are returned immediately for streaming.
 
-    Accepts BlockChunk objects and maps events to their corresponding chunks.
-
-    Token nesting in markdown-it-py:
-    - nesting=1  → OPEN (like XML start tag)
-    - nesting=-1 → CLOSE (like XML end tag)
-    - nesting=0  → self-closing (inline content)
+    Supports:
+    - Headings: #, ##, ###, etc.
+    - Paragraphs: text until blank line
 
     Example:
         parser = MarkdownParser()
-        parser.feed(BlockChunk("# Hello"))
-        parser.feed(BlockChunk("\\n\\nWorld"))
-        parser.close()
+        for chunk in chunks:
+            outputs = parser.feed(chunk)
+            for output in outputs:
+                send_to_frontend(output)
     """
 
+    # States
+    STATE_LINE_START = "line_start"
+    STATE_IN_MARKUP = "in_markup"
+    STATE_IN_CONTENT = "in_content"
+
     def __init__(self, verbose: bool = False):
-        from markdown_it import MarkdownIt
-
-        self._md = MarkdownIt()
-        # self._md.disable("code")
         self._verbose = verbose
+        self._index = 0
+        # State machine
+        self._state = self.STATE_LINE_START
+        self._markup_buffer = ""  # Accumulated markup (e.g., "##")
+        self._current_tag: str | None = None  # Current block tag (h1, h2, p)
+        self._current_level: int = 0  # Heading level
+        self._pending_newlines: int = 0  # Track newlines for paragraph close
 
-        # Buffer for accumulating content (string)
-        self._buffer: str = ""
+        # Content accumulator for current chunk
+        self._content_buffer = ""  # Content accumulated within current chunk
 
-        # Chunk tracking for mapping events to BlockChunks
-        # Each entry is (start_byte, end_byte, BlockChunk)
-        self._chunks: list[tuple[int, int, BlockChunk]] = []
-        self._total_bytes: int = 0
-
-        # Stack for tracking currently open blocks
-        # Each entry is (tag_name, inline_content_so_far, content_start_byte)
-        self._stack: list[tuple[str, str, int]] = []
-
-        # Track committed (closed) blocks count
-        self._committed_count: int = 0
-
-        # Track last inline content for the current open block
-        self._last_inline_content: str = ""
+        # Context stack for building blocks
+        self._ctx_stack: MdContextStack = MdContextStack()
 
         # Parser closed flag
         self._is_closed: bool = False
-        self._ctx_stack: MdContextStack = MdContextStack()
-        self._index: int = 0
-        
-        
+
     @property
     def result(self) -> Block:
         return self._ctx_stack.result()
-        
 
-    def feed(self, chunk: BlockChunk | str, logprob: float | None = None) -> None:
+    def feed(self, chunk: BlockChunk | str, logprob: float | None = None) -> list[Block | list[BlockChunk]]:
         """
         Feed a chunk to the parser.
 
         Args:
             chunk: BlockChunk or string content to parse
             logprob: Optional log probability (used if chunk is a string)
+
+        Returns:
+            List of outputs to stream (Block on new structure, chunks for deltas)
         """
         if self._is_closed:
             raise ParserError("Parser is closed")
 
-        # Convert string to BlockChunk if needed
         if isinstance(chunk, str):
             chunk = BlockChunk(chunk, logprob=logprob)
 
-        # Split chunk at newlines and store each sub-chunk separately
-        for sub_chunk in self._split_chunk_at_newlines(chunk):
-            # print(sub_chunk)
-            data = sub_chunk.content.encode("utf-8")
-            start = self._total_bytes
-            end = start + len(data)
-            self._chunks.append((start, end, sub_chunk))
-            self._total_bytes = end
-            self._buffer += sub_chunk.content
+        outputs = []
 
-        self._parse_incremental()
-        print("--------------------------------")
+        # Split chunk at newlines for consistent handling
+        sub_chunks = self._split_at_newlines(chunk)
 
-    def close(self) -> None:
-        """Close the parser and finalize."""
-        if self._is_closed:
-            return
+        for sub_chunk in sub_chunks:
+            # Process chunk and generate events
+            events = self._process_chunk(sub_chunk)
 
-        self._is_closed = True
-        self._parse_final()
+            # Handle each event and collect outputs
+            for event in events:
+                output = self._handle_event(event)
+                if output is not None:
+                    outputs.append(output)
 
-    # =========================================================================
-    # Chunk tracking and retrieval
-    # =========================================================================
+            if self._verbose:
+                print(f"[MD] fed {sub_chunk.content!r} → {len(events)} events, {len(outputs)} outputs")
 
-    def _get_byte_position_for_char_index(self, char_index: int) -> int:
-        """Convert character index in buffer to byte position."""
-        return len(self._buffer[:char_index].encode("utf-8"))
+        return outputs
 
-    def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
-        """
-        Get chunks overlapping the byte range [start, end).
-
-        Similar to XmlParser._get_chunks_in_range.
-        Splits chunks at newline boundaries.
-        """
-        result = []
-
-        for chunk_start, chunk_end, chunk in self._chunks:
-            # Check if chunk overlaps with [start, end)
-            if chunk_start < end and chunk_end > start:
-                # Calculate the overlap
-                overlap_start = max(chunk_start, start)
-                overlap_end = min(chunk_end, end)
-
-                if overlap_start == chunk_start and overlap_end == chunk_end:
-                    # Full chunk is within range
-                    result.append(chunk)
-                else:
-                    # Need to split the chunk at byte boundaries
-                    working_chunk = chunk
-                    if chunk_end > end:
-                        working_chunk, _ = working_chunk.split(end - chunk_start)
-                    if chunk_start < start:
-                        _, working_chunk = working_chunk.split(start - chunk_start)
-                    if working_chunk.content:
-                        result.append(working_chunk)
-
-        return result
-
-    def _split_chunk_at_newlines(self, chunk: BlockChunk) -> list[BlockChunk]:
+    def _split_at_newlines(self, chunk: BlockChunk) -> list[BlockChunk]:
         """
         Split a chunk at newline boundaries.
 
-        Returns list of chunks, separating newlines from other content.
-        E.g., '\\nTh' -> ['\\n', 'Th']
-        E.g., 'Hello\\nWorld' -> ['Hello', '\\n', 'World']
+        Returns a list of chunks where newlines are separate chunks.
+        This ensures consistent handling of structural boundaries.
         """
-        result = []
         content = chunk.content
+        if '\n' not in content:
+            return [chunk]
+
+        result = []
         current_pos = 0
 
-        while current_pos < len(content):
-            newline_pos = content.find('\n', current_pos)
-
-            if newline_pos == -1:
-                # No more newlines - add rest of content
-                if current_pos < len(content):
-                    remaining = content[current_pos:]
-                    if remaining:
-                        result.append(BlockChunk(
-                            remaining,
-                            logprob=chunk.logprob,
-                            style=chunk.style
-                        ))
-                break
-            else:
-                # Found a newline
+        for i, char in enumerate(content):
+            if char == '\n':
                 # Add content before newline (if any)
-                if newline_pos > current_pos:
-                    before = content[current_pos:newline_pos]
-                    result.append(BlockChunk(
-                        before,
+                if i > current_pos:
+                    before_content = content[current_pos:i]
+                    before_meta = ChunkMeta(
+                        start=chunk.meta.start + current_pos,
+                        end=chunk.meta.start + i,
                         logprob=chunk.logprob,
-                        style=chunk.style
-                    ))
+                        style=chunk.style,
+                    )
+                    result.append(BlockChunk(before_content, meta=before_meta))
 
-                # Add the newline itself
-                result.append(BlockChunk(
-                    '\n',
+                # Add newline as separate chunk
+                nl_meta = ChunkMeta(
+                    start=chunk.meta.start + i,
+                    end=chunk.meta.start + i + 1,
                     logprob=chunk.logprob,
-                    style=chunk.style
-                ))
+                    style=chunk.style,
+                )
+                result.append(BlockChunk('\n', meta=nl_meta))
+                current_pos = i + 1
 
-                current_pos = newline_pos + 1
+        # Add remaining content after last newline (if any)
+        if current_pos < len(content):
+            after_content = content[current_pos:]
+            after_meta = ChunkMeta(
+                start=chunk.meta.start + current_pos,
+                end=chunk.meta.end,
+                logprob=chunk.logprob,
+                style=chunk.style,
+            )
+            result.append(BlockChunk(after_content, meta=after_meta))
 
-        return result if result else [chunk]
+        return result
 
-    def _get_chunks_for_content(self, content: str, search_start: int = 0) -> list[BlockChunk]:
-        """
-        Get chunks that correspond to the given content string.
-
-        Args:
-            content: The content string to find
-            search_start: Character index to start searching from
-
-        Returns:
-            List of BlockChunks that make up this content
-        """
-        # Find content in buffer
-        char_index = self._buffer.find(content, search_start)
-        if char_index == -1:
+    def close(self) -> list[Block | list[BlockChunk]]:
+        """Close the parser and finalize any open blocks."""
+        if self._is_closed:
             return []
 
-        # Convert to byte positions
-        start_byte = self._get_byte_position_for_char_index(char_index)
-        end_byte = self._get_byte_position_for_char_index(char_index + len(content))
+        self._is_closed = True
+        outputs = []
 
-        return self._get_chunks_in_range(start_byte, end_byte)
+        # Close any open block
+        if self._current_tag:
+            close_event = MdEvent("close", self._current_tag, "", BlockChunk(""), self._current_level)
+            output = self._handle_event(close_event)
+            if output:
+                outputs.append(output)
 
-    def _get_line_byte_range(self, line_start: int, line_end: int) -> tuple[int, int]:
+        return outputs
+
+    # =========================================================================
+    # State Machine - Event Generation
+    # =========================================================================
+
+    def _process_chunk(self, chunk: BlockChunk) -> list[MdEvent]:
         """
-        Get byte range for a line range from token.map.
-
-        Args:
-            line_start: Start line number (0-indexed)
-            line_end: End line number (exclusive)
-
-        Returns:
-            (start_byte, end_byte)
+        Process a chunk through the state machine.
+        Returns list of events with appropriate content slices.
         """
-        lines = self._buffer.split("\n")
+        events = []
+        content = chunk.content
 
-        # Calculate character index for start of line_start
-        char_start = sum(len(lines[i]) + 1 for i in range(line_start))
+        # Reset content buffer for this chunk
+        self._content_buffer = ""
 
-        # Calculate character index for end of line_end - 1
-        char_end = sum(len(lines[i]) + 1 for i in range(line_end))
+        for i, char in enumerate(content):
+            char_events = self._process_char(char, chunk)
+            events.extend(char_events)
 
-        start_byte = self._get_byte_position_for_char_index(char_start)
-        end_byte = self._get_byte_position_for_char_index(char_end)
+        # If there's accumulated content, emit a final delta
+        if self._content_buffer and self._current_tag:
+            events.append(MdEvent(
+                "delta",
+                self._current_tag,
+                self._content_buffer,
+                BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style),
+                self._current_level
+            ))
+            self._content_buffer = ""
 
-        return start_byte, end_byte
+        return events
 
-    def _parse_incremental(self) -> None:
+    def _process_char(self, char: str, chunk: BlockChunk) -> list[MdEvent]:
+        """Process a single character, return events."""
+        events = []
+
+        if self._state == self.STATE_LINE_START:
+            if char == '#':
+                self._markup_buffer += char
+                self._state = self.STATE_IN_MARKUP
+            elif char == '\n':
+                # Blank line
+                self._pending_newlines += 1
+                if self._current_tag == 'p' and self._pending_newlines >= 1:
+                    # Emit any pending content first
+                    if self._content_buffer:
+                        events.append(MdEvent(
+                            "delta", "p", self._content_buffer,
+                            BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style), 0
+                        ))
+                        self._content_buffer = ""
+                    # Close paragraph on blank line
+                    events.append(MdEvent("close", "p", "", chunk, 0))
+                    self._current_tag = None
+                    self._current_level = 0
+            else:
+                # Start of paragraph
+                self._pending_newlines = 0
+                if self._current_tag is None:
+                    self._current_tag = 'p'
+                    events.append(MdEvent("open", "p", "", chunk, 0))
+                self._state = self.STATE_IN_CONTENT
+                self._content_buffer += char
+
+        elif self._state == self.STATE_IN_MARKUP:
+            if char == '#':
+                self._markup_buffer += char
+            elif char == ' ':
+                # End of heading markup: "## " → h2
+                level = len(self._markup_buffer)
+                tag = f"h{level}"
+
+                # Close previous block if needed
+                if self._current_tag:
+                    events.append(MdEvent("close", self._current_tag, "", chunk, self._current_level))
+
+                self._current_tag = tag
+                self._current_level = level
+                markup_content = self._markup_buffer + " "
+                self._markup_buffer = ""
+                self._pending_newlines = 0
+                self._state = self.STATE_IN_CONTENT
+                events.append(MdEvent(
+                    "open", tag, markup_content,
+                    BlockChunk(markup_content, logprob=chunk.logprob, style="md"), level
+                ))
+            elif char == '\n':
+                # Just "#" without space - treat as paragraph content
+                self._markup_buffer = ""
+                self._state = self.STATE_LINE_START
+            else:
+                # Not a heading - treat as paragraph
+                if self._current_tag is None:
+                    self._current_tag = 'p'
+                    events.append(MdEvent("open", "p", "", chunk, 0))
+                self._state = self.STATE_IN_CONTENT
+                self._content_buffer += self._markup_buffer + char
+                self._markup_buffer = ""
+
+        elif self._state == self.STATE_IN_CONTENT:
+            if char == '\n':
+                self._pending_newlines += 1
+
+                if self._current_tag and self._current_tag.startswith('h'):
+                    # Include the newline in the content buffer
+                    self._content_buffer += char
+                    # Emit content including newline
+                    if self._content_buffer:
+                        events.append(MdEvent(
+                            "delta", self._current_tag, self._content_buffer,
+                            BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style),
+                            self._current_level
+                        ))
+                        self._content_buffer = ""
+                    # Headings close on newline
+                    events.append(MdEvent("close", self._current_tag, "", chunk, self._current_level))
+                    self._current_tag = None
+                    self._current_level = 0
+                    self._state = self.STATE_LINE_START
+                else:
+                    # Paragraph continues, include newline in content
+                    self._content_buffer += char
+                    self._state = self.STATE_LINE_START
+            else:
+                self._pending_newlines = 0
+                self._content_buffer += char
+
+        return events
+
+    # =========================================================================
+    # Event Handling - Side Effects
+    # =========================================================================
+
+    def _handle_event(self, event: MdEvent) -> Block | list[BlockChunk] | None:
         """
-        Parse and emit only NEW events by diffing against previous state.
-        """
-        tokens = self._md.parse(self._buffer)
-        self._process_tokens_incremental(tokens, is_final=False)
-
-    def _parse_final(self) -> None:
-        """Final parse - close any remaining open blocks."""
-        tokens = self._md.parse(self._buffer)
-        self._process_tokens_incremental(tokens, is_final=True)
-
-    def _process_tokens_incremental(self, tokens: list, is_final: bool) -> None:
-        """
-        Process tokens incrementally, emitting only new events.
-
-        Strategy:
-        1. Count complete blocks (open+inline+close sequences)
-        2. Skip already committed blocks
-        3. For the current (possibly incomplete) block:
-           - Emit OPEN if not yet opened
-           - Emit INLINE delta (new content only)
-           - Emit CLOSE only if block is complete AND is_final or next block started
-        """
-        # Parse tokens into block structures
-        blocks = self._parse_into_blocks(tokens)
-
-        # Process each block
-        for i, block in enumerate(blocks):
-            if i < self._committed_count:
-                # Already processed and committed
-                continue
-
-            is_complete = block["is_complete"]
-            tag_name = block["tag_name"]
-            inline_content = block["inline_content"]
-            open_token = block["open_token"]
-
-            # Check if this block is newly opened
-            current_stack_depth = len(self._stack)
-            block_index = i - self._committed_count
-
-            # Only emit OPEN when we have inline content (tag is stable by then)
-            # For headings: # vs ## vs ### is only known after seeing the space
-            needs_open = block_index >= current_stack_depth
-            has_inline = bool(inline_content)
-
-            if needs_open and has_inline:
-                # Now we have inline content, so the tag is stable - emit OPEN
-                open_chunks = []
-                if open_token.map:
-                    line_start_byte, line_end_byte = self._get_line_byte_range(open_token.map[0], open_token.map[0] + 1)
-
-                    # Only get chunks for the markup portion, not the content
-                    # For headings: markup is "#", "##", etc. + space before content
-                    if open_token.markup:
-                        # Markup length + 1 for the space after (e.g., "# " for h1)
-                        markup_len = len(open_token.markup.encode("utf-8")) + 1
-                        markup_end_byte = line_start_byte + markup_len
-                        open_chunks = self._get_chunks_in_range(line_start_byte, markup_end_byte)
-                    else:
-                        # No markup (e.g., paragraphs) - content comes via INLINE_DELTA
-                        open_chunks = []
-
-                self._handle_open(open_token, open_chunks)
-
-                # Track: (tag_name, content_so_far, byte_position_of_content_start)
-                # Content starts after the markup
-                content_start_byte = self._total_bytes - len(self._buffer.encode("utf-8"))
-                if open_token.map:
-                    line_start_byte, _ = self._get_line_byte_range(open_token.map[0], open_token.map[1])
-                    if open_token.markup:
-                        # Content starts after markup + space
-                        markup_len = len(open_token.markup.encode("utf-8")) + 1
-                        content_start_byte = line_start_byte + markup_len
-                    else:
-                        content_start_byte = line_start_byte
-                self._stack.append((tag_name, "", content_start_byte))
-                self._last_inline_content = ""
-
-            # Emit inline delta if content changed (only if OPEN was emitted)
-            if len(self._stack) > 0 and block_index < len(self._stack):
-                stack_idx = block_index
-                stored_tag, prev_content, content_start_byte = self._stack[stack_idx]
-                if inline_content != prev_content:
-                    # New content - emit only the delta
-                    new_content = inline_content[len(prev_content):]
-                    if new_content:
-                        # Get chunks for the new content (already split at newlines in feed)
-                        full_content_in_buffer = self._buffer.find(inline_content)
-                        if full_content_in_buffer != -1:
-                            delta_start = full_content_in_buffer + len(prev_content)
-                            delta_chunks = self._get_chunks_for_content(new_content, delta_start)
-                        else:
-                            delta_chunks = []
-
-                        self._handle_inline_delta(new_content, block["inline_token"], delta_chunks)
-                    self._stack[stack_idx] = (tag_name, inline_content, content_start_byte)
-
-            # Check if we should close this block
-            if is_complete:
-                # Block is complete - check if we should commit it
-                # Commit if: is_final OR there's a next block
-                should_commit = is_final or (i < len(blocks) - 1)
-                if should_commit:
-                    # If OPEN wasn't emitted yet (no inline content came), emit it now
-                    if block_index >= len(self._stack):
-                        open_chunks = []
-                        if open_token.map:
-                            start_byte, end_byte = self._get_line_byte_range(open_token.map[0], open_token.map[0] + 1)
-                            open_chunks = self._get_chunks_in_range(start_byte, end_byte)
-                        self._handle_open(open_token, open_chunks)
-                        content_start_byte = self._total_bytes - len(self._buffer.encode("utf-8"))
-                        if open_token.map:
-                            content_start_byte, _ = self._get_line_byte_range(open_token.map[0], open_token.map[1])
-                        self._stack.append((tag_name, "", content_start_byte))
-
-                    # Get chunks for closing
-                    close_chunks = []
-                    close_token = block["close_token"]
-                    if close_token and close_token.map:
-                        start_byte, end_byte = self._get_line_byte_range(close_token.map[0], close_token.map[1])
-                        close_chunks = self._get_chunks_in_range(start_byte, end_byte)
-
-                    self._handle_close(close_token, close_chunks)
-                    self._stack.pop() if self._stack else None
-                    self._committed_count += 1
-
-    def _parse_into_blocks(self, tokens: list) -> list[dict]:
-        """
-        Parse flat token list into block structures.
-
-        Returns list of:
-        {
-            "tag_name": str,
-            "open_token": token,
-            "inline_token": token or None,
-            "inline_content": str,
-            "close_token": token or None,
-            "is_complete": bool
-        }
-        """
-        blocks = []
-        i = 0
-
-        while i < len(tokens):
-            token = tokens[i]
-
-            if token.nesting == 1:
-                # Opening token - use token.tag for actual HTML tag (h1, h2, p, etc.)
-                tag_name = token.tag if token.tag else token.type.replace("_open", "")
-                block = {
-                    "tag_name": tag_name,
-                    "open_token": token,
-                    "inline_token": None,
-                    "inline_content": "",
-                    "close_token": None,
-                    "is_complete": False,
-                }
-
-                # Look for inline and close
-                j = i + 1
-                while j < len(tokens):
-                    next_token = tokens[j]
-                    if next_token.type == "inline":
-                        block["inline_token"] = next_token
-                        block["inline_content"] = next_token.content
-                    elif next_token.nesting == -1 and (next_token.tag == tag_name or next_token.type == f"{token.type.replace('_open', '')}_close"):
-                        block["close_token"] = next_token
-                        block["is_complete"] = True
-                        i = j
-                        break
-                    elif next_token.nesting == 1:
-                        # Nested block - stop here
-                        i = j - 1
-                        break
-                    j += 1
-
-                blocks.append(block)
-
-            elif token.type == "fence" or token.type == "code_block":
-                # Self-contained code block
-                blocks.append({
-                    "tag_name": "code_block",
-                    "open_token": token,
-                    "inline_token": token,
-                    "inline_content": token.content,
-                    "close_token": token,
-                    "is_complete": True,
-                })
-
-            elif token.type == "hr":
-                # Self-contained hr
-                blocks.append({
-                    "tag_name": "hr",
-                    "open_token": token,
-                    "inline_token": None,
-                    "inline_content": "",
-                    "close_token": token,
-                    "is_complete": True,
-                })
-
-            i += 1
-
-        return blocks
-
-    def _process_token(self, token) -> None:
-        """
-        Route token to appropriate handler (non-incremental).
-
-        Args:
-            token: The markdown-it token
+        Handle an event by calling ctx_stack methods.
+        Returns the output for streaming.
         """
         self._index += 1
-        chunks = []
-        if token.map:
-            start_byte, end_byte = self._get_line_byte_range(token.map[0], token.map[1])
-            chunks = self._get_chunks_in_range(start_byte, end_byte)
-
-        if token.nesting == 1:
-            self._handle_open(token, chunks)
-        elif token.nesting == -1:
-            self._handle_close(token, chunks)
-        elif token.type == "inline":
-            self._handle_inline(token, chunks)
-        elif token.type == "fence" or token.type == "code_block":
-            self._handle_code_block(token, chunks)
-        elif token.type == "hr":
-            self._handle_hr(token, chunks)
-
-    # =========================================================================
-    # Handlers - Override these to build your block structure
-    # =========================================================================
-
-    def _handle_open(self, token, chunks: list[BlockChunk]) -> None:
-        """
-        Handle OPEN token (nesting=1).
-
-        Called ONCE when a block-level element opens.
-
-        Args:
-            token: The markdown-it token
-            chunks: BlockChunks that make up this opening
-
-        Token attributes:
-        - token.type: e.g., "heading_open"
-        - token.tag: e.g., "h1", "h2", "p", "blockquote"
-        - token.markup: e.g., "#" for h1, "##" for h2
-        - token.map: [start_line, end_line]
-        """
-        # Use token.tag for the actual HTML tag (h1, h2, p, etc.)
-        # Fall back to token.type without _open suffix
-        tag_name = token.tag if token.tag else token.type.replace("_open", "")
         if self._verbose:
-            print(f"{self._index} [OPEN] {tag_name} chunks={[c.content for c in chunks]} nesting={token.nesting}")        
-        if token.type == "heading_open":
-            depth = int(token.tag.replace("h", ""))
-            if not self._ctx_stack.is_empty() and depth <= self._ctx_stack.top().depth:
-                self._ctx_stack.pop()
-            self._ctx_stack.init(tag_name, {}, chunks, style="md", depth=depth)    
-        elif token.type == "paragraph_open":
-            self._ctx_stack.init(tag_name, {}, chunks, style="p", depth=token.nesting)
-        
+            print(f"{self._index}  [EVENT] {event.type} {event.tag} content={event.content!r}")
 
-    def _handle_close(self, token, chunks: list[BlockChunk]) -> None:
-        """
-        Handle CLOSE token (nesting=-1).
+        if event.type == "open":
+            return self._handle_open(event)
+        elif event.type == "delta":
+            return self._handle_delta(event)
+        elif event.type == "close":
+            return self._handle_close(event)
 
-        Called ONCE when a block-level element closes.
+        return None
 
-        Args:
-            token: The markdown-it token
-            chunks: BlockChunks that make up this closing
+    def _handle_open(self, event: MdEvent) -> Block | None:
+        """Handle OPEN event - initialize new block."""
+        style = "md" if event.tag.startswith('h') else "p"
+        # Only pass chunks for elements with markup (headings)
+        # Paragraphs have no markup - content comes via delta events
+        chunks = [event.chunk] if event.tag.startswith('h') and event.content else []
+        self._ctx_stack.init(event.tag, {}, chunks, style, event.level)
+        return self._ctx_stack.top().block
 
-        Token attributes:
-        - token.type: e.g., "heading_close"
-        - token.tag: e.g., "h1", "h2", "p", "blockquote"
-        """
-        # Use token.tag for the actual HTML tag (h1, h2, p, etc.)
-        tag_name = token.tag if token and token.tag else (token.type.replace("_close", "") if token else "unknown")
-        if self._verbose:
-            print(f"{self._index} [CLOSE] {tag_name} chunks={[c.content for c in chunks]}")
-        if token.type == "heading_close":
-            # self._ctx_stack.
-            pass
-        elif token.type == "paragraph_close":
-            self._ctx_stack.pop()
+    def _handle_delta(self, event: MdEvent) -> list[BlockChunk] | None:
+        """Handle DELTA event - append content to current block."""
+        # Skip empty deltas
+        if not event.content:
+            return None
+        # Use the event's chunk which contains just the content
+        output = self._ctx_stack.append([event.chunk])
+        return output
 
-    def _handle_inline(self, token, chunks: list[BlockChunk]) -> None:
-        """
-        Handle full INLINE token (for non-incremental use).
-
-        Args:
-            token: The markdown-it token
-            chunks: BlockChunks that make up this content
-
-        Token attributes:
-        - token.content: full text content
-        - token.children: list of child tokens
-        """
-        if self._verbose:
-            print(f"{self._index} [INLINE] content={token.content!r} chunks={[c.content for c in chunks]}")
-        self._ctx_stack.append(chunks)
-
-    def _handle_inline_delta(self, new_content: str, token, chunks: list[BlockChunk]) -> None:
-        """
-        Handle INLINE delta - only the NEW content since last parse.
-
-        Args:
-            new_content: Only the new text (delta from previous)
-            token: The full inline token (for context)
-            chunks: BlockChunks that make up the NEW content only
-        """
-        if self._verbose:
-            print(f"{self._index} [INLINE_DELTA] +{new_content!r} chunks={[c.content for c in chunks]}")
-        self._ctx_stack.append(chunks)
-
-    def _handle_code_block(self, token, chunks: list[BlockChunk]) -> None:
-        """
-        Handle CODE BLOCK token (fence or code_block).
-
-        Args:
-            token: The markdown-it token
-            chunks: BlockChunks that make up this code block
-
-        Token attributes:
-        - token.info: language (e.g., "python")
-        - token.content: the code content
-        - token.markup: "```" or "~~~"
-        """
-        if self._verbose:   
-            print(f"[CODE_BLOCK] lang={token.info!r} chunks={[c.content for c in chunks]}")
-
-    def _handle_hr(self, token, chunks: list[BlockChunk]) -> None:
-        """
-        Handle HORIZONTAL RULE token.
-
-        Args:
-            token: The markdown-it token
-            chunks: BlockChunks that make up this hr
-
-        Token attributes:
-        - token.markup: "---" or "***" or "___"
-        """
-        if self._verbose:   
-            print(f"[HR] markup={token.markup!r} chunks={[c.content for c in chunks]}")
+    def _handle_close(self, event: MdEvent) -> Block | None:
+        """Handle CLOSE event - finalize block."""
+        result = self._ctx_stack.commit(event.tag, [event.chunk])
+        return result
 
 
 # =============================================================================

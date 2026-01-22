@@ -1,4 +1,5 @@
-from typing import Any
+from typing import Any, Union, get_origin, get_args
+from types import UnionType, NoneType
 from pydantic import BaseModel
 from datetime import datetime, date, time
 from enum import Enum
@@ -32,16 +33,38 @@ class UnknownType(Exception):
     pass
 
 def type_to_str(value_type: type) -> str:
+    # Handle Union types (including X | None syntax)
+    origin = get_origin(value_type)
+    if origin is Union or isinstance(value_type, UnionType):
+        args = get_args(value_type)
+        # Filter out NoneType to get the actual types
+        non_none_args = [arg for arg in args if arg is not NoneType]
+        is_optional = len(non_none_args) < len(args)
+
+        # Convert each non-None type to string
+        type_strs = [type_to_str(arg) for arg in non_none_args]
+        result = " | ".join(type_strs)
+
+        if is_optional:
+            result = f"{result} | None"
+        return result
+
+    # Check registry first
     val = REVERSE_TYPE_REGISTRY.get(value_type, None)
-    if val is None:
-        raise UnknownType(f"Unknown type: {value_type}")
-    return val
+    if val is not None:
+        return val
+
+    # For class types not in registry, use the class name
+    if isinstance(value_type, type):
+        return value_type.__name__
+
+    raise UnknownType(f"Unknown type: {value_type}")
 
 def type_to_str_or_none(value_type: type) -> str | None:
-    val = REVERSE_TYPE_REGISTRY.get(value_type, None)
-    if val is None:
+    try:
+        return type_to_str(value_type)
+    except UnknownType:
         return None
-    return val
 
 
 
