@@ -8,9 +8,10 @@ class TestBlockChunkMetadata:
 
     def test_raw_append_with_style(self):
         block = Block()
-        block._raw_append("<tag>", style="xml-open")
-        block._raw_append("content", style="content")
-        block._raw_append("</tag>", style="xml-close")
+        # Use public append method with style parameter
+        block.append("<tag>", style="xml-open")
+        block.append("content", style="content")
+        block.append("</tag>", style="xml-close")
 
         assert block.text == "<tag>content</tag>"
         assert block.get_region_text('xml-open') == "<tag>"
@@ -103,11 +104,14 @@ class TestBlockFromChunks:
 
         assert "<item>\n" == item
 
+        # Chunk boundaries from source blocks are preserved
+        # prefix: "<" (1 chunk), content: "item" (1 chunk), postfix: ">" + "\n" (2 chunks)
         item_chunks = item.get_chunks()
-        assert len(item_chunks) == 3
+        assert len(item_chunks) == 4
         assert item_chunks[0] == "<"
         assert item_chunks[1] == "item"
-        assert item_chunks[2] == ">\n"
+        assert item_chunks[2] == ">"
+        assert item_chunks[3] == "\n"
 
 
 class TestBlockChunkObject:

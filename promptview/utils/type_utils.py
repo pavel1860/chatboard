@@ -5,10 +5,12 @@ from enum import Enum
 from promptview.model.base.base_namespace import Serializable
 
 
+
 SerializableType = int | str | float | bool | list | dict | datetime | date | time | BaseModel
 
 
 DeserializableType = dict | list | str | int | float | bool
+
 
 
 TYPE_REGISTRY = {

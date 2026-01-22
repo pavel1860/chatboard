@@ -263,6 +263,12 @@ class Mutator(metaclass=MutatorMeta):
             if chunk.style is None:
                 content_parts.append(block._text[chunk.start:chunk.end])
         return "".join(content_parts)
+    
+    
+    def get_style(self):
+        if not self.__class__.styles:
+            return None
+        return self.__class__.styles[0]
 
     def content_chunks(self) -> list[BlockChunk]:
         """
@@ -465,9 +471,25 @@ class MarkdownMutator(BlockMutator):
     
     @classmethod
     def init(cls, block: Block) -> Block:
-        block = block.copy_head()
-        block.prepend("\n" + "#" * (block.path.depth + 1) + " ", style="md")
-        return block
+        prefix, content = block.split_prefix(r"#+\s+", regex=True)        
+        if not prefix:
+            prefix = "#" * (block.path.depth + 1) + " "
+        
+        content.prepend(prefix, style="md")
+        return content
+        # if content:
+        #     content.prepend(prefix, style="md")
+        #     return content
+        # else:
+        #     return prefix.apply_style("md")            
+        
+        
+        
+    # @classmethod
+    # def init(cls, block: Block) -> Block:
+    #     block = block.copy_head()        
+    #     block.prepend("\n" + "#" * (block.path.depth + 1) + " ", style="md")
+    #     return block
     
     # def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
     #     prev = child.prev()

@@ -61,38 +61,21 @@ def chunks_contain(chunks: list[BlockChunk], s: str) -> bool:
     return s in full_text
 
 
-def split_chunks(
+def _split_chunks_at_positions(
     chunks: list[BlockChunk],
-    sep: str
+    sep_idx: int,
+    sep_end_idx: int
 ) -> tuple[list[BlockChunk], list[BlockChunk], list[BlockChunk]]:
     """
-    Split chunks on a separator that may span multiple chunks.
+    Split chunks at the given position range.
 
     Args:
         chunks: List of Chunk objects
-        sep: Separator string to split on
+        sep_idx: Start position of separator in full text
+        sep_end_idx: End position of separator in full text
 
     Returns: (before, separator, after)
-        - before: Chunk objects before the separator
-        - separator: Chunk objects that make up the separator (empty if not found)
-        - after: Chunk objects after the separator
-
-    Note: If separator falls mid-chunk, that chunk is split using Chunk.split()
     """
-    if not chunks or not sep:
-        return list(chunks), [], []
-
-    # Build full text
-    full_text = "".join(c.content for c in chunks)
-
-    # Find separator
-    sep_idx = full_text.find(sep)
-    if sep_idx == -1:
-        return list(chunks), [], []
-
-    sep_end_idx = sep_idx + len(sep)
-
-    # Track position as we iterate
     pos = 0
     before: list[BlockChunk] = []
     separator: list[BlockChunk] = []
@@ -144,6 +127,73 @@ def split_chunks(
         pos = chunk_end
 
     return before, separator, after
+
+
+def split_chunks(
+    chunks: list[BlockChunk],
+    sep: str
+) -> tuple[list[BlockChunk], list[BlockChunk], list[BlockChunk]]:
+    """
+    Split chunks on a separator that may span multiple chunks.
+
+    Args:
+        chunks: List of Chunk objects
+        sep: Separator string to split on
+
+    Returns: (before, separator, after)
+        - before: Chunk objects before the separator
+        - separator: Chunk objects that make up the separator (empty if not found)
+        - after: Chunk objects after the separator
+
+    Note: If separator falls mid-chunk, that chunk is split using Chunk.split()
+    """
+    if not chunks or not sep:
+        return list(chunks), [], []
+
+    # Build full text
+    full_text = "".join(c.content for c in chunks)
+
+    # Find separator
+    sep_idx = full_text.find(sep)
+    if sep_idx == -1:
+        return list(chunks), [], []
+
+    sep_end_idx = sep_idx + len(sep)
+    return _split_chunks_at_positions(chunks, sep_idx, sep_end_idx)
+
+
+def split_chunks_regex(
+    chunks: list[BlockChunk],
+    pattern: str
+) -> tuple[list[BlockChunk], list[BlockChunk], list[BlockChunk]]:
+    """
+    Split chunks on a regex pattern that may span multiple chunks.
+
+    Args:
+        chunks: List of Chunk objects
+        pattern: Regex pattern to split on
+
+    Returns: (before, separator, after)
+        - before: Chunk objects before the match
+        - separator: Chunk objects that make up the matched text (empty if not found)
+        - after: Chunk objects after the match
+
+    Note: If match falls mid-chunk, that chunk is split using Chunk.split()
+    """
+    if not chunks or not pattern:
+        return list(chunks), [], []
+
+    # Build full text
+    full_text = "".join(c.content for c in chunks)
+
+    # Find pattern match
+    match = re.search(pattern, full_text)
+    if match is None:
+        return list(chunks), [], []
+
+    sep_idx = match.start()
+    sep_end_idx = match.end()
+    return _split_chunks_at_positions(chunks, sep_idx, sep_end_idx)
 
 
 class BlockChildren(UserList["Block"]):
@@ -248,17 +298,8 @@ class Block:
         self.stylizers: list[Stylizer] = []
         # Handle initial content
         if content is not None:
-            if isinstance(content, Block):
-                # Copy content from another block
-                content = content.get_chunks()
-                # self._raw_append(content.text)
-            if isinstance(content, (list, tuple)) and all(isinstance(item, BlockChunk) for item in content):
-                for chunk in content:
-                    self._raw_append(chunk.content, logprob=chunk.logprob, style=chunk.style)
-            elif isinstance(content, (str, int, float, bool)):
-                self._raw_append(str(content))
-            else:
-                raise ValueError(f"Invalid content type: {type(content)}")
+            chunks = self.promote_content(content)
+            self._raw_append(chunks)
             
         if children is not None:
             for child in children:
@@ -457,19 +498,23 @@ class Block:
         Append content to this block.
 
         Delegates to mutator for style-aware placement.
+        When content is a Block, preserves chunk metadata (logprob, style)
+        unless overridden by parameters.
         """
         if use_mutator_style:
             style = self.mutator.styles[0]
-        if isinstance(content, Block):
-            content = content.text
-        elif not isinstance(content, str):
-            content = str(content)
+
+        chunks = self.promote_content(content, style=style, logprob=logprob)
+
         events = []
         if self._should_use_mutator("on_append"):
-            for event in self.mutator.on_append(content):
+            # Get text content for mutator hooks
+            text_content = "".join(c.content for c in chunks)
+            for event in self.mutator.on_append(text_content):
                 events.append(event)
-        event = self._raw_append(content, style=style, logprob=logprob)
-        events.append(event)
+
+        result_chunks = self._raw_append(chunks)
+        events.extend(result_chunks)
         return events
 
 
@@ -478,17 +523,16 @@ class Block:
         content: ContentType,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> BlockChunk:
+    ) -> list[BlockChunk]:
         """
         Prepend content to this block.
 
         Delegates to mutator for style-aware placement.
+        When content is a Block, preserves chunk metadata (logprob, style)
+        unless overridden by parameters.
         """
-        if isinstance(content, Block):
-            content = content.text
-        elif not isinstance(content, str):
-            content = str(content)
-        return self._raw_prepend(content, style=style, logprob=logprob)
+        chunks = self.promote_content(content, style=style, logprob=logprob)
+        return self._raw_prepend(chunks)
 
 
     def _should_use_mutator(self, method: str) -> bool:
@@ -516,6 +560,7 @@ class Block:
         self,
         child: Block | ContentType = None,
         to_body: bool = True,
+        copy: bool = True,
         **kwargs
     ) -> Block:
         """
@@ -530,7 +575,7 @@ class Block:
         from .transform import is_transforming
         if child is None:
             child = Block(**kwargs)
-        elif not isinstance(child, Block):
+        elif not isinstance(child, Block) and copy:
             child = Block(child, **kwargs)
 
         child = self._raw_append_child(child, to_body=to_body)
@@ -705,7 +750,8 @@ class Block:
             new_block = Block(self._text)
             for chunk in self.chunks:
                 new_block.chunks.append(chunk.copy())
-            new_block._raw_append(other)
+            chunks = new_block.promote_content(other)
+            new_block._raw_append(chunks)
             return new_block
         return NotImplemented
 
@@ -746,7 +792,8 @@ class Block:
                 self.chunks.append(new_chunk)
             return self
         elif isinstance(other, str):
-            self._raw_append(other)
+            chunks = self.promote_content(other)
+            self._raw_append(chunks)
             return self
         return NotImplemented
 
@@ -754,67 +801,142 @@ class Block:
     # Raw Text Operations (used by mutators)
     # =========================================================================
 
-    def _raw_append(
+    def promote_content(
         self,
-        content: str,
+        content: ContentType,
         style: str | None = None,
         logprob: float | None = None,
-    ) -> BlockChunk:
+    ) -> list[BlockChunk]:
         """
-        Low-level append to this block's local text.
+        Normalize any content type into a list of BlockChunks.
 
-        Appends content at the end of this block's text.
-        Creates chunk metadata with relative position.
+        Args:
+            content: str, int, float, bool, Block, or list[BlockChunk]
+            style: Optional style override (applied to all chunks if provided)
+            logprob: Optional logprob override (applied to all chunks if provided)
 
-        Returns a Chunk with the content and metadata.
+        Returns:
+            List of BlockChunk objects ready for _raw_append/_raw_prepend
+        """
+        # Already a list of chunks
+        if isinstance(content, list) and all(isinstance(c, BlockChunk) for c in content):
+            if style is None and logprob is None:
+                return content
+            return [
+                BlockChunk(
+                    c.content,
+                    style=style if style is not None else c.style,
+                    logprob=logprob if logprob is not None else c.logprob
+                )
+                for c in content
+            ]
+
+        # Block - extract its chunks
+        if isinstance(content, Block):
+            chunks = content.get_chunks()
+            if style is None and logprob is None:
+                return chunks
+            return [
+                BlockChunk(
+                    c.content,
+                    style=style if style is not None else c.style,
+                    logprob=logprob if logprob is not None else c.logprob
+                )
+                for c in chunks
+            ]
+
+        # Primitives → string → single chunk
+        if not isinstance(content, str):
+            content = str(content)
+        return [BlockChunk(content, style=style, logprob=logprob)]
+
+    def _raw_append(
+        self,
+        chunks: list[BlockChunk],
+    ) -> list[BlockChunk]:
+        """
+        Low-level append chunks to this block's local text.
+
+        Only handles index management and text concatenation.
+        Use promote_content() to convert ContentType to chunks first.
+
+        Args:
+            chunks: List of BlockChunk objects to append
+
+        Returns:
+            List of BlockChunk objects with updated metadata
         """
         target = self.head
+        results = []
 
-        # Create chunk metadata with relative position
-        rel_start = len(target._text)
-        rel_end = rel_start + len(content)
-        chunk_meta = ChunkMeta(start=rel_start, end=rel_end, logprob=logprob, style=style)
-        target.chunks.append(chunk_meta)
+        for chunk in chunks:
+            if not chunk.content:
+                continue
+            rel_start = len(target._text)
+            rel_end = rel_start + len(chunk.content)
+            chunk_meta = ChunkMeta(
+                start=rel_start,
+                end=rel_end,
+                logprob=chunk.logprob,
+                style=chunk.style
+            )
+            target.chunks.append(chunk_meta)
+            target._text += chunk.content
+            results.append(BlockChunk(content=chunk.content, meta=chunk_meta))
 
-        # Append to local text
-        target._text += content
-
-        return BlockChunk(content=content, meta=chunk_meta)
+        return results
 
     def _raw_prepend(
         self,
-        content: str,
-        style: str | None = None,
-        logprob: float | None = None,
-    ) -> BlockChunk:
+        chunks: list[BlockChunk],
+    ) -> list[BlockChunk]:
         """
-        Low-level prepend to this block's local text.
+        Low-level prepend chunks to this block's local text.
 
-        Prepends content at the start of this block's text.
+        Only handles index management and text concatenation.
+        Use promote_content() to convert ContentType to chunks first.
 
-        Returns a Chunk with the content and metadata.
+        Args:
+            chunks: List of BlockChunk objects to prepend
+
+        Returns:
+            List of BlockChunk objects with updated metadata
         """
         target = self.head
 
-        if not content:
-            chunk_meta = ChunkMeta(start=0, end=0, logprob=logprob, style=style)
-            target.chunks.insert(0, chunk_meta)
-            return BlockChunk(content="", meta=chunk_meta)
+        if not chunks:
+            return []
 
-        # Create chunk metadata at start (relative position 0)
-        chunk_meta = ChunkMeta(start=0, end=len(content), logprob=logprob, style=style)
+        # Filter out empty chunks
+        chunks = [c for c in chunks if c.content]
+        if not chunks:
+            return []
 
-        # Shift existing chunks in this block
-        delta = len(content)
+        # Calculate total length for shifting existing chunks
+        total_len = sum(len(c.content) for c in chunks)
+
+        # Shift existing chunks
         for existing_chunk in target.chunks:
-            existing_chunk.shift(delta)
+            existing_chunk.shift(total_len)
 
-        target.chunks.insert(0, chunk_meta)
+        # Insert new chunks at beginning
+        results = []
+        pos = 0
+        for i, chunk in enumerate(chunks):
+            chunk_meta = ChunkMeta(
+                start=pos,
+                end=pos + len(chunk.content),
+                logprob=chunk.logprob,
+                style=chunk.style
+            )
+            target.chunks.insert(i, chunk_meta)
+            pos += len(chunk.content)
+            results.append(BlockChunk(content=chunk.content, meta=chunk_meta))
 
         # Prepend to local text
-        target._text = content + target._text
+        target._text = "".join(c.content for c in chunks) + target._text
 
-        return BlockChunk(content=content, meta=chunk_meta)
+        return results
 
     def _raw_insert(
         self,
@@ -894,7 +1016,7 @@ class Block:
                 if block._role is None:
                     block._role = parent_role
 
-    def _raw_append_child(self, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
+    def _raw_append_child(self, child: Block | None = None, content: ContentType = None, to_body: bool = True) -> Block:
         """
         Low-level append child.
 
@@ -906,7 +1028,8 @@ class Block:
         if child is None:
             child = Block()
             if content:
-                child._raw_append(content)
+                chunks = child.promote_content(content)
+                child._raw_append(chunks)
 
         target = self.body if to_body else self.children
         self._connect_block(child, target.parent)
@@ -914,7 +1037,7 @@ class Block:
 
         return child
 
-    def _raw_prepend_child(self, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
+    def _raw_prepend_child(self, child: Block | None = None, content: ContentType = None, to_body: bool = True) -> Block:
         """
         Low-level prepend child.
 
@@ -926,7 +1049,8 @@ class Block:
         if child is None:
             child = Block()
             if content:
-                child._raw_append(content)
+                chunks = child.promote_content(content)
+                child._raw_append(chunks)
 
         target = self.body if to_body else self.children
         self._connect_block(child, target.parent)
@@ -934,7 +1058,7 @@ class Block:
 
         return child
 
-    def _raw_insert_child(self, index: int, child: Block | None = None, content: str | None = None, to_body: bool = True) -> Block:
+    def _raw_insert_child(self, index: int, child: Block | None = None, content: ContentType = None, to_body: bool = True) -> Block:
         """
         Low-level insert child at index.
 
@@ -947,7 +1071,8 @@ class Block:
         if child is None:
             child = Block()
             if content:
-                child._raw_append(content)
+                chunks = child.promote_content(content)
+                child._raw_append(chunks)
 
         target = self.body if to_body else self.children
 
@@ -1072,8 +1197,7 @@ class Block:
         else:
             block = Block()
 
-        for chunk in chunks:
-            block._raw_append(chunk.content, logprob=chunk.logprob, style=chunk.style)
+        block._raw_append(chunks)
 
         return block
 
@@ -1081,6 +1205,7 @@ class Block:
         self,
         sep: str,
         inherit: bool = False,
+        regex: bool = False,
     ) -> tuple["Block", "Block", "Block"]:
         """
         Split this block's chunks on a separator.
@@ -1089,14 +1214,18 @@ class Block:
         The separator may span multiple chunks.
 
         Args:
-            sep: Separator string to split on
+            sep: Separator string or regex pattern to split on
             inherit: If True, copy role, tags, style, attrs to new blocks
+            regex: If True, treat sep as a regex pattern
 
         Returns:
             Tuple of (before, separator, after) Blocks
         """
         chunks = self.get_chunks()
-        before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
+        if regex:
+            before_chunks, sep_chunks, after_chunks = split_chunks_regex(chunks, sep)
+        else:
+            before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
 
         before_block = self._create_block_from_chunks(before_chunks, inherit=inherit)
         sep_block = self._create_block_from_chunks(sep_chunks, inherit=inherit)
@@ -1109,20 +1238,25 @@ class Block:
         sep: str,
         inherit: bool = False,
         create_on_empty: bool = False,
+        regex: bool = False,
     ) -> tuple["Block", "Block"]:
         """
         Split this block's chunks, returning (before + separator, after).
 
         Args:
-            sep: Separator string to split on
+            sep: Separator string or regex pattern to split on
             inherit: If True, copy role, tags, style, attrs to new blocks
             create_on_empty: If True and separator not found, create a block with the separator
+            regex: If True, treat sep as a regex pattern
 
         Returns:
             Tuple of (prefix_block, remainder_block)
         """
         chunks = self.get_chunks()
-        before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
+        if regex:
+            before_chunks, sep_chunks, after_chunks = split_chunks_regex(chunks, sep)
+        else:
+            before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
 
         if not sep_chunks:
             if create_on_empty:
@@ -1142,20 +1276,25 @@ class Block:
         sep: str,
         inherit: bool = False,
         create_on_empty: bool = False,
+        regex: bool = False,
     ) -> tuple["Block", "Block"]:
         """
         Split this block's chunks, returning (before, separator + after).
 
         Args:
-            sep: Separator string to split on
+            sep: Separator string or regex pattern to split on
             inherit: If True, copy role, tags, style, attrs to new blocks
             create_on_empty: If True and separator not found, create a block with the separator
+            regex: If True, treat sep as a regex pattern
 
         Returns:
             Tuple of (content_block, postfix_block)
         """
         chunks = self.get_chunks()
-        before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
+        if regex:
+            before_chunks, sep_chunks, after_chunks = split_chunks_regex(chunks, sep)
+        else:
+            before_chunks, sep_chunks, after_chunks = split_chunks(chunks, sep)
 
         if not sep_chunks:
             if create_on_empty:
@@ -1438,9 +1577,10 @@ class Block:
         """Check if this block's text ends with a newline."""
         return self._text.endswith("\n")
 
-    def add_newline(self, style: str | None = None) -> BlockChunk:
+    def add_newline(self, style: str | None = None) -> list[BlockChunk]:
         """Add a newline to the end of this block."""
-        return self._raw_append("\n", style=style)
+        chunks = self.promote_content("\n", style=style)
+        return self._raw_append(chunks)
 
     # =========================================================================
     # String Operations
@@ -1938,6 +2078,8 @@ class Block:
 
     def debug_tree(self, indent: int = 0) -> str:
         """Generate debug representation of block tree."""
+        from .schema import BlockSchema
+        from ...utils.type_utils import type_to_str_or_none, type_to_str
         prefix = "  " * indent
         cls_name = self.__class__.__name__
         parts = [f"{prefix}{cls_name}[{self.path}]("]
@@ -1957,6 +2099,13 @@ class Block:
             parts.append(f", tags={self.tags}")
         if self.role:
             parts.append(f", role={self.role!r}")
+            
+        if isinstance(self, BlockSchema):
+            if self.type is Block:
+                parts.append(f", type=Block")
+            else:
+                parts.append(f", type={type_to_str_or_none(self.type)}")
+            
         if self.style:
             parts.append(f", style={self.style}")
 
