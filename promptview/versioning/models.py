@@ -944,6 +944,7 @@ class BlockModel(Model):
     is_rendered: bool = ModelField(default=False)  # Mutator render state
     block_type: str = ModelField(default="block")  # "block", "schema", "list", "list_schema"
     item_name: str | None = ModelField(default=None)  # For BlockListSchema
+    key: str | None = ModelField(default=None) # For BlockListSchema
     path: str = ModelField(default="")  # Index path e.g., "0.1.2"
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 

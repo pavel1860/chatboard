@@ -213,7 +213,10 @@ class BlockChildren(UserList["Block"]):
     def __getitem__(self, index: slice) -> Self: ...
 
     def __getitem__(self, index: SupportsIndex | slice) -> 'Block | Self':
-        result = self.data[index]
+        try:
+            result = self.data[index]
+        except IndexError:
+            raise IndexError(f"{self.parent} has no child at index {index}")
         if isinstance(index, slice):
             return self.__class__(self.parent, result)
         return result
@@ -1658,7 +1661,7 @@ class Block:
         for block in self.iter_depth_first():
             if tag in block.tags:
                 return block
-        raise ValueError(f"Block with tag {tag} not found")
+        raise ValueError(f"Block with tag '{tag}' not found")
     
     
     def get_index(self, index: int | tuple[int,...]) -> Block:
@@ -1757,6 +1760,21 @@ class Block:
         # self._raw_append_child(schema)
         return self.append_child(schema)
         return schema
+    
+    def schema(
+        self,
+        name: str | None = None,
+        type: Type | None = None,
+        role: str | None = None,
+        tags: list[str] | None = None,
+        style: str | list[str] | None = None,
+        attrs: dict[str, Any] | None = None,
+        is_required: bool = True,
+    ) -> "BlockSchema":
+        from .schema import BlockSchema
+        schema = BlockSchema(name, type=type, role=role, tags=tags, style=style, attrs=attrs, is_required=is_required)
+        # self._raw_append_child(schema)
+        return self.append_child(schema)
     
     @classmethod
     def schema_view(

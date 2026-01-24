@@ -1109,10 +1109,17 @@ class StreamController(ObservableProcess):
         """
         from ..block import Block
         bound, kwargs = await self._resolve_dependencies()
+        
+        
+        
+        load_filepath = self._load_filepath
+        if self.ctx is not None:
+            if load_filepath is None:
+                load_filepath = self.ctx.load_cache.get(self._name)
 
         # Auto-cache: determine cache path from context if not explicitly set
         cache_path = None
-        if self._load_filepath is None and self._save_filepath is None:
+        if load_filepath is None and self._save_filepath is None:
             cache_dir = self.ctx.cache_dir
             if cache_dir is not None:
                 # Compute cache key from bound arguments
@@ -1122,14 +1129,14 @@ class StreamController(ObservableProcess):
                 # Check if cache exists
                 if os.path.exists(cache_path):
                     # Load from cache
-                    self._load_filepath = cache_path
+                    load_filepath = cache_path
                 else:
                     # Save to cache
                     self._save_filepath = cache_path
 
         # Wrap in Stream process and pipe through Accumulator
-        if self._load_filepath is not None:
-            stream = Stream.load(self._load_filepath, delay=self._load_delay or 0.1)
+        if load_filepath is not None:
+            stream = Stream.load(load_filepath, delay=self._load_delay or 0.05)
         else:
             stream = self._init_stream(bound.args, bound.kwargs)
             # gen_instance = self._gen_func(*bound.args, **bound.kwargs)

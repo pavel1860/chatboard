@@ -131,7 +131,7 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
     The blocks dict is keyed by Merkle hash, spans dict by content hash.
     Duplicate subtrees will naturally have same hash and overwrite.
     """
-    from ..block.block12 import BlockSchema
+    from ..block.block12 import BlockSchema, BlockList, BlockListSchema
 
     all_spans: dict[str, dict] = {}
     all_blocks: dict[str, dict] = {}
@@ -140,6 +140,10 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
         """Determine the block type string."""
         if isinstance(blk, BlockSchema):
             return "schema"
+        elif isinstance(blk, BlockList):
+            return "list"
+        elif isinstance(blk, BlockListSchema):
+            return "list_schema"
         return "block"
 
     def process_block(blk: "Block", path: str = "") -> str:
@@ -175,6 +179,12 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
         name = None
         if isinstance(blk, BlockSchema):
             name = blk.name
+            
+        item_name = None
+        key = None
+        if isinstance(blk, BlockListSchema):
+            item_name = blk.item_name
+            key = blk.key
 
         # Compute Merkle hash
         block_id = compute_block_hash(
@@ -202,7 +212,8 @@ def dump_block(block: "Block") -> tuple[dict, dict[str, dict], dict[str, dict]]:
             "children": child_ids,
             "is_rendered": False,
             "block_type": block_type,
-            "item_name": None,
+            "item_name": item_name,
+            "key": key,
             "path": path,
         }
 
@@ -232,7 +243,7 @@ def load_block(
 
     Each block gets its own local text from its span. No shared string.
     """
-    from ..block.block12 import Block, BlockSchema, ChunkMeta
+    from ..block.block12 import Block, BlockSchema, ChunkMeta, BlockList, BlockListSchema
     from ..block.block12.mutator import MutatorMeta
 
     def get_span_data(block_data: dict) -> tuple[str, list[dict]]:
@@ -255,6 +266,7 @@ def load_block(
 
     def create_block_instance(block_data: dict) -> "Block":
         """Create a Block/BlockSchema instance with metadata and resolved mutator."""
+        load_mutator = True
         block_type = block_data.get("block_type", "block")
         styles = block_data.get("styles") or []
         tags = block_data.get("tags") or []
@@ -270,6 +282,25 @@ def load_block(
                 style=styles,
                 attrs=attrs,
             )
+        elif block_type == "list":
+            load_mutator = False
+            blk = BlockList(
+                role=role,
+                tags=tags,
+                style=styles,
+                attrs=attrs,
+            )
+        elif block_type == "list_schema":
+            load_mutator = False
+            blk = BlockListSchema(
+                item_name=block_data["item_name"],
+                name=block_data["name"],
+                key=block_data.get("key"),
+                role=role,
+                tags=tags,
+                style=styles,
+                attrs=attrs,
+            )
         else:
             blk = Block(
                 role=role,
@@ -278,10 +309,11 @@ def load_block(
                 attrs=attrs,
             )
 
+        if load_mutator:
         # Resolve and attach mutator from styles
-        mutator_config = MutatorMeta.resolve(styles)
-        blk.mutator = mutator_config.mutator(blk)
-        blk.stylizers = [stylizer() for stylizer in mutator_config.stylizers]
+            mutator_config = MutatorMeta.resolve(styles)
+            blk.mutator = mutator_config.mutator(blk)
+            blk.stylizers = [stylizer() for stylizer in mutator_config.stylizers]
 
         return blk
 
@@ -537,6 +569,7 @@ async def insert_block(
                     blk.get("is_rendered", False),
                     blk.get("block_type", "block"),
                     blk.get("item_name"),
+                    blk.get("key"),
                     blk.get("path", ""),
                     dt.datetime.now(),
                 )
@@ -544,8 +577,8 @@ async def insert_block(
             ]
             await tx.executemany(
                 """INSERT INTO blocks
-                   (id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, block_type, item_name, path, created_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                   (id, span_id, role, tags, styles, name, type_name, attrs, children, is_rendered, block_type, item_name, key, path, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                    ON CONFLICT (id) DO NOTHING""",
                 block_rows
             )

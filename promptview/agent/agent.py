@@ -2,7 +2,7 @@ from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, T
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from ..prompt import PipeController
-from ..prompt.context import Context
+from ..prompt.context import Context, VerbosityLevel
 from ..prompt.flow_components import EventLogLevel, FlowRunner
 from ..block.util import StreamEvent
 from ..block import Block
@@ -267,15 +267,17 @@ class Agent(Generic[P]):
         branch: "Branch | None" = None,         
         auto_commit: bool = True,
         level: Literal["chunk", "span", "turn"] = "chunk",      
-        verbose: bool = True,
+        verbose: set[VerbosityLevel] | None = None,
+        load_cache: dict[str, str] | None = None,
         **kwargs: dict,
     ):
-        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id)
+        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
         if state is not None:
             ctx.state = state
+        print_events = verbose and "events" in verbose
         async with ctx.start_turn(auto_commit=auto_commit) as turn:            
             async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
-                if verbose:
+                if print_events:
                     print("--------------------------------")
                     if isinstance(event, Block):
                         event.print()

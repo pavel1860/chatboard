@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from ..block import BlockChunk, Block, BlockList
 # from ..prompt.flow_components import StreamController
-from ..prompt.fbp_process import StreamController, Stream, compute_stream_cache_key, Accumulator
+from ..prompt.fbp_process import StreamController, Stream, compute_stream_cache_key, Accumulator, Process
 from dataclasses import dataclass
 
 
@@ -58,7 +58,8 @@ class LLMStream(Stream):
         """
         from ..block import BlockChunk
         for i in range(10):
-            ip = await super().__anext__()
+            # ip = await super().__anext__()
+            ip = await Process.__anext__(self)
             
             if isinstance(ip, LLMResponse):
                 self.response = ip

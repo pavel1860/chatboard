@@ -95,47 +95,9 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         return schema
            
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:
-        # self._block = Block(
-        #     role=self.schema.role,
-        #     tags=list(self.schema.tags),
-        #     style=list(self.schema.style),
-        #     attrs=dict(attrs) if attrs else dict(self.schema.attrs),
-        # )
-        # self.append(chunks)
         self._block = self.schema.init_partial(chunks, is_streaming=True)
         return [self]
     
-    # def append2(self, chunks: list[BlockChunk]):
-    #     for chunk in chunks:
-    #         if chunk.content:
-    #             if not self._content_started:
-    #                 if chunk == "\n":
-    #                     self.block.append(chunk.content, logprob=chunk.logprob, use_mutator_style=True)
-    #                 self._content_started = True
-    #                 self.block.append_child("")
-    #             events = self.block.tail.append(chunk.content, logprob=chunk.logprob)
-    #     return chunks
-    
-    
-    # def append(self, chunks: list[BlockChunk]):        
-    #     for chunk in chunks:
-    #         style = None
-    #         if chunk.content:
-    #             if not self.block.mutator._initialized:
-    #                 if not chunk.is_newline():
-    #                     self.add_newline()
-    #                     self.block.mutator._initialized = True
-    #             else:
-    #                 if self._should_add_newline:
-    #                     self.add_newline()
-    #                 if chunk.is_newline():
-    #                     self._should_add_newline = True
-    #                     style = self.block.mutator.styles[0]                
-                    
-    #             # elif chunk.isspace():
-    #             #     style = self.block.mutator.styles[0]
-    #             events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)                
-    #     return chunks
     
     def append(self, chunks: list[BlockChunk]):  
         block = None      
@@ -261,8 +223,8 @@ class ContextStack:
     def curr_block(self) -> Block:
         return self.top().block
     
-    def top(self) -> "SchemaCtx":
-        if self._pending_pop is not None:
+    def top(self, use_pending: bool = True) -> "SchemaCtx":
+        if use_pending and self._pending_pop is not None:
             return self._pending_pop
         return self._stack[-1]
     
@@ -275,6 +237,8 @@ class ContextStack:
         
     def pop(self) -> SchemaCtx:
         schema_ctx = self._stack.pop()
+        if isinstance(schema_ctx, BlockListSchemaCtx):
+            schema_ctx = self._stack.pop()
         self._pending_pop = schema_ctx
         return schema_ctx
     
@@ -313,6 +277,8 @@ class ContextStack:
     
     def commit(self, name: str, chunks: list[BlockChunk]):
         chunks = self._append_pending_chunks(chunks)
+        if self.top(False).schema.name != name:
+            print(f"Expected {name} but got {self.top().schema.name}")
         schema_ctx = self.pop()
         postfix = schema_ctx.commit(name, chunks)                
         self._commited_stack.append(schema_ctx)        
@@ -426,6 +392,7 @@ class XmlParser(Process):
             self._wrapper_schema._raw_append_child(self.schema)
         self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, root_name=self._root_tag)
         self._index = 0
+        self._exception_to_raise: Exception | None = None
 
         # Start with synthetic root
         self.feed("<{}>".format(self._root_tag))
@@ -472,7 +439,15 @@ class XmlParser(Process):
 
         Consumes chunks from upstream until an event is ready to output.
         """
-        # Return queued output if available
+        # On Exception, consume the entire stream
+        if self._exception_to_raise:
+            try:
+                for i in range(1000):
+                    upstream_chunk = await super().__anext__()
+            except StopAsyncIteration:
+                raise self._exception_to_raise
+            
+        # Return queued output if available    
         if self._output_queue:
             return self._output_queue.pop(0)
         elif self._is_stream_exhausted:
@@ -500,6 +475,8 @@ class XmlParser(Process):
                 if self._output_queue:
                     return self._output_queue.pop(0)
                 raise
+            except Exception as e:
+                self._exception_to_raise = e                
 
         if self._output_queue:
             return self._output_queue.pop(0)
@@ -540,10 +517,11 @@ class XmlParser(Process):
             return
         self._is_closed = True
 
-        if self._has_synthetic_root:
-            self.feed("</{}>".format(self._root_tag))
-        self._parser.Parse(b"", True)
-        self._flush_pending(self._total_bytes)
+        if not self._exception_to_raise:
+            if self._has_synthetic_root:
+                self.feed("</{}>".format(self._root_tag))
+            self._parser.Parse(b"", True)
+            self._flush_pending(self._total_bytes)
 
     # -------------------------------------------------------------------------
     # Schema lookup
@@ -629,8 +607,8 @@ class XmlParser(Process):
         chunks = self._get_chunks_in_range(start_byte, end_byte)
         self._pending = None
 
-        if not chunks:
-            return
+        # if not chunks:
+        #     return
 
         if self._verbose:
             if event_type == "start":
@@ -659,12 +637,14 @@ class XmlParser(Process):
         """Handle start tag event from expat."""
         current_pos = self._parser.CurrentByteIndex
         self._flush_pending(current_pos)
+        # print("start", name, attrs)
         self._pending = ("start", (name, attrs), current_pos)
 
     def _on_end(self, name: str):
         """Handle end tag event from expat."""
         current_pos = self._parser.CurrentByteIndex
         self._flush_pending(current_pos)
+        # print("end", name)
         self._pending = ("end", name, current_pos)
 
     def _on_chardata(self, data: str):

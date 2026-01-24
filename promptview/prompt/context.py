@@ -58,12 +58,13 @@ class StartEval:
 class ContextError(Exception):
     pass
 
-
+VerbosityLevel = Literal["parser", "stream", "span", "turn"]
 
 class Context(BaseModel):
     branch_id: int | None = None
     turn_id: int | None = None
     cache_dir: str | None = None
+    load_cache: dict[str, str] | None = None
     _request: "Request | None" = None
     _auth: AuthModel | None = None
     _ctx_models: dict[str, Model] = {}
@@ -92,8 +93,9 @@ class Context(BaseModel):
         request: "Request | None" = None,
         auth: AuthModel | None = None,
         eval_ctx: "EvaluationContext | None" = None,
-        verbose: bool = False,  
-        cache_dir: str | None = None,      
+        verbose: VerbosityLevel | None = None,  
+        cache_dir: str | None = None,
+        load_cache: dict[str, str] | None = None,
     ):
         super().__init__()
         self._ctx_models = {m.__class__.__name__:m for m in models}
@@ -115,8 +117,9 @@ class Context(BaseModel):
         self.events = []
         self.message = message
         self.state = state
-        self._verbose = verbose
+        self._verbose = verbose or set()
         self.cache_dir = cache_dir or CACHE_DIR
+        self.load_cache = load_cache or {}
         
     @property
     def request_id(self):
@@ -762,5 +765,5 @@ class Context(BaseModel):
     
     
     
-    def get_verbosity(self, target: Literal["parser"]) -> bool:
-        return self._verbose
+    def get_verbosity(self, target: VerbosityLevel) -> bool:
+        return target in self._verbose

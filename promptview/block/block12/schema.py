@@ -45,7 +45,7 @@ class BlockSchema(Block):
         # <response>Hello</response>
     """
 
-    __slots__ = ["name", "_type", "is_required", "is_root"]
+    __slots__ = ["name", "_type", "is_required", "is_root", "is_virtual"]
 
     def __init__(
         self,
@@ -58,6 +58,7 @@ class BlockSchema(Block):
         is_required: bool = True,
         attrs: dict[str, Any] | None = None,
         is_root: bool = False,
+        is_virtual: bool = False,
     ):
         """
         Create a block schema.
@@ -80,7 +81,7 @@ class BlockSchema(Block):
 
         # Initialize Block with name as content
         super().__init__(
-            content=name if not is_root else None,
+            content=name if not is_root and not is_virtual else None,
             role=role,
             tags=tags,
             style=style,
@@ -92,6 +93,7 @@ class BlockSchema(Block):
         self._type = type
         self.is_required = is_required
         self.is_root = is_root
+        self.is_virtual = is_virtual
         
     # -------------------------------------------------------------------------
     # Schema Properties
@@ -100,7 +102,7 @@ class BlockSchema(Block):
     @property
     def is_wrapper(self) -> bool:
         """True if this is a wrapper schema (no name)."""
-        return self.name is None or self.is_root
+        return self.name is None or self.is_root or self.is_virtual
 
     @property
     def type(self) -> Type | None:
@@ -626,10 +628,11 @@ class BlockListSchema(BlockSchema):
             name=list_name,
             type=type,
             style=style,
-            tags=tags,
+            tags=[item_name] if name is None else [] + (tags or []),
             role=role,
             is_required=is_required,
             attrs=attrs,
+            is_virtual=name is None,
         )
 
         # List-specific attributes

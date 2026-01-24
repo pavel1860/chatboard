@@ -423,7 +423,9 @@ class XmlMutator(Mutator):
     @classmethod
     def init(cls, block: Block) -> Block:
         prefix, suffix = block.split_prefix("<", create_on_empty=True)
-        content, postfix = suffix.split_postfix(">", create_on_empty=True)
+        content, postfix = suffix.split_postfix("/>")
+        if not postfix:
+            content, postfix = suffix.split_postfix(">", create_on_empty=True)
         content,_, _ = content.split(" ")
         content.snake_case()
         
@@ -438,6 +440,8 @@ class XmlMutator(Mutator):
     
 
     def commit(self, block: Block, postfix: Block | None = None) -> Block:
+        if not postfix and self.is_streaming:
+            return None
         if not self.is_streaming and not block.tail.has_newline():       
             block.tail.add_newline(style="xml")
         if postfix is None:
