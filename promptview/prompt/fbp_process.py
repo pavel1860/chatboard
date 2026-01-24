@@ -114,7 +114,7 @@ import hashlib
 import os
 
 
-from ..versioning.models import DataFlowNode, ExecutionSpan, SpanType
+from ..versioning import DataFlowNode, ExecutionSpan, SpanType
 
 
 def _serialize_for_hash(value: Any) -> Any:
@@ -1208,6 +1208,7 @@ class StreamController(ObservableProcess):
                 kind=f"{self._span_type}_value",
                 payload=data_flow,
                 name=self._name,
+                
                 
             )
 

@@ -26,7 +26,7 @@ import json
 import datetime as dt
 from typing import TYPE_CHECKING, List, Literal, Type, Self
 
-from .models import VersionedModel, Branch, Turn, ExecutionSpan, TurnStatus, Artifact
+from .models import VersionedModel, Branch, Turn, TurnStatus, Artifact
 from ..model.fields import KeyField, ModelField, RelationField
 from ..model.base.types import ArtifactKind
 
@@ -152,6 +152,7 @@ async def store_block(
     Returns:
         BlockModel instance (new or existing)
     """
+    from .dataflow_models import ExecutionSpan
     # Transform block before storage
     block = block.transform()
 
@@ -299,6 +300,7 @@ class BlockLogQuery:
 
     async def _resolve_span_ids(self) -> list[int] | None:
         """Resolve span name to span IDs."""
+        from .dataflow_models import ExecutionSpan
         if self._span_name is None:
             return None
 

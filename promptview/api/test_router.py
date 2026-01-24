@@ -4,7 +4,7 @@ from typing import Type, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Body
 from .model_router import create_model_router
 from ..prompt.context import Context
-from ..versioning.models import Branch, EvaluatorConfig, TestCase, TestRun, TestTurn, TurnEval, ValueEval, Turn
+from ..versioning import Branch, EvaluatorConfig, TestCase, TestRun, TestTurn, TurnEval, ValueEval, Turn
 from .utils import ListParams, get_list_params
 
 

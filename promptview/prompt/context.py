@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from ..auth.user_manager2 import AuthModel
 from ..model.model3 import Model
 from ..model.postgres2.pg_query_set import PgSelectQuerySet
-from ..versioning.models import Branch, ExecutionSpan, SpanType, Turn, TurnStatus, ValueIOKind, VersionedModel, Artifact
+from ..versioning import Branch, ExecutionSpan, SpanType, Turn, TurnStatus, ValueIOKind, VersionedModel, Artifact
 from dataclasses import dataclass
 from .events import StreamEvent
 from ..utils.function_utils import call_function
@@ -19,7 +19,7 @@ from ..block import Block
 if TYPE_CHECKING:
     from fastapi import Request
     from ..evaluation.eval_context import EvaluationContext
-    from ..versioning.models import DataFlowNode
+    from ..versioning import DataFlowNode
 
 # Context variable for implicit context passing across async boundaries
 _context_var: ContextVar["Context | None"] = ContextVar('context', default=None)
