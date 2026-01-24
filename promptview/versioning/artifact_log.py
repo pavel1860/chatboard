@@ -12,8 +12,8 @@ from typing import Any, Iterator, TYPE_CHECKING
 from ..utils.type_utils import SerializableType, serialize_value, type_to_str_or_none
 from .models import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanType, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
 from ..block import BlockList, Block
-# from ..block_models.block_log import insert_block, get_blocks
-from .block12_storage import insert_block
+# from ..block_models.block_log import store_block, get_blocks
+from .block_storage import store_block, BlockModel as StoredBlockModel
 
 from collections import defaultdict
 from ..prompt.context import Context
@@ -95,13 +95,13 @@ class ArtifactLog:
     async def populate_turns(cls, turns: List[Turn]):
         from collections import defaultdict
         from ..model import NamespaceManager
-        from .block12_storage import get_blocks
-        from .models import BlockTree, Artifact
+        from .models import Artifact
+
         def kind2table(k: str):
             if k == "parameter":
                 return "parameters"
             elif k == "block":
-                return "block_trees"
+                return "blocks"  # New table name
             elif k == "span":
                 return "execution_spans"
             return k
@@ -109,34 +109,28 @@ class ArtifactLog:
         models_to_load = defaultdict(list)
 
         for turn in turns:
-            for value in turn.data:        
-                # print(value.path, value.kind, value.artifact_id)
+            for value in turn.data:
                 for da in value.artifact_data:
-                    models_to_load[kind2table(da.kind)].append(da.artifact_id)  
-                # else:
-                #     value._value = span_lookup[value.artifact_id]
-                #     span._parent_value = value
-                    # models_to_load[value.kind] += value.data_artifacts
-                    
-        model_lookup = {}
+                    models_to_load[kind2table(da.kind)].append(da.artifact_id)
 
+        model_lookup = {}
 
         for k in models_to_load:
             if k == "list":
                 models = await Artifact.query(include_branch_turn=True).where(Artifact.id.isin(models_to_load[k]))
                 model_lookup["list"] = {m.id: m for m in models}
-            elif k == "block_trees":
-                models = await get_blocks(models_to_load[k], dump_models=False)
-                model_lookup[k] = models
-            # elif k == "execution_spans":
-            #     value_dict[k] = {s.artifact_id: s for s in spans}
+            elif k == "blocks":
+                # Use new StoredBlockModel and convert to Block
+                block_models = await StoredBlockModel.query(include_branch_turn=True).where(
+                    StoredBlockModel.artifact_id.isin(models_to_load[k])
+                )
+                model_lookup[k] = {bm.artifact_id: bm.to_block() for bm in block_models}
             else:
-                # ns = NamespaceManager.get_namespace(kind2table(k))
                 ns = NamespaceManager.get_namespace(k)
                 models = await ns._model_cls.query(include_branch_turn=True).where(ns._model_cls.artifact_id.isin(models_to_load[k]))
                 model_lookup[k] = {m.artifact_id: m for m in models}
 
-        for turn in turns:    
+        for turn in turns:
             for value in turn.data:
                 if value.kind == "list":
                     value._value = []
@@ -255,7 +249,7 @@ class ArtifactLog:
             for position, item in enumerate(target):
                 item, kind, artifact_id = _sanitize_target_value(item)
                 if kind == "block":
-                    block_item = await insert_block(item, ctx.branch.id, ctx.turn.id, span_id)
+                    block_item = await store_block(item, ctx.branch.id, ctx.turn.id, span_id)
                     block_item._block = item
                     item = block_item
                     artifact_id = item.artifact_id
@@ -277,7 +271,7 @@ class ArtifactLog:
         else:
             target, kind, artifact_id = _sanitize_target_value(target)
             if kind == "block":
-                block_tree = await insert_block(target, ctx.branch.id, ctx.turn.id, span_id)
+                block_tree = await store_block(target, ctx.branch.id, ctx.turn.id, span_id)
                 artifact = block_tree.artifact
                 artifact_id = block_tree.artifact_id
             elif kind == "span":

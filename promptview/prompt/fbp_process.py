@@ -129,11 +129,10 @@ def _serialize_for_hash(value: Any) -> Any:
         return None
     if isinstance(value, (str, int, float, bool)):
         return value
-    # Handle Block specially - use Merkle hash from dump_block for deterministic hashing
+    # Handle Block specially - use content hash for deterministic hashing
     if isinstance(value, Block):
-        from ..versioning.block12_storage import dump_block
-        root_data, _, _ = dump_block(value)
-        return root_data["id"]  # Merkle hash of entire block tree
+        from ..versioning.block_storage import compute_block_hash
+        return compute_block_hash(value)
     if hasattr(value, 'model_dump'):
         # Pydantic model - try with mode='json', fall back to without
         try:

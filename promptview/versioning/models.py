@@ -770,78 +770,102 @@ class Parameter(VersionedModel):
         
     
 
+    
+
+# class BlockSpan(Model):
+#     """
+#     Content-addressed text and chunk storage for Block12.
+
+#     Each block's text and chunks are stored together, deduplicated by
+#     content hash. Chunk positions are relative to the block's local text.
+#     """
+#     _namespace_name: str = "block_spans"
+
+#     id: str = KeyField(primary_key=True)  # SHA256 hash of text + chunks
+#     text: str = ModelField(default="")
+#     chunks: list[dict] = ModelField(default_factory=list)  # [{id, start, end, logprob, style}, ...]
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
+
+
+# class BlockTreeBlock(Model):
+#     """
+#     Junction table for BlockTree ↔ BlockModel many-to-many relationship.
+
+#     Enables:
+#     - A BlockTree to contain multiple BlockModels
+#     - A BlockModel to appear in multiple BlockTrees (deduplication)
+#     - Ordered blocks within a tree via position
+#     - Efficient reverse lookups ("which trees contain this block?")
+#     """
+#     _namespace_name: str = "block_tree_blocks"
+
+#     id: int = KeyField(primary_key=True)
+#     tree_id: int = ModelField(foreign_key=True, index="btb_tree_idx")
+#     block_id: str = ModelField(foreign_key=True, index="btb_block_idx")
+#     position: int = ModelField(default=0, order_by=True)  # Order within the tree
+#     is_root: bool = ModelField(default=False)  # Marks the root block of the tree
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+
 # class BlockModel(Model):
+#     """
+#     Merkle tree node - content-addressed by span + metadata + children.
+
+#     The id is a hash that includes children's IDs, so identical subtrees
+#     automatically have identical hashes and share storage.
+#     """
 #     _namespace_name: str = "blocks"
-#     id: str = KeyField(primary_key=True)
-#     # created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-#     content: str | None = ModelField(default=None)
-#     json_content: dict | None = ModelField(default=None)
-#     signatures: list["BlockSignature"] = RelationField(foreign_key="block_id")
 
-
-# class BlockSignature(Model):
-#     """
-#     Reusable block signature combining content + styling.
-#     Deduplicates blocks with identical content and presentation.
-#     """
-#     _namespace_name: str = "block_signatures"
-#     id: str = KeyField(primary_key=True)  # hash(block_id + styles + role + tags + attrs)
-#     block_id: str = ModelField(foreign_key=True)
-#     styles: list[str] | None = ModelField(default=None)
+#     id: str = KeyField(primary_key=True)  # Merkle hash
+#     span_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=BlockSpan)  # FK to spans
 #     role: str | None = ModelField(default=None)
-#     tags: list[str] | None = ModelField(default=None)
-#     attrs: dict | None = ModelField(default=None)
+#     tags: list[str] = ModelField(default_factory=list)
+#     styles: list[str] = ModelField(default_factory=list)
+#     name: str | None = ModelField(default=None)  # For BlockSchema
+#     type_name: str | None = ModelField(default=None)  # For BlockSchema
+#     attrs: dict = ModelField(default_factory=dict)
+#     children: list[str] = ModelField(default_factory=list)  # Ordered block IDs
+#     is_rendered: bool = ModelField(default=False)  # Mutator render state
+#     block_type: str = ModelField(default="block")  # "block", "schema", "list", "list_schema"
+#     item_name: str | None = ModelField(default=None)  # For BlockListSchema
+#     key: str | None = ModelField(default=None) # For BlockListSchema
+#     path: str = ModelField(default="")  # Index path e.g., "0.1.2"
 #     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
 
-#     block: "BlockModel" = RelationField(primary_key="block_id", foreign_key="id")
-#     nodes: list["BlockNode"] = RelationField(foreign_key="signature_id")
+#     span: BlockSpan | None = RelationField(primary_key="span_id", foreign_key="id")
+
+#     # Reverse relation: which trees contain this block (via junction table)
+#     # Note: BlockTreeBlock and BlockTree defined below, uses forward reference
+#     trees: List["BlockTree"] = RelationField(
+#         primary_key="id",
+#         foreign_key="id",
+#         junction_keys=["block_id", "tree_id"],
+#         junction_model=BlockTreeBlock  # Forward reference as string
+#     )
 
 
-# class BlockNode(Model):
-#     """
-#     Lightweight tree structure node referencing block signatures.
-#     Only stores tree_id + path + signature reference.
-#     """
-#     _namespace_name: str = "block_nodes"
-#     id: int = KeyField(primary_key=True)
-#     tree_id: int = ModelField(foreign_key=True)
-#     path: str = ModelField(db_type="LTREE")
-#     signature_id: str = ModelField(foreign_key=True)
 
-#     signature: "BlockSignature" = RelationField(primary_key="signature_id", foreign_key="id")
-#     tree: "BlockTree" = RelationField(primary_key="tree_id", foreign_key="id")
-
-#     @classmethod
-#     async def block_query(cls, cte):
-#         from ..block_models.block_log import pack_block
-#         from ..sql.queries import Column
-#         records = await cls.query([
-#             Column("styles", "bs"),
-#             Column("role", "bs"),
-#             Column("tags", "bs"),
-#             Column("path", "bn"),
-#             Column("attrs", "bs"),
-#             Column("content", "bm"),
-#             Column("json_content", "bm"),
-#         ], alias="bn") \
-#         .use_cte(cte,"tree_cte", alias="btc") \
-#         .join(BlockSignature.query(["block_id", "styles", "role", "tags", "attrs"], alias="bs"), on=("signature_id", "id")) \
-#         .join(BlockModel.query(["content", "json_content"], alias="bm"), on=("block_id", "id"), prefix="bs") \
-#         .where(lambda b: (b.tree_id == RawValue("btc.id"))).json()
-#         return pack_block(records)
-     
-        
 # class BlockTree(VersionedModel):
+#     """
+#     Root reference for a block tree, linked to versioning system.
+#     """
+#     _namespace_name: str = "block_trees"
 #     _artifact_kind: ArtifactKind = "block"
+
 #     id: int = KeyField(primary_key=True)
-#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-#     nodes: List[BlockNode] = RelationField(foreign_key="tree_id")
-#     span_id: int | None = ModelField(foreign_key=True)
-#     _block: "Block | None" = None
-    
-    
+#     span_id: int | None = ModelField(default=None, foreign_key=True)  # Execution span
+#     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now, order_by=True)
+
+#     blocks: List[BlockModel] = RelationField(
+#         primary_key="id",
+#         foreign_key="id",
+#         junction_keys=["tree_id", "block_id"],
+#         junction_model=BlockTreeBlock
+#     )
+
+
 #     @classmethod
-#     def query(
+#     def query2(
 #         cls: Type[Self], 
 #         include_branch_turn: bool = False,
 #         alias: str | None = None, 
@@ -855,13 +879,12 @@ class Parameter(VersionedModel):
 #         direction: Literal["asc", "desc"] = "desc",
 
 #     ):
-#         from ..sql2.pg_query_builder import select, PgQueryBuilder
-#         from ..block_models.block_log import load_block_dump
+#         from ..model.sql2.pg_query_builder import select, PgQueryBuilder
 #         async def to_block(trees: list[BlockTree]):
 #             blocks = []
 #             for tree in trees:
 #                 dump = tree.model_dump()
-#                 blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
+#                 # blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
 #             return blocks
 #         query =(
 #             super()
@@ -877,154 +900,15 @@ class Parameter(VersionedModel):
 #                 statuses=statuses,
 #             )
 #             .include(
-#                 BlockNode.query(alias="bn")
+#                 BlockModel.query(alias="bn")
 #                     # .order_by("id")
 #                     .include(
-#                         BlockSignature.query(alias="bs").include(BlockModel)
+#                         BlockSpan.query(alias="bs").include(BlockModel)
 #                     )
 #                 ).order_by("created_at")
-#             .parse(to_block, target="models")
+#             # .parse(to_block, target="models")
 #         )
 #         return query
-    
-
-class BlockSpan(Model):
-    """
-    Content-addressed text and chunk storage for Block12.
-
-    Each block's text and chunks are stored together, deduplicated by
-    content hash. Chunk positions are relative to the block's local text.
-    """
-    _namespace_name: str = "block_spans"
-
-    id: str = KeyField(primary_key=True)  # SHA256 hash of text + chunks
-    text: str = ModelField(default="")
-    chunks: list[dict] = ModelField(default_factory=list)  # [{id, start, end, logprob, style}, ...]
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-
-
-
-class BlockTreeBlock(Model):
-    """
-    Junction table for BlockTree ↔ BlockModel many-to-many relationship.
-
-    Enables:
-    - A BlockTree to contain multiple BlockModels
-    - A BlockModel to appear in multiple BlockTrees (deduplication)
-    - Ordered blocks within a tree via position
-    - Efficient reverse lookups ("which trees contain this block?")
-    """
-    _namespace_name: str = "block_tree_blocks"
-
-    id: int = KeyField(primary_key=True)
-    tree_id: int = ModelField(foreign_key=True, index="btb_tree_idx")
-    block_id: str = ModelField(foreign_key=True, index="btb_block_idx")
-    position: int = ModelField(default=0, order_by=True)  # Order within the tree
-    is_root: bool = ModelField(default=False)  # Marks the root block of the tree
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-
-class BlockModel(Model):
-    """
-    Merkle tree node - content-addressed by span + metadata + children.
-
-    The id is a hash that includes children's IDs, so identical subtrees
-    automatically have identical hashes and share storage.
-    """
-    _namespace_name: str = "blocks"
-
-    id: str = KeyField(primary_key=True)  # Merkle hash
-    span_id: str | None = ModelField(default=None, foreign_key=True, foreign_cls=BlockSpan)  # FK to spans
-    role: str | None = ModelField(default=None)
-    tags: list[str] = ModelField(default_factory=list)
-    styles: list[str] = ModelField(default_factory=list)
-    name: str | None = ModelField(default=None)  # For BlockSchema
-    type_name: str | None = ModelField(default=None)  # For BlockSchema
-    attrs: dict = ModelField(default_factory=dict)
-    children: list[str] = ModelField(default_factory=list)  # Ordered block IDs
-    is_rendered: bool = ModelField(default=False)  # Mutator render state
-    block_type: str = ModelField(default="block")  # "block", "schema", "list", "list_schema"
-    item_name: str | None = ModelField(default=None)  # For BlockListSchema
-    key: str | None = ModelField(default=None) # For BlockListSchema
-    path: str = ModelField(default="")  # Index path e.g., "0.1.2"
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
-
-    span: BlockSpan | None = RelationField(primary_key="span_id", foreign_key="id")
-
-    # Reverse relation: which trees contain this block (via junction table)
-    # Note: BlockTreeBlock and BlockTree defined below, uses forward reference
-    trees: List["BlockTree"] = RelationField(
-        primary_key="id",
-        foreign_key="id",
-        junction_keys=["block_id", "tree_id"],
-        junction_model=BlockTreeBlock  # Forward reference as string
-    )
-
-
-
-class BlockTree(VersionedModel):
-    """
-    Root reference for a block tree, linked to versioning system.
-    """
-    _namespace_name: str = "block_trees"
-    _artifact_kind: ArtifactKind = "block"
-
-    id: int = KeyField(primary_key=True)
-    span_id: int | None = ModelField(default=None, foreign_key=True)  # Execution span
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now, order_by=True)
-
-    blocks: List[BlockModel] = RelationField(
-        primary_key="id",
-        foreign_key="id",
-        junction_keys=["tree_id", "block_id"],
-        junction_model=BlockTreeBlock
-    )
-
-
-    @classmethod
-    def query2(
-        cls: Type[Self], 
-        include_branch_turn: bool = False,
-        alias: str | None = None, 
-        use_ctx: bool = True,
-        branch: Branch | int | None = None,
-        turn_cte: "PgSelectQuerySet[Turn] | None" = None,
-        use_liniage: bool = True,
-        limit: int | None = None, 
-        offset: int | None = None, 
-        statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED],
-        direction: Literal["asc", "desc"] = "desc",
-
-    ):
-        from ..model.sql2.pg_query_builder import select, PgQueryBuilder
-        async def to_block(trees: list[BlockTree]):
-            blocks = []
-            for tree in trees:
-                dump = tree.model_dump()
-                # blocks.append(load_block_dump(dump["nodes"], artifact_id=tree.artifact_id))
-            return blocks
-        query =(
-            super()
-            .query(
-                include_branch_turn=include_branch_turn,
-                alias=alias,
-                use_ctx=use_ctx,
-                branch=branch,
-                turn_cte=turn_cte,
-                use_liniage=use_liniage,
-                limit=limit,
-                offset=offset,
-                statuses=statuses,
-            )
-            .include(
-                BlockModel.query(alias="bn")
-                    # .order_by("id")
-                    .include(
-                        BlockSpan.query(alias="bs").include(BlockModel)
-                    )
-                ).order_by("created_at")
-            # .parse(to_block, target="models")
-        )
-        return query
 
 
 

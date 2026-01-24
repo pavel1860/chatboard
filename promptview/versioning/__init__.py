@@ -4,9 +4,6 @@ from .models import (
     TurnStatus, 
     VersionedModel, 
     ArtifactModel, 
-    BlockModel, 
-    BlockSpan, 
-    BlockTree, 
     ExecutionSpan, 
     Log, 
     DataFlowNode, 
@@ -22,23 +19,21 @@ from .models import (
     EvaluationFailure,
 )
 
-from .block12_storage import BlockLog, BlockLogQuery
+from .block_storage import BlockLog, BlockLogQuery, BlockModel as StoredBlockModel, compute_block_hash
 __all__ = [
-    "Branch", 
-    "Turn", 
-    "TurnStatus", 
-    "VersionedModel", 
-    "ArtifactModel", 
-    "BlockModel", 
-    "BlockSpan", 
-    "BlockTree", 
-    "ExecutionSpan", 
-    "Log", 
-    "DataFlowNode", 
-    "Artifact", 
-    "Parameter", 
-    "DataArtifact", 
-    "TestTurn", 
+    "Branch",
+    "Turn",
+    "TurnStatus",
+    "VersionedModel",
+    "ArtifactModel",
+    "StoredBlockModel",  # New simplified model
+    "ExecutionSpan",
+    "Log",
+    "DataFlowNode",
+    "Artifact",
+    "Parameter",
+    "DataArtifact",
+    "TestTurn",
     "TestCase",
     "TestRun",
     "TurnEval",
@@ -47,4 +42,5 @@ __all__ = [
     "EvaluationFailure",
     "BlockLog",
     "BlockLogQuery",
+    "compute_block_hash",
 ]
