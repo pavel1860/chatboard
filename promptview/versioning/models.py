@@ -401,6 +401,7 @@ class Turn(Model):
     ) -> "PgQueryBuilder[Self]":
         from ..model.sql2.pg_query_builder import PgQueryBuilder, select
         from ..versioning.artifact_log import ArtifactLog
+        from .dataflow_models import DataFlowNode, DataArtifact
         
         query = PgQueryBuilder().select(cls)       
         if fields:

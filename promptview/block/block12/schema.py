@@ -356,7 +356,7 @@ class BlockSchema(Block):
         Returns:
             Reconstructed BlockSchema
         """
-        
+        from ...utils.type_utils import str_to_type
         # Extract schema-specific fields
         name = data.get("name")
         is_required = data.get("is_required", True)
@@ -364,7 +364,7 @@ class BlockSchema(Block):
         # Create BlockSchema
         schema = cls(
             name=name,
-            type=None,  # Type reconstruction would need a type registry
+            type=str_to_type(data.get("type"), False) if data.get("type") else None,  # Type reconstruction would need a type registry
             style=data.get("style", []),
             tags=data.get("tags", []),
             role=data.get("role"),

@@ -155,6 +155,7 @@ class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
         item_name = self._get_key(attrs)
         item_ctx = self.build_child_schema(item_name, attrs)
         item_ctx.init(item_name, attrs, chunks)
+        self._block.append_child(item_ctx.block)
         return [self, item_ctx]
     
     
