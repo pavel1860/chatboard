@@ -289,7 +289,11 @@ class ArtifactLog:
                 await value.add(artifact, kind=kind)
                 value._value = target
                 return value
-            elif artifact_id is None:
+            elif kind == "model":
+                artifact = target.artifact
+                artifact_id = target.artifact_id
+                
+            if artifact_id is None:
                 await target.save()
                 artifact = target.artifact
                 artifact_id = target.artifact_id

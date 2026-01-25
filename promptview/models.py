@@ -1,6 +1,6 @@
 from typing import Literal, Self, Type
 from .model import ModelField, RelationField
-from .versioning import ArtifactModel, TurnStatus, BlockTree, BlockSpan, BlockModel, Branch, Turn
+from .versioning import ArtifactModel, TurnStatus, Branch, Turn
 from .versioning import BlockLog, StoredBlockModel, compute_block_hash
 from .block import BlockSchema, Block
 from pydantic import Field
@@ -58,12 +58,21 @@ class BlockArtifact(ArtifactModel):
             **kwargs
         )
 
-        async def parse_rows(rows):
-            for row in rows:
-                stored_block = row.get("stored_block")
-                if stored_block:
-                    row["content"] = stored_block.to_block()
-            return rows
+        # async def parse_rows(rows):
+        #     for row in rows:
+        #         stored_block = row.get("stored_block")
+        #         if stored_block:                    
+        #             row["content"] = stored_block.to_block()
+        #     return rows
 
-        query.include(StoredBlockModel.query()).parse(parse_rows, target="rows")
+        # query.include(StoredBlockModel.query()).parse(parse_rows, target="rows")
+        async def parse_models(recs):
+            for rec in recs:
+                stored_block = rec.stored_block
+                if stored_block:                    
+                    rec.content = stored_block.to_block()
+            return recs
+
+        query.include(StoredBlockModel.query()).parse(parse_models, target="models")
+
         return query

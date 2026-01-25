@@ -102,21 +102,30 @@ class Model(BaseModel, metaclass=ModelMeta):
         if res is None:
             raise ValueError(f"Could not resolve id for target for {cls.__name__}: {target}")
         return res
-
+    
     @classmethod
     async def get(cls: Type[Self], id: Any) -> Self:
-        data = await cls.get_namespace().get(id)
-        if not data:
+        res = await cls.query().where(id=id).one()
+        if res is None:
             raise ValueError(f"{cls.__name__} with ID '{id}' not found")
-        return cls(**data)
-    
+        return res
+    # @classmethod
+    # async def get(cls: Type[Self], id: Any) -> Self:
+    #     data = await cls.get_namespace().get(id)
+    #     if not data:
+    #         raise ValueError(f"{cls.__name__} with ID '{id}' not found")
+    #     return cls(**data)
     
     @classmethod
     async def get_or_none(cls: Type[Self], id: Any) -> Self | None:
-        data = await cls.get_namespace().get(id)
-        if not data:
-            return None
-        return cls(**data)
+        return await cls.query().where(id=id).one()
+    
+    # @classmethod
+    # async def get_or_none(cls: Type[Self], id: Any) -> Self | None:
+    #     data = await cls.get_namespace().get(id)
+    #     if not data:
+    #         return None
+    #     return cls(**data)
 
 
     # async def save(self, *args, **kwargs) -> Self:

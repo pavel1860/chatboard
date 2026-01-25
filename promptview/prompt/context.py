@@ -93,7 +93,7 @@ class Context(BaseModel):
         request: "Request | None" = None,
         auth: AuthModel | None = None,
         eval_ctx: "EvaluationContext | None" = None,
-        verbose: VerbosityLevel | None = None,  
+        verbose: set[VerbosityLevel] | None = None,  
         cache_dir: str | None = None,
         load_cache: dict[str, str] | None = None,
     ):

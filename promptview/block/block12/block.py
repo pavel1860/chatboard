@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from .mutator import Mutator
     from .schema import BlockSchema, BlockListSchema, BlockList
     from .path import IndexPath, TagPath
+    from .diff import BlockDiff
 
 
 def _generate_id() -> str:
@@ -1821,7 +1822,9 @@ class Block:
     # Copy Operations
     # =========================================================================
     
-    def extract(self) -> Block:        
+    def extract(self) -> Block:     
+        if not self.is_rendered:
+            return self
         ex_block = self.mutator.extract()        
         for child in self.body:
             ex_child = child.extract()
@@ -1865,6 +1868,7 @@ class Block:
     def model_dump(self) -> dict[str, Any]:
         """Serialize block to dictionary."""
         return {
+            "_block_type": self.__class__.__name__,
             "id": self.id,
             "path": str(self.path),
             "text": self._text,
@@ -1883,17 +1887,48 @@ class Block:
                 for c in self.chunks
             ],
             "children": [c.model_dump() for c in self.children],
+            "mutator": self.mutator.get_style(),
         }
+    
+    @classmethod   
+    def _load_mutator(cls, block: Block, data: dict[str, Any]) -> Block:
+        from .mutator import MutatorMeta
+        if mutator:= data.get("mutator"):
+            styles = data.get("style", [])
+            if mutator == "block":
+                styles += ["block"]
+            mutator_config = MutatorMeta.resolve(styles)
+            block.mutator = mutator_config.mutator(block)
+            block.stylizers = [stylizer() for stylizer in mutator_config.stylizers]
+        return block
+
 
     @classmethod
     def model_load(cls, data: dict[str, Any]) -> Block:
-        """Deserialize block from dictionary."""
+        """Deserialize block from dictionary.
+
+        Automatically dispatches to the correct class based on _block_type field.
+        """
+        from .schema import BlockSchema, BlockListSchema, BlockList
+        
+
+        # Dispatch to correct class based on _block_type
+        block_type = data.get("_block_type", "Block")
+        if block_type == "BlockListSchema":
+            return BlockListSchema.model_load(data)
+        elif block_type == "BlockSchema":
+            return BlockSchema.model_load(data)
+        elif block_type == "BlockList":
+            return BlockList.model_load(data)
+
+        # Regular Block deserialization
         block = cls(
             role=data.get("role"),
             tags=data.get("tags", []),
             style=data.get("style", []),
             attrs=data.get("attrs", {}),
         )
+        block = cls._load_mutator(block, data)
         block.id = data.get("id", _generate_id())
         block._text = data.get("text", "")
         block.chunks = [
@@ -1907,8 +1942,9 @@ class Block:
             for c in data.get("chunks", [])
         ]
 
+        # Recursively load children with proper class dispatch
         for child_data in data.get("children", []):
-            child = cls.model_load(child_data)
+            child = Block.model_load(child_data)
             child.parent = block
             block.children.append(child)
 
@@ -2141,6 +2177,44 @@ class Block:
     def print_debug(self) -> None:
         """Print debug tree."""
         print(self.debug_tree())
+
+    # =========================================================================
+    # Diff
+    # =========================================================================
+
+    def diff(self, other: "Block") -> "BlockDiff":
+        """
+        Compare this block with another and return structured diff.
+
+        Args:
+            other: Block to compare against
+
+        Returns:
+            BlockDiff with tree-structured comparison
+
+        Example:
+            diff = block_a.diff(block_b)
+            if not diff.is_identical:
+                print(diff.summary())
+                for change in diff.iter_changes():
+                    print(f"  {change.path}: {change.status}")
+        """
+        from .diff import diff_blocks, BlockDiff
+        return diff_blocks(self, other)
+
+    def diff_text(self, other: "Block", context_lines: int = 3) -> str:
+        """
+        Get unified text diff against another block.
+
+        Args:
+            other: Block to compare against
+            context_lines: Number of context lines around changes
+
+        Returns:
+            Unified diff string
+        """
+        from .diff import get_text_diff
+        return get_text_diff(self, other, context_lines)
 
     def __repr__(self) -> str:
         content_preview = self._text[:20] if self._text else ""

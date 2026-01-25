@@ -697,6 +697,7 @@ class VersionedModel(Model):
             PgQueryBuilder()
             .select(cls)
             .join_cte(art_cte, "artifact_cte", alias="ac")
+            .include(Artifact)
         )
         
         

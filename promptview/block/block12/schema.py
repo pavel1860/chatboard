@@ -331,13 +331,15 @@ class BlockSchema(Block):
 
         Includes schema-specific fields: name, type, is_required.
         """
+        from ...utils.type_utils import type_to_str
         # Get base block fields
         result = super().model_dump()
 
         # Add schema-specific fields
         result["name"] = self.name
         if self._type is not None:
-            result["type"] = self._type.__name__
+            # result["type"] = self._type.__name__
+            result["type"] = type_to_str(self._type)
         if not self.is_required:
             result["is_required"] = self.is_required
 
@@ -354,6 +356,7 @@ class BlockSchema(Block):
         Returns:
             Reconstructed BlockSchema
         """
+        
         # Extract schema-specific fields
         name = data.get("name")
         is_required = data.get("is_required", True)
@@ -369,6 +372,8 @@ class BlockSchema(Block):
             attrs=data.get("attrs", {}),
             is_root=data.get("is_root", False),
         )
+        
+        schema = cls._load_mutator(schema, data)
 
         # Restore ID and text
         schema.id = data.get("id", schema.id)
@@ -386,15 +391,9 @@ class BlockSchema(Block):
             for c in data.get("chunks", [])
         ]
 
-        # Recursively load children
+        # Recursively load children - Block.model_load handles class dispatch
         for child_data in data.get("children", []):
-            # Check if child is a schema, list schema, or regular block
-            if "item_name" in child_data:
-                child = BlockListSchema.model_load(child_data)
-            elif child_data.get("name") is not None:
-                child = BlockSchema.model_load(child_data)
-            else:
-                child = Block.model_load(child_data)
+            child = Block.model_load(child_data)
             child.parent = schema
             schema.children.append(child)
 
@@ -519,6 +518,46 @@ class BlockList(Block):
                 new_list._raw_append_child(child_copy)
 
         return new_list
+
+    # -------------------------------------------------------------------------
+    # Serialization
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def model_load(cls, data: dict[str, Any]) -> BlockList:
+        """Deserialize dict to BlockList."""
+        block_list = cls(
+            role=data.get("role"),
+            tags=data.get("tags", []),
+            style=data.get("style", []),
+            attrs=data.get("attrs", {}),
+        )
+        
+        block_list = cls._load_mutator(block_list, data)    
+
+        # Restore ID and text
+        block_list.id = data.get("id", block_list.id)
+        block_list._text = data.get("text", "")
+
+        # Restore chunks
+        block_list.chunks = [
+            ChunkMeta(
+                id=c.get("id", _generate_id()),
+                start=c["start"],
+                end=c["end"],
+                logprob=c.get("logprob"),
+                style=c.get("style"),
+            )
+            for c in data.get("chunks", [])
+        ]
+
+        # Recursively load children - Block.model_load handles class dispatch
+        for child_data in data.get("children", []):
+            child = Block.model_load(child_data)
+            child.parent = block_list
+            block_list.children.append(child)
+
+        return block_list
 
     def __repr__(self) -> str:
         import textwrap
@@ -936,6 +975,8 @@ class BlockListSchema(BlockSchema):
             is_required=data.get("is_required", True),
             attrs=data.get("attrs", {}),
         )
+        
+        schema = cls._load_mutator(schema, data)
 
         # Restore ID and text
         schema.id = data.get("id", schema.id)
@@ -953,14 +994,10 @@ class BlockListSchema(BlockSchema):
             for c in data.get("chunks", [])
         ]
 
-        # Recursively load children - _raw_append_child auto-populates list_schemas
+        # Recursively load children - Block.model_load handles class dispatch
+        # _raw_append_child auto-populates list_schemas
         for child_data in data.get("children", []):
-            if "item_name" in child_data:
-                child = BlockListSchema.model_load(child_data)
-            elif child_data.get("name") is not None:
-                child = BlockSchema.model_load(child_data)
-            else:
-                child = Block.model_load(child_data)
+            child = Block.model_load(child_data)
             schema._raw_append_child(child)
 
         return schema

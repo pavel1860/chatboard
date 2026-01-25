@@ -154,7 +154,7 @@ async def store_block(
     """
     from .dataflow_models import ExecutionSpan
     # Transform block before storage
-    block = block.transform()
+    # block = block.transform()
 
     content_hash = compute_block_hash(block)
 

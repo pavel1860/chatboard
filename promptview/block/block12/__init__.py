@@ -25,6 +25,16 @@ from .mutator import (
 from .parsers import XmlParser, ParserEvent, ParserError
 from .object_helpers import pydantic_to_schema, block_to_object, block_to_dict
 from .path import IndexPath, TagPath
+from .diff import (
+    diff_blocks,
+    BlockDiff,
+    NodeDiff,
+    FieldChange,
+    get_text_diff,
+    get_inline_diff,
+    format_diff_tree,
+    print_diff,
+)
 
 __all__ = [
     "Block",
@@ -44,4 +54,13 @@ __all__ = [
     "block_to_object",
     "block_to_dict",
     "ContentType",
+    # Diff
+    "diff_blocks",
+    "BlockDiff",
+    "NodeDiff",
+    "FieldChange",
+    "get_text_diff",
+    "get_inline_diff",
+    "format_diff_tree",
+    "print_diff",
 ]
