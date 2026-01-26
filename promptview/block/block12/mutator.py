@@ -55,12 +55,12 @@ class MutatorConfig:
                 yield (target, transformer)
                 
                 
-    def create_block(self, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
-        from .transform import transform_context   
+    def create_block(self, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False, type: Type | None = None) -> Block:
+        from .transform import transform_context
         with transform_context(True):
-            block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+            block = Block(content, tags=tags, role=role, style=style, attrs=attrs, type=type)
             block = self.mutator.init(block)
-            block = _apply_metadata(block, tags, role, style, attrs)
+            block = _apply_metadata(block, tags, role, style, attrs, type=type)
             block.mutator = self.mutator(block, is_streaming=is_streaming)
             block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
@@ -149,11 +149,19 @@ class MutatorMeta(type):
         return mutator_cfg
 
 
-def _apply_metadata(to_block: Block, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None):
+def _apply_metadata(
+    to_block: Block, 
+    tags: list[str] | None = None, 
+    role: str | None = None, 
+    style: str | list[str] | None = None, 
+    attrs: dict[str, Any] | None = None, 
+    type: Type | None = None
+    ) -> Block:
     to_block.tags = tags or to_block.tags
     to_block.role = role or to_block.role
     to_block.style = style or to_block.style
     to_block.attrs = attrs or to_block.attrs
+    to_block._type = type or to_block._type
     return to_block
 
 
@@ -292,8 +300,8 @@ class Mutator(metaclass=MutatorMeta):
         return result
 
     @classmethod
-    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
-        block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False, type: Type | None = None) -> Block:
+        block = Block(content, tags=tags, role=role, style=style, attrs=attrs, type=type)
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
         block.mutator = cls(block, is_streaming=is_streaming)
@@ -305,7 +313,7 @@ class Mutator(metaclass=MutatorMeta):
     
     
     def extract(self) -> Block:
-        return Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
+        return Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
     
     
     def on_append(self, content: Block) -> Generator[Block | BlockChunk, Any, Any]:

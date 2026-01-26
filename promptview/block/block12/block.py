@@ -14,6 +14,7 @@ Usage:
 """
 
 from __future__ import annotations
+import builtins
 from typing import Any, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsIndex, overload
 from collections import UserList
 from pydantic import BaseModel, GetCoreSchemaHandler
@@ -254,7 +255,7 @@ class Block:
 
     __slots__ = [
         "parent", "children", "chunks",
-        "_role", "tags", "style", "attrs", "_text", "id", "mutator", "stylizers"
+        "_role", "tags", "style", "attrs", "_text", "_type", "id", "mutator", "stylizers"
     ]
 
     def __init__(
@@ -266,6 +267,7 @@ class Block:
         style: str | list[str] | None = None,
         attrs: dict[str, Any] | None = None,
         children: list[Block] | None = None,
+        type: Type | None = None,
     ):
         """
         Create a block with optional initial content.
@@ -276,6 +278,8 @@ class Block:
             tags: List of tags for categorization
             style: Style string or list of styles
             attrs: Arbitrary attributes
+            children: List of child blocks
+            type: Type of the content value (auto-detected if not provided)
         """
         from .mutator import Mutator, Stylizer
         # Tree structure
@@ -294,6 +298,9 @@ class Block:
         # Local text for this block
         self._text: str = ""
 
+        # Type of the content value
+        self._type: Type | None = type
+
         # ID
         self.id: str = _generate_id()
 
@@ -302,6 +309,9 @@ class Block:
         self.stylizers: list[Stylizer] = []
         # Handle initial content
         if content is not None:
+            # Auto-detect type if not provided
+            if self._type is None and not isinstance(content, (Block, list)):
+                self._type = builtins.type(content)
             chunks = self.promote_content(content)
             self._raw_append(chunks)
             
@@ -397,6 +407,11 @@ class Block:
         return len(self._text) == 0
 
     @property
+    def type(self) -> Type | None:
+        """Get the type of the content value."""
+        return self._type
+
+    @property
     def path(self) -> "IndexPath":
         """
         Get the index path for this block.
@@ -467,6 +482,12 @@ class Block:
         """
         return self.mutator.tail
     
+    
+    
+    @property
+    def value(self) -> Any:
+        if self._type is not None:
+            return builtins.type(self._type)
     
     def hash(self) -> str:
         """
@@ -1181,7 +1202,7 @@ class Block:
 
         Args:
             chunks: List of Chunk objects to populate the block
-            inherit: If True, copy role, tags, style, attrs from this block
+            inherit: If True, copy role, tags, style, attrs, type from this block
 
         Returns:
             New Block with the given chunks
@@ -1192,6 +1213,7 @@ class Block:
                 tags=list(self.tags),
                 style=list(self.style),
                 attrs=dict(self.attrs),
+                type=self._type,
             )
         else:
             block = Block()
@@ -1847,6 +1869,7 @@ class Block:
             tags=list(self.tags),
             style=list(self.style),
             attrs=dict(self.attrs),
+            type=self._type,
         )
         new_block._text = self._text
         new_block.chunks = [c.copy() for c in self.chunks]
@@ -1867,7 +1890,8 @@ class Block:
 
     def model_dump(self) -> dict[str, Any]:
         """Serialize block to dictionary."""
-        return {
+        from promptview.utils.type_utils import type_to_str
+        result = {
             "_block_type": self.__class__.__name__,
             "id": self.id,
             "path": str(self.path),
@@ -1889,6 +1913,9 @@ class Block:
             "children": [c.model_dump() for c in self.children],
             "mutator": self.mutator.get_style(),
         }
+        if self._type is not None:
+            result["type"] = type_to_str(self._type)
+        return result
     
     @classmethod   
     def _load_mutator(cls, block: Block, data: dict[str, Any]) -> Block:
@@ -1910,7 +1937,7 @@ class Block:
         Automatically dispatches to the correct class based on _block_type field.
         """
         from .schema import BlockSchema, BlockListSchema, BlockList
-        
+        from promptview.utils.type_utils import str_to_type
 
         # Dispatch to correct class based on _block_type
         block_type = data.get("_block_type", "Block")
@@ -1927,6 +1954,7 @@ class Block:
             tags=data.get("tags", []),
             style=data.get("style", []),
             attrs=data.get("attrs", {}),
+            type=str_to_type(data.get("type"), False) if data.get("type") else None,
         )
         block = cls._load_mutator(block, data)
         block.id = data.get("id", _generate_id())
@@ -2149,11 +2177,11 @@ class Block:
         if self.role:
             parts.append(f", role={self.role!r}")
             
-        if isinstance(self, BlockSchema):
-            if self.type is Block:
-                parts.append(f", type=Block")
-            else:
-                parts.append(f", type={type_to_str_or_none(self.type)}")
+        # if isinstance(self, BlockSchema):
+        if self._type is Block:
+            parts.append(f", type=Block")
+        else:
+            parts.append(f", type={type_to_str_or_none(self._type)}")
             
         if self.style:
             parts.append(f", style={self.style}")

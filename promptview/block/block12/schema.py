@@ -122,11 +122,9 @@ class BlockSchema(Block):
     def init_partial(self, content: ContentType, use_mutator: bool = True, is_streaming: bool = False):
         from .mutator import MutatorMeta
         from .mutator import BlockMutator
-        content = content if use_mutator else self.name        
-        config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
-        # tran_block = config.mutator.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)
-        tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
-        # tran_block = config.build_block(self, is_streaming=is_streaming)        
+        content = content if use_mutator else self.name
+        config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)
+        tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming, type=self._type)
         return tran_block
 
 
@@ -210,6 +208,7 @@ class BlockSchema(Block):
             tags=tags if tags is not None else list(self.tags),
             style=style if style is not None else list(self.style),
             attrs=attrs if attrs is not None else dict(self.attrs),
+            type=self._type,
         )
 
         # Add content as a child block (not appended to same block's text)
@@ -218,8 +217,8 @@ class BlockSchema(Block):
             if isinstance(content, Block):
                 block._raw_append_child(content.copy())
             else:
-                content_str = str(content) if not isinstance(content, str) else content
-                block._raw_append_child(Block(content=content_str))
+                # Pass content with its actual type preserved
+                block._raw_append_child(Block(content=content))
 
         return block
 
@@ -532,8 +531,8 @@ class BlockList(Block):
             style=data.get("style", []),
             attrs=data.get("attrs", {}),
         )
-        
-        block_list = cls._load_mutator(block_list, data)    
+
+        block_list = cls._load_mutator(block_list, data)
 
         # Restore ID and text
         block_list.id = data.get("id", block_list.id)
