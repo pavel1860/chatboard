@@ -19,6 +19,7 @@ from typing import Any, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsInde
 from collections import UserList
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import core_schema
+import inspect
 import re
 
 from promptview.utils.function_utils import is_overridden
@@ -36,6 +37,7 @@ def _generate_id() -> str:
     """Generate a short unique ID."""
     from uuid import uuid4
     return uuid4().hex[:8]
+
 
 
 # Type for content that can be passed to Block
@@ -384,6 +386,16 @@ class Block:
     def is_leaf(self) -> bool:
         """True if block has no children."""
         return len(self.body) == 0
+    
+    def kind(self) -> str:
+        """Get the kind of the block."""
+        body_len = len(self.body)
+        if body_len == 0:
+            return "leaf"
+        elif body_len == 1:
+            return "record"        
+        else:
+            return "block"
 
 
     @property
@@ -483,11 +495,32 @@ class Block:
         return self.mutator.tail
     
     
-    
     @property
     def value(self) -> Any:
-        if self._type is not None:
-            return builtins.type(self._type)
+        return self.extract().get_value()
+            
+    def get_value(self):
+        from .object_helpers import parse_union_content
+        kind = self.kind()
+        if kind == "leaf":
+            return parse_union_content(self.text, self._type or str)
+        elif kind == "record":
+            # return self.body[0].get_value()
+            return parse_union_content(self.body[0].text, self._type or str)
+        else:
+            result = {}
+            for child in self.body:
+                ckind = child.kind()
+                if ckind != "leaf":
+                    result[child.head.text] = child.get_value()  
+            if inspect.isclass(self._type) and issubclass(self._type, BaseModel):
+                return self._type(**result)
+            else:
+                return result
+                    
+                
+            
+        
     
     def hash(self) -> str:
         """
@@ -1512,9 +1545,10 @@ class Block:
         for child in self.children:
             yield from child._iter_all_blocks()
 
-    def iter_depth_first(self) -> Iterator[Block]:
+    def iter_depth_first(self, children_only: bool = False) -> Iterator[Block]:
         """Iterate this subtree in depth-first order."""
-        yield self
+        if not children_only:
+            yield self
         for child in self.children:
             yield from child.iter_depth_first()
 
@@ -1887,6 +1921,49 @@ class Block:
     # =========================================================================
     # Serialization
     # =========================================================================
+    def to_dict(self) -> dict:
+        """
+        Convert a block tree to a dictionary.
+
+        The root block is not included in the result.
+        Each child block's text/tag becomes a key, and its children
+        determine the value (either nested dict or leaf value).
+        """
+        result = {}
+
+        for child in self.body:
+            # Get the key from the block's text content
+            key = child.text.strip()
+            if not key and child.tags:
+                key = child.tags[0]
+            if not key:
+                continue
+
+            child_body = child.body
+
+            if len(child_body) == 0:
+                # No children - empty value
+                result[key] = ""
+            elif len(child_body) == 1 and child_body[0].is_leaf():
+                # Single leaf child - extract value with type casting
+                value_block = child_body[0]
+                value_text = value_block.text.strip()
+
+                # Cast based on type annotation
+                value_type = value_block._type
+                if value_type == int:
+                    result[key] = int(value_text)
+                elif value_type == float:
+                    result[key] = float(value_text)
+                elif value_type == bool:
+                    result[key] = value_text.lower() in ('true', '1', 'yes')
+                else:
+                    result[key] = value_text
+            else:
+                # Nested structure - recurse
+                result[key] = child.to_dict()
+
+        return result
 
     def model_dump(self) -> dict[str, Any]:
         """Serialize block to dictionary."""

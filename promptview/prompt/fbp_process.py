@@ -116,6 +116,9 @@ import os
 
 from ..versioning import DataFlowNode, ExecutionSpan, SpanType
 
+if TYPE_CHECKING:
+    from ..block import Block
+
 
 def _serialize_for_hash(value: Any) -> Any:
     """
@@ -709,6 +712,11 @@ class ObservableProcess(Process):
         if ctx is None:
             raise ValueError("StreamController requires Context. Use 'async with Context():'")
         return ctx
+    
+    @property
+    def name(self):
+        """Get the name."""
+        return self._name
 
     @property
     def span(self):
@@ -1401,7 +1409,8 @@ class PipeController(ObservableProcess):
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
-        upstream: Process | None = None
+        upstream: Process | None = None,
+        need_ctx: bool = True
     ):
         """
         Initialize PipeController.
@@ -1598,7 +1607,64 @@ class EvaluatorController(ObservableProcess):
     
     async def __anext__(self):
         return await self._gen_func(**self.resolved_kwargs)
+    
+    
+    
 
+class TurnController(Process):
+    
+    
+    def __init__(self, agent_component: Callable[..., AsyncGenerator], ctx: "Context", message: "Block", name: str):
+        async def gen():
+            async with ctx:
+                yield agent_component(message)
+            
+        super().__init__(upstream=agent_component(message))
+        self.name = name
+        self._ctx = ctx
+        
+    
+    
+
+    # async def on_start(self, value: Any = None):
+    #     await self._ctx.__aenter__()
+    #     return None
+
+
+    # async def on_stop(self):
+    #     await self._ctx.__aexit__(None, None, None)
+    #     # return None
+
+    # async def on_error(self, error: Exception):
+    #     await self._ctx.__aexit__(type(error), error, None)
+    #     return None
+    
+    def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False) -> "FlowRunner":
+        """
+        Return a FlowRunner that streams events from this process.
+
+        This enables event streaming directly from decorated functions:
+            @stream()
+            async def my_stream():
+                yield "hello"
+
+            async for event in my_stream().stream():
+                print(event)
+
+        Args:
+            event_level: EventLogLevel.chunk, .span, or .turn
+
+        Returns:
+            FlowRunner configured to emit events
+        """
+        from .flow_components import EventLogLevel
+        if event_level is None:
+            event_level = EventLogLevel.chunk
+        if ctx is not None:
+            self._ctx = ctx
+        # self._load_eval_args = load_eval_args
+        return FlowRunner(self, ctx=self._ctx, event_level=event_level).stream_events()
+        # return FlowRunner(self, event_level=event_level, need_ctx=False).stream_events()
 
 # ============================================================================
 # FlowRunner - Orchestrates nested process execution
@@ -1623,7 +1689,7 @@ class FlowRunner:
         ...     print(f"Event: {event.type} - {event.name}")
     """
 
-    def __init__(self, root_process: Process, ctx: "Context | None" = None, event_level=None):
+    def __init__(self, root_process: Process, ctx: "Context | None" = None, event_level=None, need_ctx: bool = True):
         """
         Initialize FlowRunner.
 
@@ -1642,6 +1708,7 @@ class FlowRunner:
         self._response_to_send: Any = None  # Response from child to send to parent
         self._exited_processes: list[ObservableProcess] = []
         self.ctx = ctx or Context.current_or_none()
+        self._need_ctx = need_ctx
 
     @property
     def current(self) -> Process:
@@ -1670,6 +1737,13 @@ class FlowRunner:
         self._last_process = process
         self._exited_processes.append(process)
         return process
+    
+    async def revert(self, reason: str | None = None):
+        """Revert the stack to the last process."""
+        if not self.ctx.turn:
+            raise ValueError("Context turn is not set")
+        await self.ctx.turn.revert(reason)
+    
     
     def get_output(self, name: str | None = None) -> Any:
         if name is None:
@@ -1708,12 +1782,15 @@ class FlowRunner:
         await self.ctx.__aenter__()
         return self
 
-    async def exit_context(self):
+    async def exit_context(self, error: Exception | None = None):
         if not self.ctx:
             raise ValueError("Context is not set")
         if not self.ctx.is_set():
             return self
-        await self.ctx.__aexit__(None, None, None)
+        if error:
+            await self.ctx.__aexit__(type(error), error, None)
+        else:
+            await self.ctx.__aexit__(None, None, None)
         return self
 
     async def __anext__(self):
@@ -1723,6 +1800,7 @@ class FlowRunner:
         Returns:
             StreamEvent if emitting events, otherwise the value from current process
         """
+        
         await self.enter_context()
         while self.stack:
             try:
@@ -1822,6 +1900,7 @@ class FlowRunner:
                 if self.should_output_events:
                     event = await self.try_build_error_event(process, e)
                     if not self.stack:
+                        await self.exit_context(e)
                         raise e
                     self._error_to_raise = e
                     return event
@@ -1831,6 +1910,7 @@ class FlowRunner:
                 
         # if not self.stack:
             # result = await self._commit_evaluation()
+        
         await self.exit_context()
         raise StopAsyncIteration
     

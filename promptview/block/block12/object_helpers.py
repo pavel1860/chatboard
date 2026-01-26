@@ -9,6 +9,8 @@ This module provides utilities for:
 
 from __future__ import annotations
 from typing import Any, Generator, Literal, Type
+from types import UnionType, NoneType
+from typing import get_origin, get_args, Union
 import json
 
 from pydantic import BaseModel
@@ -171,6 +173,28 @@ def parse_content(content: str, type: Type) -> Any:
         return json.loads(content)
     else:
         raise ValueError(f"Unsupported type: {type}")
+    
+    
+def parse_union_content(content, content_type):
+    is_optional=False
+    non_none_args = [content_type]
+    origin = get_origin(content_type)
+    if origin is Union or isinstance(content_type, UnionType):
+        args = get_args(content_type)
+        non_none_args = [arg for arg in args if arg is not NoneType]
+        is_optional = len(non_none_args) < len(args) 
+    if is_optional:
+        if not content:
+            return None
+        elif content.lower().strip() == "none":
+            return None    
+    for args in non_none_args:
+        try:
+            return parse_content(content, args)
+        except ValueError:
+            continue
+    raise ValueError(f"Failed to parse content: {content}")
+
 
 
 def block_to_object(block: Block, target_type: Type) -> Any:

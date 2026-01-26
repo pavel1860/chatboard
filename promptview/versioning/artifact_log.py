@@ -249,7 +249,7 @@ class ArtifactLog:
             for position, item in enumerate(target):
                 item, kind, artifact_id = _sanitize_target_value(item)
                 if kind == "block":
-                    block_item = await store_block(item, ctx.branch.id, ctx.turn.id, span_id)
+                    block_item = await store_block(item, ctx.branch.id, ctx.turn.id, span_id, span=execution_span.name)
                     block_item._block = item
                     item = block_item
                     artifact_id = item.artifact_id
@@ -271,7 +271,7 @@ class ArtifactLog:
         else:
             target, kind, artifact_id = _sanitize_target_value(target)
             if kind == "block":
-                block_tree = await store_block(target, ctx.branch.id, ctx.turn.id, span_id)
+                block_tree = await store_block(target, ctx.branch.id, ctx.turn.id, span_id, span=execution_span.name)
                 artifact = block_tree.artifact
                 artifact_id = block_tree.artifact_id
             elif kind == "span":

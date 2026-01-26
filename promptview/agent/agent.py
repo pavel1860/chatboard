@@ -1,7 +1,8 @@
 from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, TYPE_CHECKING, Type
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from ..prompt import PipeController
+from ..prompt import PipeController, component, stream
+from ..prompt.fbp_process import TurnController
 from ..prompt.context import Context, VerbosityLevel
 from ..prompt.flow_components import EventLogLevel, FlowRunner
 from ..block.util import StreamEvent
@@ -256,9 +257,58 @@ class Agent(Generic[P]):
                 async for event in self.agent_component(*args).stream():
                     yield event
                 await eval_ctx.commit_test_turn()
+                
+    def run_debug(
+        self,
+        message: Block | str,  
+        state: BaseModel | None = None,
+        auth: AuthModel | None = None,
+        branch_id: int | None = None, 
+        branch: "Branch | None" = None,         
+        auto_commit: bool = True,
+        level: Literal["chunk", "span", "turn"] = "chunk",      
+        verbose: set[VerbosityLevel] | None = None,
+        load_cache: dict[str, str] | None = None,
+        **kwargs: dict,
+    ):
+
+        ctx = Context(auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
+        if state is not None:
+            ctx.state = state
+        print_events = verbose and "events" in verbose
+        ctx.start_turn(auto_commit=auto_commit)
+        if isinstance(message, str):
+            message = Block(message, role="user")
+            # yield self.agent_component(message).stream(event_level=EventLogLevel[level])
+        # agent_gen = self.agent_component(message)
+        # return TurnController(self.agent_component, ctx, message, name=self.name)
+        return self.agent_component(message).stream(event_level=EventLogLevel[level], ctx=ctx)
+    @component()
+    async def run_debug4(
+        self,
+        message: Block | str,  
+        state: BaseModel | None = None,
+        auth: AuthModel | None = None,
+        branch_id: int | None = None, 
+        branch: "Branch | None" = None,         
+        auto_commit: bool = True,
+        level: Literal["chunk", "span", "turn"] = "chunk",      
+        verbose: set[VerbosityLevel] | None = None,
+        load_cache: dict[str, str] | None = None,
+        **kwargs: dict,
+    ):
+        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
+        if state is not None:
+            ctx.state = state
+        print_events = verbose and "events" in verbose
+        ctx.start_turn(auto_commit=auto_commit) 
+        yield self.agent_component(message).stream(event_level=EventLogLevel[level], ctx=ctx)
+        
+
+        
             
 
-    async def run_debug(
+    async def run_debug1(
         self,
         message: Block | str,  
         state: BaseModel | None = None,
@@ -284,6 +334,9 @@ class Agent(Generic[P]):
                     else:
                         print(event)
                 yield event
+                
+                
+
 
     async def run_debug2(
         self,

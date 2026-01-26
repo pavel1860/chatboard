@@ -50,7 +50,8 @@ def stream(
 
 def component(
     # accumulator: SupportsExtend[CHUNK] | Callable[[], SupportsExtend[CHUNK]]
-    tags: list[str] = []
+    tags: list[str] = [],
+    need_ctx: bool = True
 ) -> Callable[[Callable[P, AsyncGenerator[CHUNK | StreamController, None]]], Callable[P, PipeController]]:
     def decorator(
         func: Callable[P, AsyncGenerator[CHUNK | StreamController, None]]
@@ -63,7 +64,8 @@ def component(
                 span_type="component", 
                 args=args, 
                 kwargs=kwargs,
-                tags=tags
+                tags=tags,
+                need_ctx=need_ctx
             )
         return wrapper
     return decorator

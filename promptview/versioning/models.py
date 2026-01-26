@@ -41,7 +41,7 @@ _curr_turn = contextvars.ContextVar("curr_turn", default=None)
 
 
 
-SpanType = Literal["component", "stream", "llm", "evaluator"]
+SpanType = Literal["component", "stream", "llm", "evaluator", "turn"]
 ArtifactKindEnum = Literal["block", "span", "log", "model", "parameter", "list"]
 
 class TurnStatus(enum.StrEnum):

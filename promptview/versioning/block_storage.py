@@ -96,6 +96,7 @@ class BlockModel(VersionedModel):
         content_hash: SHA256 of block content (for dedup lookup)
         data: Complete block tree as JSONB (Block.model_dump())
         role: Block's role for quick filtering
+        span: Name of the execution span that created this block
         created_at: When this block was first stored
     """
     _namespace_name: str = "blocks"
@@ -105,6 +106,7 @@ class BlockModel(VersionedModel):
     content_hash: str = ModelField(index=True)  # For dedup lookup
     data: dict = ModelField()  # Block.model_dump()
     role: str | None = ModelField(default=None, index=True)
+    span: str | None = ModelField(default=None, index=True)
     created_at: dt.datetime = ModelField(default_factory=dt.datetime.now, order_by=True)
 
     def to_block(self) -> "Block":
@@ -113,12 +115,13 @@ class BlockModel(VersionedModel):
         return Block.model_load(self.data)
 
     @classmethod
-    def from_block(cls, block: "Block") -> "BlockModel":
+    def from_block(cls, block: "Block", span: str | None = None) -> "BlockModel":
         """Create BlockModel instance from Block (not saved yet)."""
         return cls(
             content_hash=compute_block_hash(block),
             data=block.model_dump(),
             role=block.role if hasattr(block, '_role') and block._role else None,
+            span=span,
         )
 
 
@@ -131,6 +134,7 @@ async def store_block(
     branch_id: int | None = None,
     turn_id: int | None = None,
     span_id: int | None = None,
+    span: str | None = None,
     deduplicate: bool = True,
 ) -> BlockModel:
     """
@@ -147,6 +151,7 @@ async def store_block(
         branch_id: Branch ID (uses context if not provided)
         turn_id: Turn ID (uses context if not provided)
         span_id: Execution span ID (uses context if not provided)
+        span: Execution span name (uses context if not provided)
         deduplicate: If True, reuse existing blocks with same hash
 
     Returns:
@@ -171,13 +176,15 @@ async def store_block(
         branch_id = Branch.current().id
     if turn_id is None:
         turn_id = Turn.current().id
-    if span_id is None:
-        curr_span = ExecutionSpan.current_or_none()
-        if curr_span is not None:
-            span_id = curr_span.id
+
+    curr_span = ExecutionSpan.current_or_none()
+    if span_id is None and curr_span is not None:
+        span_id = curr_span.id
+    if span is None and curr_span is not None:
+        span = curr_span.name
 
     # Create and save new block
-    block_model = BlockModel.from_block(block)
+    block_model = BlockModel.from_block(block, span=span)
     await block_model.save(branch=branch_id, turn=turn_id)
 
     return block_model
@@ -235,8 +242,6 @@ class BlockLogQuery:
         self._order_by: str = "created_at"
         self._reverse: bool = False
         self._filters: dict = {}
-        self._span_name: str | None = None
-        self._span_ids: list[int] | None = None
         self._should_extract: bool = True
         self._branch: Branch | int | None = None
         self._statuses: list[TurnStatus] = [TurnStatus.COMMITTED, TurnStatus.STAGED]
@@ -261,21 +266,21 @@ class BlockLogQuery:
     def where(
         self,
         role: str | list[str] | None = None,
-        span: str | None = None,
+        span: str | list[str] | None = None,
         content_hash: str | None = None,
     ) -> "BlockLogQuery":
         """Add filters to query."""
         if role is not None:
             self._filters["role"] = role
         if span is not None:
-            self._span_name = span
+            self._filters["span"] = span
         if content_hash is not None:
             self._filters["content_hash"] = content_hash
         return self
 
-    def span(self, span_name: str) -> "BlockLogQuery":
+    def span(self, span: str) -> "BlockLogQuery":
         """Filter by execution span name."""
-        self._span_name = span_name
+        self._filters["span"] = span
         return self
 
     def branch(self, branch: Branch | int) -> "BlockLogQuery":
@@ -298,16 +303,7 @@ class BlockLogQuery:
         self._offset = n
         return self
 
-    async def _resolve_span_ids(self) -> list[int] | None:
-        """Resolve span name to span IDs."""
-        from .dataflow_models import ExecutionSpan
-        if self._span_name is None:
-            return None
-
-        spans = await ExecutionSpan.query().where(name=self._span_name)
-        return [s.id for s in spans]
-
-    def build_query(self, span_ids: list[int] | None = None) -> "PgQueryBuilder[BlockModel]":
+    def build_query(self) -> "PgQueryBuilder[BlockModel]":
         """Build the underlying query."""
         query = BlockModel.query(
             branch=self._branch,
@@ -325,10 +321,12 @@ class BlockLogQuery:
         if "content_hash" in self._filters:
             query = query.where(content_hash=self._filters["content_hash"])
 
-        # Apply span filter via artifact
-        if span_ids is not None:
-            # Filter through artifact's span_id
-            query = query.where(Artifact.span_id.isin(span_ids))
+        if "span" in self._filters:
+            span = self._filters["span"]
+            if isinstance(span, list):
+                query = query.where(BlockModel.span.isin(span))
+            else:
+                query = query.where(span=span)
 
         # Apply ordering and pagination
         if self._order_by:
@@ -344,13 +342,7 @@ class BlockLogQuery:
         """Execute query and return BlockList."""
         from ..block.block12 import BlockList
 
-        # Resolve span name to IDs if provided
-        span_ids = await self._resolve_span_ids()
-        if self._span_name is not None and not span_ids:
-            # Span name was provided but no matching spans found
-            return BlockList([])
-
-        query = self.build_query(span_ids=span_ids)
+        query = self.build_query()
         block_models = await query.execute()
 
         # Convert to Block instances
@@ -372,8 +364,7 @@ class BlockLogQuery:
 
     async def count(self) -> int:
         """Count matching blocks."""
-        span_ids = await self._resolve_span_ids()
-        query = self.build_query(span_ids=span_ids)
+        query = self.build_query()
         return await query.count()
 
 
@@ -406,6 +397,7 @@ class BlockLog:
         branch_id: int | None = None,
         turn_id: int | None = None,
         span_id: int | None = None,
+        span: str | None = None,
         deduplicate: bool = True,
     ) -> BlockModel:
         """
@@ -419,6 +411,7 @@ class BlockLog:
             branch_id=branch_id,
             turn_id=turn_id,
             span_id=span_id,
+            span=span,
             deduplicate=deduplicate,
         )
 
@@ -453,6 +446,7 @@ class BlockLog:
         branch_id: int | None = None,
         turn_id: int | None = None,
         span_id: int | None = None,
+        span: str | None = None,
     ) -> tuple[BlockModel, bool]:
         """
         Get existing block or create new one.
@@ -473,6 +467,7 @@ class BlockLog:
             branch_id=branch_id,
             turn_id=turn_id,
             span_id=span_id,
+            span=span,
             deduplicate=False,  # Already checked
         )
         return block_model, True
