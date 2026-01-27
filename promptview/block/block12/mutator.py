@@ -447,11 +447,11 @@ class XmlMutator(Mutator):
         return blk
     
     
-    def extract(self) -> Block:
-        blk = Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
-        if not self.block.body:
-            blk /= Block()
-        return blk
+    # def extract(self) -> Block:
+    #     blk = Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
+    #     if not self.block.body:
+    #         blk /= Block()
+    #     return blk
     
 
     def commit(self, block: Block, postfix: Block | None = None) -> Block:

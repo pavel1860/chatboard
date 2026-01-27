@@ -1175,8 +1175,9 @@ class StreamController(ObservableProcess):
         from ..versioning.artifact_log import ArtifactLog
         from ..block.block12.parsers import ParserEvent
 
-         
-        if type(payload) == ParserEvent:     
+        
+        if type(payload) == ParserEvent: 
+            print(payload.type, payload.path)    
             # if payload.type == "block_stream":
             # if payload.type == "block_init":
             #     print(payload.type, payload.value.path)

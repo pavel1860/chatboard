@@ -500,12 +500,14 @@ class Block:
         return self.extract().get_value()
             
     def get_value(self):
-        from .object_helpers import parse_union_content
+        from .object_helpers import parse_union_content        
         kind = self.kind()
         if kind == "leaf":
             return parse_union_content(self.text, self._type or str)
         elif kind == "record":
             # return self.body[0].get_value()
+            if self._type is Block:
+                return self.body[0]
             return parse_union_content(self.body[0].text, self._type or str)
         else:
             result = {}
@@ -662,7 +664,7 @@ class Block:
 
     def insert_child(
         self,
-        index: int,
+        index: int | tuple[int, ...] | list[int],
         child: Block | ContentType = None,
         **kwargs
     ) -> Block:
@@ -675,7 +677,17 @@ class Block:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
-        return self._raw_insert_child(index, child)
+        target = self
+        if isinstance(index, (tuple, list)):
+            if len(index) == 0:
+                raise ValueError("Index path cannot be empty")
+            elif len(index) == 1:
+                index = index[0]
+            else:
+                path = index[:-1]
+                index = index[-1]
+                target = target.get_path(path)
+        return target._raw_insert_child(index, child)
 
     # =========================================================================
     # Operator Overloads
@@ -1704,7 +1716,7 @@ class Block:
         elif isinstance(key, str):
             return self.get(key)
         elif isinstance(key, tuple):
-            return self.get_index(key)
+            return self.get_path(key)
         else:
             raise ValueError(f"Invalid key: {key}")
 
@@ -1716,11 +1728,19 @@ class Block:
         raise ValueError(f"Block with tag '{tag}' not found")
     
     
-    def get_index(self, index: int | tuple[int,...]) -> Block:
-        if isinstance(index, int):
-            return self.body[index]
+    def get_path(self, idx_path: int | tuple[int,...] | list[int]) -> Block:
+        if isinstance(idx_path, int):
+            return self.body[idx_path]
         else:
-            return self.body[index[0]].get_index(index[1:] if len(index) > 2 else index[1])
+            idx = idx_path[0]
+            if len(idx_path) == 1:
+                return self.body[idx]
+            elif len(idx_path) == 2:
+                return self.body[idx].body[idx_path[1]]
+            elif len(idx_path) > 2:
+                return self.body[idx].get_path(idx_path[1:])
+            else:
+                raise ValueError(f"Invalid index path: {idx_path}")
     
     def get_or_none(self, tag: str) -> "Block | None":
         for block in self.iter_depth_first():
@@ -1879,9 +1899,9 @@ class Block:
     # =========================================================================
     
     def extract(self) -> Block:     
-        if not self.is_rendered:
-            return self
-        ex_block = self.mutator.extract()        
+        # if not self.is_rendered:
+        #     return self
+        ex_block = self.mutator.extract() if self.is_rendered else self.copy(deep=False)
         for child in self.body:
             ex_child = child.extract()
             ex_block.append_child(ex_child)

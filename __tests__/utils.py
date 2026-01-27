@@ -182,3 +182,23 @@ def print_event(ev, split: bool = False):
         print(be.type,be.path, be.value)        
     else:
         print(ev.type, ev.payload)
+
+        
+        
+        
+def validate_events(events):
+    path_lookup = {}
+    for e in events:
+        if e.type == "llm_delta":
+            pe = e.payload
+            if pe.type == "block_init":
+                # if pe.path in path_lookup:
+                    # print(f"duplicate path {pe.path}")
+                # else:
+                assert pe.path not in path_lookup, f"duplicate path {pe.path}"
+                path_lookup[pe.path] = "init"
+            elif pe.type == "block_commit":
+                assert pe.path in path_lookup, f"commit path {pe.path} not found"
+                path_lookup[pe.path] = "commit"
+    for path, status in path_lookup.items():
+        assert status == "commit", f"path {path} not committed"
