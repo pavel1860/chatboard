@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, Generator, TypeVar
 from xml.parsers import expat
 
 from .block import Block
+from .path import IndexPath
 from .chunk import BlockChunk, ChunkMeta
 from ...prompt.fbp_process import Process
 from .schema import BlockSchema, BlockListSchema, BlockList
@@ -48,6 +49,8 @@ class ParserEvent:
                 raise ParserError("Block body is not empty")
         elif isinstance(value, list):
             self.value = value
+        elif isinstance(value, BlockChunk):
+            self.value = [value]
         elif value is None:
             self.value = value
         else:
@@ -96,7 +99,7 @@ class SchemaCtx[TxSchema]:
     
     
     def append(self, chunks: list[BlockChunk]):
-        raise NotImplementedError("append not implemented")
+        return self.block.append(chunks)
     
     def commit(self, name: str, chunks: list[BlockChunk]):
         raise NotImplementedError("commit not implemented")
@@ -118,7 +121,7 @@ class SchemaCtx[TxSchema]:
         else:
             raise ValueError(f"Unknown schema type: {type(schema)}")
         
-    def add_newline(self):
+    def add_newline(self, chunks: list[BlockChunk] | None = None):
         block = self.block.append_child()
         self._should_add_newline = False
         return block
@@ -135,7 +138,7 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         return self
     
     
-    def append(self, chunks: list[BlockChunk]):  
+    def append2(self, chunks: list[BlockChunk]):  
         block = None    
         for chunk in chunks:
             style = None
@@ -259,9 +262,11 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
         self._markdown_ended = True
         return postfix
 
+ContextState = Literal["none", "init", "content", "commit"]
+
 class ContextStack:
     
-    def __init__(self, schema: "BlockSchema | BlockListSchema", root_name: str | None = None):
+    def __init__(self, schema: "BlockSchema | BlockListSchema", output_queue: list[ParserEvent], root_name: str | None = None):
         self._stack: list[SchemaCtx] = []
         self._commited_stack: list[SchemaCtx] = []
         self._schema = schema
@@ -269,6 +274,8 @@ class ContextStack:
         self._did_start = False
         self._root_name = root_name
         self._pending_chunks: list[BlockChunk] = []
+        self._state: ContextState = "none"
+        self.events = output_queue
     
     @property
     def curr_block(self) -> Block:
@@ -312,9 +319,22 @@ class ContextStack:
             chunks = pending_chunks + chunks
             self._pending_chunks = []
         return chunks
+    
+    def _push_pending_chunk(self, chunk: BlockChunk):
+        self._pending_chunks.append(chunk)
+        
+        
+    def _prepend_pending_chunks(self, block: Block):
+        if self._pending_chunks:
+            for chunk in reversed(self._pending_chunks):
+                block.prepend(chunk.content, style=chunk.style, logprob=chunk.logprob)
+            self._pending_chunks = []
+        return block
         
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]):
-        events = []
+        if name == self._root_name:
+            chunks = []
+        self._state = "init"
         self._pending_pop = None
         if self.is_empty():
             if self._did_start:
@@ -328,22 +348,27 @@ class ContextStack:
             if isinstance(schema_ctx, BlockListSchemaCtx):
                 schema_ctx = schema_ctx.init(name, attrs, chunks)                
                 self.push(schema_ctx)
-                events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
+                # events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
+                self._add_event("block_init", schema_ctx.path, schema_ctx.block)
                 schema_ctx = self.top().build_child_schema(name, attrs)
             
-        chunks = self._append_pending_chunks(chunks)
+        # chunks = self._append_pending_chunks(chunks)
         schema_ctx = schema_ctx.init(name, attrs, chunks)        
-        self.push(schema_ctx)                    
-        events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
-        return events
+        self.push(schema_ctx)  
+        self._prepend_pending_chunks(schema_ctx.block)
+        self._add_event("block_init", schema_ctx.path, schema_ctx.block)
+        # events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
+        # return events
     
     def commit(self, name: str, chunks: list[BlockChunk]):
-        events = []
-        chunks = self._append_pending_chunks(chunks)
+        if name == self._root_name:
+            chunks = []
+        self._state = "commit"
+        # chunks = self._append_pending_chunks(chunks)
         if self.top(False).schema.name != name:
             if isinstance(self.top(False), BlockListSchemaCtx):
                 schema_ctx = self.pop()                
-                events.append(ParserEvent(path=schema_ctx.path, type="block_commit", value=None))
+                self._add_event("block_commit", schema_ctx.path, None)
                 if self.top(False).schema.name != name:
                     raise ParserError(f"Expected {name} but got {self.top().schema.name}")
             else:
@@ -352,12 +377,99 @@ class ContextStack:
         schema_ctx = self.pop()
         
         postfix = schema_ctx.commit(name, chunks)
-        events.append(ParserEvent(path=schema_ctx.path, type="block_commit", value=postfix))
-        self._commited_stack.append(schema_ctx)
-        return events
+        self._add_event("block_commit", schema_ctx.path, postfix)
+        self._prepend_pending_chunks(postfix)
+        self._commited_stack.append(schema_ctx)        
+    
+    def _add_event(self, type: Literal["block_init", "block_commit", "block_delta", "block"], path: str | IndexPath , value: Block | list[BlockChunk]):
+        if isinstance(path, IndexPath):
+            path = str(path)
+        self.events.append(ParserEvent(path=path, type=type, value=value))
+    
+    # def _append_none(self, chunk: BlockChunk):
+    #     if chunk.starts_with_tab():
+    #         self._push_pending_chunk(chunk)
+    #         return
+    #     elif chunk.is_newline():
+    #         pass
+    #     else:
+    #         self._state = "content"
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         self.top().append(_chunks)                                
+            
+    # def _append_init(self, chunk: BlockChunk):
+    #     top_ctx = self.top()
+    #     if chunk.is_newline():
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_init", top_ctx.path, event)
+    #         block = top_ctx.add_newline()
+    #         self._add_event("block", block.path, block)
+    #         self._state = "none"
+    #     else:
+    #         event = top_ctx.append([chunk])            
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         events = top_ctx.append(_chunks)    
+    #         self._add_event("block_delta", top_ctx.path, events)
+    #         self._state = "content"
+                                        
+    # def _append_content(self, chunk: BlockChunk):
+    #     top_ctx = self.top()
+    #     if chunk.is_newline():
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_delta", top_ctx.path, event)
+    #         block = top_ctx.add_newline()
+    #         self._add_event("block", block.path, block)
+    #         self._state = "none"
+    #     else:                        
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         top_ctx.append(_chunks)
+    #         self._add_event("block_delta", top_ctx.path, _chunks)
+    #         self._state = "content"
+    
+    # def _append_commit(self, chunk: BlockChunk):
+    #     top_ctx = self.top()
+    #     if chunk.is_newline():
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_delta", top_ctx.path, event)
+    #         self._state = "none"
+    #     else:
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_delta", top_ctx.path, event)
+    #         self._state = "commit"
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         top_ctx.append(_chunks)
+    
+    # def append(self, chunks: list[BlockChunk]):
+    #     for chunk in chunks:
+    #         if self._state == "none":
+    #             self._append_none(chunk)
+    #         elif self._state == "init":
+    #             self._append_init(chunk)
+    #         elif self._state == "content":
+    #             self._append_content(chunk)
+    #         elif self._state == "commit":
+    #             self._append_commit(chunk)
+    #         else:
+    #             raise ParserError(f"Unknown state: {self._state}")
+    
+    
+    def append(self, chunks: list[BlockChunk]):
+        top = self.top()
+        for chunk in chunks:
+            if chunk.starts_with_tab():
+                self._push_pending_chunk(chunk)
+                continue
+            for event in top.append([chunk]):
+                if isinstance(event, Block):
+                    self._add_event("block", str(event.path), event)
+                    self._prepend_pending_chunks(event)
+                else:
+                    self._add_event("block_delta", str(self.top().path), event)
+    
     
         
-    def append(self, chunks: list[BlockChunk]) -> list[ParserEvent]:
+    def append2(self, chunks: list[BlockChunk]) -> list[ParserEvent]:
+        # handle suffix data 
         if self._pending_pop is not None:
             if chunks[0] != "\n":
                 self._pending_pop = None
@@ -475,7 +587,7 @@ class XmlParser(Process):
             # Single schema - wrap it
             self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
             self._wrapper_schema._raw_append_child(self.schema)
-        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, root_name=self._root_tag)
+        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, output_queue=self._output_queue, root_name=self._root_tag)
         self._index = -1
         self._exception_to_raise: Exception | None = None
 
@@ -674,8 +786,11 @@ class XmlParser(Process):
             if chunk.content:
                 if chunk.starts_with_tab():
                     lchunk, chunk = chunk.split_tab()
-                    result.append(lchunk)                    
-                result.append(chunk)
+                    result.append(lchunk)
+                    if chunk.content:
+                        result.append(chunk)
+                else:                    
+                    result.append(chunk)
 
             i += 1
 
@@ -705,17 +820,25 @@ class XmlParser(Process):
             print(f"Event {self._index}: {event_type}, data={event_data!r}, chunks={chunks}")
             if event_type == "end":
                 # print(f"####################### {event_data} #########################")
-                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event_data} ^^^^^^^^^^^^^^^^^^^^^^^^")
+                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event_data} ^^^^^^^^^^^^^^^^^^^^^^^^")        
             
-
         if event_type == "start":
-            name, attrs = event_data
-            self._handle_start(name, attrs, chunks)
+            name, attrs = event_data            
+            self._ctx_stack.init(name, attrs, chunks)
         elif event_type == "end":
             name = event_data
-            self._handle_end(name, chunks)
+            self._ctx_stack.commit(name, chunks)
         elif event_type == "chardata":
-            self._handle_chardata(chunks)
+            self._ctx_stack.append(chunks)
+
+        # if event_type == "start":
+        #     name, attrs = event_data
+        #     self._handle_start(name, attrs, chunks)
+        # elif event_type == "end":
+        #     name = event_data
+        #     self._handle_end(name, chunks)
+        # elif event_type == "chardata":
+        #     self._handle_chardata(chunks)
         
         # if self._verbose:
         #     if not self._ctx_stack.is_empty():

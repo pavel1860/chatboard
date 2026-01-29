@@ -32,13 +32,69 @@ async def clean_database(test_db_pool):
     # await NamespaceManager.recreate_all_namespaces()
     
     
+
+
+
+def validate_events(events):  
     
-    
-    
-    
-    
-    
-    
+    def validate_existing(blk, idx):
+        try:
+            b = blk[idx]
+            return True
+        except:
+            return False
+    path_lookup = {}
+    root = None
+    index = -1
+    try:
+        for ev in events:
+            index += 1
+            # print(f"{index:03d}: [{ev.path}] {ev.type}")
+            print(f"{index}: [{ev.path}] {ev.type}     {ev.value}")
+            # if root is not None:
+                # assert len(ev.path) > 0
+                
+            if ev.type == "block_init":
+                
+                if len(ev.value.body) > 0:
+                    raise ValueError(f"Block has body at {ev.int_path}")
+                # handle root block
+                if root is None:
+                    root = ev.get_value()
+                    continue               
+                
+                assert ev.path not in path_lookup, f"duplicate path {ev.path}"
+                path_lookup[ev.path] = "init"
+                if validate_existing(root, ev.int_path):
+                    raise ValueError(f"Block already exists at {ev.int_path}")        
+                root.insert_child(ev.int_path, ev.get_value())
+                
+            elif ev.type == "block_delta":
+                if not validate_existing(root, ev.int_path):
+                    raise ValueError(f"Block does not exist at {ev.int_path}")        
+                target = root[ev.int_path]
+                target.append(ev.get_value())
+                            
+            elif ev.type == "block_commit":
+                if ev.path:
+                    assert ev.path in path_lookup, f"commit path '{ev.path}' not found"                
+                    path_lookup[ev.path] = "commit"
+            
+            elif ev.type == "block":
+                if len(ev.value.body) > 0:
+                    raise ValueError(f"Block has body at {ev.int_path}")
+                if validate_existing(root, ev.int_path):
+                    raise ValueError(f"Block already exists at {ev.int_path}")
+                root.insert_child(ev.int_path, ev.get_value())
+            else:
+                raise ValueError(f"Unknown event type: {ev.type}")
+    except Exception as e:
+        if root is not None:
+            print("----------------------")
+            root.print_debug()
+        raise e
+    for path, status in path_lookup.items():
+        assert status == "commit", f"path '{path}' not committed"
     
     
 def chunk_xml_for_llm_simulation(xml_str: str, seed: int | None = None, as_chunks: bool = False) -> list[str]:
@@ -125,6 +181,10 @@ def chunk_xml_for_llm_simulation(xml_str: str, seed: int | None = None, as_chunk
     return chunks
 
 
+
+
+
+
 def random_split(s: str) -> list[str]:
     """Randomly decide to split a string or keep it whole."""
     if len(s) <= 2 or random.random() > 0.3:
@@ -132,6 +192,9 @@ def random_split(s: str) -> list[str]:
     # Split at a random point
     split_point = random.randint(1, len(s) - 1)
     return [s[:split_point], s[split_point:]]
+
+
+
 
 
 def chunk_text_llm_style(text: str) -> list[str]:
@@ -186,19 +249,19 @@ def print_event(ev, split: bool = False):
         
         
         
-def validate_events(events):
-    path_lookup = {}
-    for e in events:
-        if e.type == "llm_delta":
-            pe = e.payload
-            if pe.type == "block_init":
-                # if pe.path in path_lookup:
-                    # print(f"duplicate path {pe.path}")
-                # else:
-                assert pe.path not in path_lookup, f"duplicate path {pe.path}"
-                path_lookup[pe.path] = "init"
-            elif pe.type == "block_commit":
-                assert pe.path in path_lookup, f"commit path {pe.path} not found"
-                path_lookup[pe.path] = "commit"
-    for path, status in path_lookup.items():
-        assert status == "commit", f"path {path} not committed"
+# def validate_events(events):
+#     path_lookup = {}
+#     for e in events:
+#         if e.type == "llm_delta":
+#             pe = e.payload
+#             if pe.type == "block_init":
+#                 # if pe.path in path_lookup:
+#                     # print(f"duplicate path {pe.path}")
+#                 # else:
+#                 assert pe.path not in path_lookup, f"duplicate path {pe.path}"
+#                 path_lookup[pe.path] = "init"
+#             elif pe.type == "block_commit":
+#                 assert pe.path in path_lookup, f"commit path {pe.path} not found"
+#                 path_lookup[pe.path] = "commit"
+#     for path, status in path_lookup.items():
+#         assert status == "commit", f"path {path} not committed"

@@ -62,6 +62,7 @@ class MutatorConfig:
             block = self.mutator.init(block)
             block = _apply_metadata(block, tags, role, style, attrs, type=type)
             block.mutator = self.mutator(block, is_streaming=is_streaming)
+            block.mutator._state = "init"
             block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
     
@@ -84,6 +85,7 @@ class MutatorConfig:
                 raise RenderError(f"You cannot reuse original blocks in a Mutator. Please use the block content instead.\n Reused blocks: {reused_blocks}")
             block = _apply_metadata(block, orig_block.tags, orig_block.role, orig_block.style, orig_block.attrs)
             block.mutator = self.mutator(block, is_streaming=is_streaming)
+            self.mutator._state = "init"
             block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
 
@@ -177,7 +179,7 @@ def _transfer_metadata(from_block: Block, to_block: Block):
 class Stylizer(metaclass=MutatorMeta):
     styles = ()
     
-    def on_append(self, chunk):
+    def on_append(self, chunk: BlockChunk) -> Generator[Block | list[BlockChunk], Any, Any]:
         raise NotImplementedError("Stylizer.append is not implemented")
         
         
@@ -207,6 +209,7 @@ class Mutator(metaclass=MutatorMeta):
     target: str = "content"
     _initialized: bool = False
     _committed: bool = False
+    _state: str = "none"
 
 
     def __init__(self, block: Block, is_streaming: bool = False):
@@ -305,6 +308,7 @@ class Mutator(metaclass=MutatorMeta):
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
         block.mutator = cls(block, is_streaming=is_streaming)
+        block.mutator._state = "init"
         return block
     
     @classmethod
@@ -316,7 +320,7 @@ class Mutator(metaclass=MutatorMeta):
         return Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
     
     
-    def on_append(self, content: Block) -> Generator[Block | BlockChunk, Any, Any]:
+    def on_append(self, chunk: BlockChunk) -> Generator[Block | BlockChunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append is not implemented")
     
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
@@ -327,6 +331,7 @@ class Mutator(metaclass=MutatorMeta):
         if self._committed:
             raise ValueError(f"Mutator {self.__class__.__name__} is already committed for block {self.block}")
         res = self.commit(self.block, postfix)
+        self._state = "committed"
         self._committed = True
         return res
     
@@ -384,6 +389,7 @@ class XmlMutator(Mutator):
         └── children[-1]: closing tag (tail)
     """
     styles = ("xml",)
+    _state = "none"
 
     # =========================================================================
     # Structure Access Properties
@@ -475,8 +481,18 @@ class XmlMutator(Mutator):
         prev = child.prev()
         if not self.is_streaming and not prev.has_newline():
             yield prev.add_newline(style="xml")
-        yield child.indent(style="xml")
+        if not self.is_streaming:
+            yield child.indent(style="xml")
         
+        
+    def on_append(self, chunk: BlockChunk) -> Generator[Block | list[BlockChunk], Any, Any]:
+        if self._state == "init":
+            if not chunk.is_newline():                
+                yield self.block._raw_append_child()            
+                self._state = "content"            
+        
+            
+            
         
         
         

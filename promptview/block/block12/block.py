@@ -564,9 +564,10 @@ class Block:
         events = []
         if self._should_use_mutator("on_append"):
             # Get text content for mutator hooks
-            text_content = "".join(c.content for c in chunks)
-            for event in self.mutator.on_append(text_content):
-                events.append(event)
+            # text_content = "".join(c.content for c in chunks)
+            for chunk in chunks:
+                for event in self.mutator.on_append(chunk):
+                    events.append(event)
 
         result_chunks = self._raw_append(chunks)
         events.extend(result_chunks)
@@ -594,8 +595,8 @@ class Block:
         from .mutator import Mutator
         if type(self.mutator) is Mutator:
             return False
-        if self.mutator.is_streaming:
-            return False
+        # if self.mutator.is_streaming:
+        #     return False
         if is_overridden(self.mutator.__class__, method, Mutator):
             return True
         return False
@@ -931,7 +932,8 @@ class Block:
         Returns:
             List of BlockChunk objects with updated metadata
         """
-        target = self.head
+        # target = self.head
+        target = self.tail
         results = []
 
         for chunk in chunks:
