@@ -93,6 +93,10 @@ class SchemaCtx[TxSchema]:
     @property
     def path(self) -> str:
         return str(self.block.path)
+    
+    
+    def get_style(self) -> str:
+        return self.block.mutator.get_style()
 
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:
         raise NotImplementedError("init not implemented")
@@ -224,6 +228,10 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
     # @property
     # def block(self) -> Block:
     #     return self._md_parser.result
+    def get_style(self) -> str:
+        return "md"
+    
+    
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:    
         self._block = self.schema.init_partial(chunks, is_streaming=True)        
         return self
@@ -329,10 +337,11 @@ class ContextStack:
         self._pending_chunks.append(chunk)
         
         
-    def _prepend_pending_chunks(self, block: Block):
+    def _prepend_pending_chunks(self, block: Block):        
         if self._pending_chunks:
+            style = self.top().get_style()
             for chunk in reversed(self._pending_chunks):
-                block.prepend(chunk.content, style=chunk.style, logprob=chunk.logprob)
+                block.prepend(chunk.content, style=style, logprob=chunk.logprob)
             self._pending_chunks = []
         return block
         
@@ -400,17 +409,18 @@ class ContextStack:
     def append(self, chunks: list[BlockChunk]):
         top = self.top()
         for chunk in chunks:            
-            if chunk.starts_with_tab() and self._state in ["wait_for_block", "in_markdown"]:                
+            # if chunk.starts_with_tab() and self._state in ["wait_for_block", "in_markdown"]:                
+            if chunk.starts_with_tab() and self._state in ["wait_for_block"]:                
                 self._push_pending_chunk(chunk)
                 continue
-            # elif chunk.is_newline():
-                # if not self._state == "in_markdown":
             elif chunk.is_newline() and self._state == "in_block":
-                self._state = "wait_for_block" if not isinstance(top, BlockMarkdownSchemaCtx) else "in_markdown"         
+                # self._state = "wait_for_block" if not isinstance(top, BlockMarkdownSchemaCtx) else "in_markdown"         
+                self._state = "wait_for_block"
             for event in top.append([chunk]):
                 if isinstance(event, Block):
                     self._add_event("block", str(event.path), event)
                     self._prepend_pending_chunks(event)
+                    self._state = "in_block"
                     print(f"append Block!")
                 else:
                     self._add_event("block_delta", str(self.top().path), event)
@@ -869,7 +879,7 @@ class XmlParser(Process):
         
         if self._verbose:
             if not self._ctx_stack.is_empty():
-                print("===>")                
+                print("---")                
                 self._ctx_stack._stack[0].block.print_debug()
 
     def _on_start(self, name: str, attrs: dict):
