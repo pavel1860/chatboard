@@ -80,36 +80,55 @@ class LLMStreamController(StreamController):
         return stream
     
     
+    async def _store_llm_call(self):
+        from ..versioning.dataflow_models import LlmCall
+        if self._parser:
+            chunks = self._parser.get_chunks()
+        else:
+            chunks = []
+        llm_call = await LlmCall(
+            config=self.llm_config,
+            usage=self._stream.usage,
+            chunks=chunks,
+            request_id=self._stream.response.id,
+            message_id=self._stream.response.item_id,
+            span_id=self.span.id
+        ).save()
+        await self.span.add(llm_call)
+
+    
+    
     async def on_stop(self):
         """
         Mark span as completed when process exhausts.
         """
-        from ..versioning.dataflow_models import LlmCall
+        
         if self.span:
             self.span.status = "completed"
             self.span.end_time = __import__('datetime').datetime.now()
             await self.span.save()
             if hasattr(self._stream, "usage"):
-                if self._parser:
-                    chunks = self._parser.get_chunks()
-                else:
-                    chunks = []
-                llm_call = await LlmCall(
-                    config=self.llm_config,
-                    usage=self._stream.usage,
-                    chunks=chunks,
-                    request_id=self._stream.response.id,
-                    message_id=self._stream.response.item_id,
-                    span_id=self.span.id
-                ).save()
-                await self.span.add(llm_call)
-            
+                await self._store_llm_call()
 
         # Pop from context execution stack
         if self.ctx:
             await self.ctx.end_span()
 
-        
+    
+    async def on_error(self, error: Exception):
+        """
+        Mark span as failed on error.
+        """
+        if self.span:
+            self.span.status = "failed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+            if hasattr(self._stream, "usage"):
+                await self._store_llm_call()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
     
         
 

@@ -669,21 +669,40 @@ class XmlParser(Process):
         """Called when upstream is exhausted - finalize parsing."""
         self.close()
 
+    async def _drain_stream(self):
+        """Consume remaining upstream chunks without parsing, for reproducibility."""
+        try:
+            while True:
+                upstream_chunk = await super().__anext__()
+                if isinstance(upstream_chunk, BlockChunk):
+                    chunk = upstream_chunk
+                elif hasattr(upstream_chunk, 'content'):
+                    chunk = BlockChunk(
+                        upstream_chunk.content,
+                        logprob=getattr(upstream_chunk, 'logprob', None)
+                    )
+                else:
+                    chunk = BlockChunk(str(upstream_chunk))
+                # Store raw chunk data without feeding to parser
+                data = chunk.content.encode("utf-8")
+                start = self._total_bytes
+                end = start + len(data)
+                self._chunks.append((start, end, chunk))
+                self._total_bytes = end
+        except (StopAsyncIteration, Exception):
+            self._is_stream_exhausted = True
+
     async def __anext__(self):
         """
         Get next event from parser.
 
         Consumes chunks from upstream until an event is ready to output.
         """
-        # On Exception, consume the entire stream
+        # Re-raise stored exception (stream already drained)
         if self._exception_to_raise:
-            try:
-                for i in range(1000):
-                    upstream_chunk = await super().__anext__()
-            except StopAsyncIteration:
-                raise self._exception_to_raise
-            
-        # Return queued output if available    
+            raise self._exception_to_raise
+
+        # Return queued output if available
         if self._output_queue:
             return self._output_queue.pop(0)
         elif self._is_stream_exhausted:
@@ -712,9 +731,10 @@ class XmlParser(Process):
                     return self._output_queue.pop(0)
                 raise
             except Exception as e:
-                self._exception_to_raise = e 
-                if not self._exhaust_stream_on_exception:
-                    raise e
+                if self._exhaust_stream_on_exception:
+                    await self._drain_stream()
+                    self._exception_to_raise = e
+                raise
 
         if self._output_queue:
             return self._output_queue.pop(0)

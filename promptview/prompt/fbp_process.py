@@ -118,7 +118,7 @@ import os
 
 if TYPE_CHECKING:
     from ..block import Block
-    from ..versioning import DataFlowNode, ExecutionSpan, SpanType
+    from ..versioning import DataFlowNode, ExecutionSpan, SpanType, LlmCall
 
 
 def _serialize_for_hash(value: Any) -> Any:
@@ -504,8 +504,32 @@ class Stream(Process):
         self._save_stream_path = filepath
         self._collected_chunks = []
 
-    @classmethod
-    def load(cls, filepath: str, delay: float = 0.0):
+    # @classmethod
+    # def load(cls, filepath: str, delay: float = 0.0):
+    #     """
+    #     Load a stream from a saved JSONL file.
+
+    #     Args:
+    #         filepath: Path to JSONL file to load stream from
+    #         delay: Optional delay between IPs (for simulating streaming)
+
+    #     Returns:
+    #         New Stream instance that replays from file
+    #     """
+    #     async def load_stream():
+    #         from ..block import BlockChunk
+    #         with open(filepath, "r") as f:
+    #             for line in f:
+    #                 if line.strip():
+    #                     if delay > 0:
+    #                         await asyncio.sleep(delay)
+    #                     data = json.loads(line)
+    #                     block = BlockChunk.model_load(data)
+    #                     yield block
+
+    #     return cls(load_stream(), name=f"stream_from_{filepath}")
+    
+    def load(self, filepath: str, delay: float = 0.0):
         """
         Load a stream from a saved JSONL file.
 
@@ -527,7 +551,8 @@ class Stream(Process):
                         block = BlockChunk.model_load(data)
                         yield block
 
-        return cls(load_stream(), name=f"stream_from_{filepath}")
+        self._gen = load_stream()
+
 
     @classmethod
     def from_list(cls, chunks: list[str], name: str = "stream_from_list"):
@@ -1143,12 +1168,15 @@ class StreamController(ObservableProcess):
                     self._save_filepath = cache_path
 
         # Wrap in Stream process and pipe through Accumulator
+        # if load_filepath is not None:
+        #     stream = Stream.load(load_filepath, delay=self._load_delay or 0.05)
+        # else:
+        #     stream = self._init_stream(bound.args, bound.kwargs)
+        
+        stream = self._init_stream(bound.args, bound.kwargs)
         if load_filepath is not None:
-            stream = Stream.load(load_filepath, delay=self._load_delay or 0.05)
-        else:
-            stream = self._init_stream(bound.args, bound.kwargs)
-            # gen_instance = self._gen_func(*bound.args, **bound.kwargs)
-            # stream = Stream(gen_instance, name=f"{self._name}_stream")
+            stream.load(load_filepath, delay=self._load_delay or 0.05)
+
 
         if self._save_filepath is not None:
             os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
@@ -1246,9 +1274,9 @@ class StreamController(ObservableProcess):
         self._parser = XmlParser(block_schema, verbose=verbose)      
         return self
     
-    def name(self, name: str):
-        self._name = name
-        return self
+    # def name(self, name: str):
+    #     self._name = name
+    #     return self
 
 
     async def __anext__(self):
@@ -1769,8 +1797,23 @@ class FlowRunner:
             self._response_to_send = None
             return response
         return None
+    
+    def get_span(self, name: str) -> "ExecutionSpan":
+        for process in self._exited_processes:
+            if process.name == name:
+                return process.span
+        raise ValueError(f"ExecutionSpan {name} not found")
 
-        
+    def get_llm_call(self, name: str, index: int | None = None) -> "LlmCall":
+        span = self.get_span(name)
+        index = index or -1
+        if span is None:
+            raise ValueError(f"Span {name} not found")
+        if span.span_type != "llm":
+            raise ValueError(f"Span {name} is not an llm")
+        if index >= 0 and index >= len(span.llm_calls):
+            raise ValueError(f"Index {index} out of range for span {name}")
+        return span.llm_calls[index]
 
     def __aiter__(self):
         """Make FlowRunner async iterable."""
