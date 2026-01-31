@@ -285,8 +285,18 @@ class Turn(Model):
     _raise_on_error: bool = True
 
     forked_branches: List["Branch"] = RelationField( foreign_key="forked_from_turn_id")
-    
-    
+
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        if not isinstance(self.data, Tree):
+            ns = self.get_namespace()
+            relation = ns.get_relation('data')
+            object.__setattr__(self, 'data', Tree([], relation=relation))
+        if not isinstance(self.spans, Tree):
+            ns = self.get_namespace()
+            relation = ns.get_relation('spans')
+            object.__setattr__(self, 'spans', Tree([], relation=relation))
+
     @property
     def inputs(self) -> list["DataFlowNode"]:
         return self.data["1.0.*"]

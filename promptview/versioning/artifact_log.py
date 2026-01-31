@@ -194,7 +194,8 @@ class ArtifactLog:
             raise ValueError("Context is not set")
         span_id = None
 
-        execution_span = ctx.current_span            
+        execution_span = ctx.current_span
+        turn = ctx.turn
         if execution_span is None:
             # handle case when target is an ExecutionSpan and not span in context. add to root
             # value_path = str(ctx.get_next_top_level_span_index())
@@ -209,6 +210,7 @@ class ArtifactLog:
                 ).save()
             value._value = target
             await value.add(target.artifact, kind="span")
+            turn.data.append(value)
             return value
         span_id = execution_span.id
             

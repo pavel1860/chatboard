@@ -163,8 +163,17 @@ class Context(BaseModel):
             return self.current_component._span_tree
         return None
     
+    @property
+    def branch(self) -> Branch:
+        if self._branch is None:
+            raise ValueError("Branch not found")
+        return self._branch
     
-    
+    @property
+    def turn(self) -> Turn:
+        if self._turn is None:
+            raise ValueError("Turn not found")
+        return self._turn    
 
     @property
     def top_level_spans(self) -> list["ExecutionSpan"]:
@@ -178,6 +187,16 @@ class Context(BaseModel):
         If you have multiple top-level spans, use top_level_spans instead.
         """
         return self._top_level_spans[0] if self._top_level_spans else None
+    
+    async def get_branch(self) -> Branch:
+        return await Branch.get_main()
+        
+    
+    async def _get_branch(self) -> Branch:
+        if self._branch is None:
+            self._branch = await Branch.get_main()
+        return self._branch
+
 
     def _get_current_execution_path(self) -> list[int]:
         """
@@ -452,26 +471,7 @@ class Context(BaseModel):
         return ctx
 
         
-    @property
-    def branch(self) -> Branch:
-        if self._branch is None:
-            raise ValueError("Branch not found")
-        return self._branch
-    
-    @property
-    def turn(self) -> Turn:
-        if self._turn is None:
-            raise ValueError("Turn not found")
-        return self._turn
-    
-    async def get_branch(self) -> Branch:
-        return await Branch.get_main()
-        
-    
-    async def _get_branch(self) -> Branch:
-        if self._branch is None:
-            self._branch = await Branch.get_main()
-        return self._branch
+
     
         # if self._branch is not None:
         #     return self.branch
@@ -616,9 +616,11 @@ class Context(BaseModel):
             if isinstance(task, LoadBranch):
                 self._branch = await Branch.get(task.branch_id)
                 self.push_event(path="0", kind="branch_load", payload=self._branch)
+                
             elif isinstance(task, LoadTurn):
                 self._turn = await Turn.get(task.turn_id)
                 self.push_event(path="0", kind="turn_load", payload=self._turn)
+                
             elif isinstance(task, ForkTurn):
                 if task.turn is not None:
                     branch = await self._get_branch()
@@ -632,10 +634,12 @@ class Context(BaseModel):
                     turn = await Turn.query().where(branch_id=branch.id).last()
                     self._branch = await branch.fork_branch(turn)
                 self.push_event(path="0", kind="branch_fork", payload=self._branch)
+                
             elif isinstance(task, StartTurn):
                 branch = await self._get_branch()
                 self._turn = await branch.create_turn(auto_commit=task.auto_commit)
                 self.push_event(path="0", kind="turn_start", payload=self._turn)
+                
             elif isinstance(task, StartEval):
                 await self._setup_evaluation(task.test_case_id, task.test_run_id)
                 
