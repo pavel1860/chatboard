@@ -504,32 +504,8 @@ class Stream(Process):
         self._save_stream_path = filepath
         self._collected_chunks = []
 
-    # @classmethod
-    # def load(cls, filepath: str, delay: float = 0.0):
-    #     """
-    #     Load a stream from a saved JSONL file.
-
-    #     Args:
-    #         filepath: Path to JSONL file to load stream from
-    #         delay: Optional delay between IPs (for simulating streaming)
-
-    #     Returns:
-    #         New Stream instance that replays from file
-    #     """
-    #     async def load_stream():
-    #         from ..block import BlockChunk
-    #         with open(filepath, "r") as f:
-    #             for line in f:
-    #                 if line.strip():
-    #                     if delay > 0:
-    #                         await asyncio.sleep(delay)
-    #                     data = json.loads(line)
-    #                     block = BlockChunk.model_load(data)
-    #                     yield block
-
-    #     return cls(load_stream(), name=f"stream_from_{filepath}")
-    
-    def load(self, filepath: str, delay: float = 0.0):
+    @classmethod
+    def load(cls, filepath: str, delay: float = 0.0):
         """
         Load a stream from a saved JSONL file.
 
@@ -551,7 +527,7 @@ class Stream(Process):
                         block = BlockChunk.model_load(data)
                         yield block
 
-        self._gen = load_stream()
+        return cls(load_stream(), name=f"stream_from_{filepath}")
 
 
     @classmethod
@@ -1124,6 +1100,37 @@ class StreamController(ObservableProcess):
         stream = Stream(gen_instance, name=f"{self._name}_stream")
         return stream
     
+    
+    def _load_cache(self, bound):
+        load_filepath = self._load_filepath
+        if self.ctx is not None:
+            if load_filepath is None:
+                load_filepath = self.ctx.load_cache.get(self._name)
+        if load_filepath is None and self._save_filepath is None:
+            cache_dir = self.ctx.cache_dir
+            if cache_dir is not None:
+                # Compute cache key from bound arguments
+                cache_filename = compute_stream_cache_key(self._name, dict(bound.arguments))
+                cache_path = os.path.join(cache_dir, cache_filename)
+
+                # Check if cache exists
+                if os.path.exists(cache_path):
+                    # Load from cache
+                    load_filepath = cache_path
+                else:
+                    # Save to cache
+                    self._save_filepath = cache_path
+        return load_filepath
+    
+    def _handle_save_cache(self, stream: Stream):
+        if self._save_filepath is not None:
+            os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
+            if os.path.exists(self._save_filepath):
+                os.remove(self._save_filepath)
+            stream.save_stream(self._save_filepath)
+        
+
+    
     async def on_start(self):
         """
         Build subnetwork and register with context.
@@ -1143,46 +1150,14 @@ class StreamController(ObservableProcess):
         from ..block import Block
         bound, kwargs = await self._resolve_dependencies()
         
-        
-        
-        load_filepath = self._load_filepath
-        if self.ctx is not None:
-            if load_filepath is None:
-                load_filepath = self.ctx.load_cache.get(self._name)
-
-        # Auto-cache: determine cache path from context if not explicitly set
-        cache_path = None
-        if load_filepath is None and self._save_filepath is None:
-            cache_dir = self.ctx.cache_dir
-            if cache_dir is not None:
-                # Compute cache key from bound arguments
-                cache_filename = compute_stream_cache_key(self._name, dict(bound.arguments))
-                cache_path = os.path.join(cache_dir, cache_filename)
-
-                # Check if cache exists
-                if os.path.exists(cache_path):
-                    # Load from cache
-                    load_filepath = cache_path
-                else:
-                    # Save to cache
-                    self._save_filepath = cache_path
-
-        # Wrap in Stream process and pipe through Accumulator
-        # if load_filepath is not None:
-        #     stream = Stream.load(load_filepath, delay=self._load_delay or 0.05)
-        # else:
-        #     stream = self._init_stream(bound.args, bound.kwargs)
-        
-        stream = self._init_stream(bound.args, bound.kwargs)
+        load_filepath = self._load_cache(bound)
         if load_filepath is not None:
-            stream.load(load_filepath, delay=self._load_delay or 0.05)
+            stream = Stream.load(load_filepath, delay=self._load_delay or 0.05)
+        else:
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            stream = Stream(gen_instance, name=f"{self._name}_stream")
 
-
-        if self._save_filepath is not None:
-            os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
-            if os.path.exists(self._save_filepath):
-                os.remove(self._save_filepath)
-            stream.save_stream(self._save_filepath)
+        self._handle_save_cache(stream)
 
         self._stream = stream
         self._gen = stream

@@ -269,91 +269,15 @@ class Agent(Generic[P]):
         level: Literal["chunk", "span", "turn"] = "chunk",      
         verbose: set[VerbosityLevel] | None = None,
         load_cache: dict[str, str] | None = None,
+        load_llm_calls: dict[str, int] | None = None,
         **kwargs: dict,
     ):
 
-        ctx = Context(auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
+        ctx = Context(auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose, load_llm_calls=load_llm_calls)
         if state is not None:
             ctx.state = state
         print_events = verbose and "events" in verbose
         ctx.start_turn(auto_commit=auto_commit)
         if isinstance(message, str):
             message = Block(message, role="user")
-            # yield self.agent_component(message).stream(event_level=EventLogLevel[level])
-        # agent_gen = self.agent_component(message)
-        # return TurnController(self.agent_component, ctx, message, name=self.name)
         return self.agent_component(message).stream(event_level=EventLogLevel[level], ctx=ctx)
-    @component()
-    async def run_debug4(
-        self,
-        message: Block | str,  
-        state: BaseModel | None = None,
-        auth: AuthModel | None = None,
-        branch_id: int | None = None, 
-        branch: "Branch | None" = None,         
-        auto_commit: bool = True,
-        level: Literal["chunk", "span", "turn"] = "chunk",      
-        verbose: set[VerbosityLevel] | None = None,
-        load_cache: dict[str, str] | None = None,
-        **kwargs: dict,
-    ):
-        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
-        if state is not None:
-            ctx.state = state
-        print_events = verbose and "events" in verbose
-        ctx.start_turn(auto_commit=auto_commit) 
-        yield self.agent_component(message).stream(event_level=EventLogLevel[level], ctx=ctx)
-        
-
-        
-            
-
-    async def run_debug1(
-        self,
-        message: Block | str,  
-        state: BaseModel | None = None,
-        auth: AuthModel | None = None,
-        branch_id: int | None = None, 
-        branch: "Branch | None" = None,         
-        auto_commit: bool = True,
-        level: Literal["chunk", "span", "turn"] = "chunk",      
-        verbose: set[VerbosityLevel] | None = None,
-        load_cache: dict[str, str] | None = None,
-        **kwargs: dict,
-    ):
-        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
-        if state is not None:
-            ctx.state = state
-        print_events = verbose and "events" in verbose
-        async with ctx.start_turn(auto_commit=auto_commit) as turn:            
-            async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
-                if print_events:
-                    print("--------------------------------")
-                    if isinstance(event, Block):
-                        event.print()
-                    else:
-                        print(event)
-                yield event
-                
-                
-
-
-    async def run_debug2(
-        self,
-        message: str | Block,                
-        auth: AuthModel | None = None,
-        branch_id: int | None = None,         
-        auto_commit: bool = True,
-        level: Literal["chunk", "span", "turn"] = "chunk",      
-        **kwargs: dict,
-    ):
-        context = await Context.from_kwargs(**kwargs, auth=auth)
-        message = Block(message, role="user") if isinstance(message, str) else message        
-        agent_gen = self.stream_agent_with_context(context, message, serialize=True)
-        async for event in agent_gen:
-            print("--------------------------------")
-            if isinstance(event, Block):
-                event.print()
-            else:
-                print(event)
-            yield event

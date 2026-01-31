@@ -1,4 +1,5 @@
 import copy
+import os
 from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Type, TypedDict, Unpack
 from pydantic import BaseModel, Field
@@ -15,6 +16,11 @@ from .types import LlmConfig, LLMResponse, LLMUsage
 class LLMStream(Stream):
     response: LLMResponse | None = None
     usage: LLMUsage | None = None
+    
+    def __init__(self, gen: AsyncGenerator, name: str = "stream", response: LLMResponse | None = None, usage: LLMUsage | None = None):
+        super().__init__(gen, name=name)
+        self.response = response
+        self.usage = usage
     
     async def __anext__(self):
         """
@@ -45,6 +51,26 @@ class LLMStream(Stream):
             return ip
         else:
             raise ValueError("more than 10 tries to get chunks")
+        
+    @classmethod    
+    async def load_llm_call(cls, llm_call_id: int, delay: float = 0.05):
+        from ..versioning.dataflow_models import LlmCall
+        import asyncio
+        llm_call = await LlmCall.get_or_none(id=llm_call_id)
+        if llm_call is None:
+            raise ValueError(f"LLM call {llm_call_id} not found")
+        
+        response = LLMResponse(id=llm_call.request_id, item_id=llm_call.message_id)
+        usage = llm_call.usage
+        
+        async def load_llm_call_stream(llm_call: LlmCall):
+            from ..block import BlockChunk
+            for chunk in llm_call.chunks:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                yield chunk
+        # self.upstream = load_llm_call_stream(llm_call)
+        return cls(load_llm_call_stream(llm_call), name=f"{cls.__name__}_stream", response=response, usage=usage)
         
     
 
@@ -78,6 +104,62 @@ class LLMStreamController(StreamController):
         gen_instance = self._gen_func(*args, **kwargs)
         stream = LLMStream(gen_instance, name=f"{self._name}_stream")
         return stream
+    
+    
+    
+    # async def _load_llm_call(self):
+    #     from ..versioning.dataflow_models import LlmCall
+    #     if self.ctx is not None:
+    #         load_llm_calls = self.ctx.load_llm_calls.get(self._name)
+    #         if load_llm_calls is not None:
+    #             llm_call = await LlmCall.get_or_none(id=load_llm_calls)
+    #             if llm_call is not None:
+    #                 return llm_call
+    #             raise ValueError(f"LLM call {load_llm_calls} not found")
+    
+    
+    async def on_start(self):
+        """
+        Build subnetwork and register with context.
+
+        Called automatically on first __anext__() call.
+        Creates span, resolves dependencies, logs kwargs as inputs, and builds the internal stream.
+
+        In replay mode (when span has saved outputs), sets up replay buffer instead of
+        executing the generator function.
+
+        Auto-cache behavior:
+        - If ctx.cache_dir is set and no explicit load/save path is configured:
+          - Computes cache key from stream name + bound arguments
+          - If cache file exists: loads from cache (no re-execution)
+          - If cache file doesn't exist: executes and saves to cache
+        """
+        from ..block import Block
+        bound, kwargs = await self._resolve_dependencies()
+        
+        load_filepath = self._load_cache(bound)
+        llm_call_id = None
+        if self.ctx is not None:
+            llm_call_id = self.ctx.load_llm_calls.get(self._name)
+        # stream = self._init_stream(bound.args, bound.kwargs)
+        
+        if llm_call_id is not None:
+            stream = await LLMStream.load_llm_call(llm_call_id, delay=self._load_delay or 0.05)
+        elif load_filepath is not None:
+            stream = LLMStream.load(load_filepath, delay=self._load_delay or 0.05)
+        else:
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            stream = LLMStream(gen_instance, name=f"{self._name}_stream")
+
+        self._handle_save_cache(stream)
+
+        self._stream = stream
+        self._gen = stream
+        if self._parser is not None:
+            self._gen |= self._parser
+        else:
+            self._accumulator = Accumulator(Block())
+            self._gen |= self._accumulator  
     
     
     async def _store_llm_call(self):

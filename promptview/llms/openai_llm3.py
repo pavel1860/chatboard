@@ -70,7 +70,7 @@ class OpenAiLLM(BaseLLM):
         if tools:
             llm_tools = [self.to_tool(tool) for tool in tools]        
             tool_choice = config.tool_choice
-
+            
         with Tracer(
             run_type="llm",
             name=self.__class__.__name__,
