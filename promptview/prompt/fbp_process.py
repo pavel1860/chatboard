@@ -114,10 +114,11 @@ import hashlib
 import os
 
 
-from ..versioning import DataFlowNode, ExecutionSpan, SpanType
+# from ..versioning import DataFlowNode, ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
     from ..block import Block
+    from ..versioning import DataFlowNode, ExecutionSpan, SpanType
 
 
 def _serialize_for_hash(value: Any) -> Any:
@@ -656,7 +657,7 @@ class ObservableProcess(Process):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "component",
+        span_type: "SpanType" = "component",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1043,7 +1044,7 @@ class StreamController(ObservableProcess):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "stream",
+        span_type: "SpanType" = "stream",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1072,7 +1073,7 @@ class StreamController(ObservableProcess):
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
-        self._temp_data_flow: DataFlowNode | None = None        
+        self._temp_data_flow: "DataFlowNode | None" = None        
 
 
     def get_output(self, idx: int | None = None, include_fence: bool = False) -> Any:
@@ -1406,7 +1407,7 @@ class PipeController(ObservableProcess):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "component",
+        span_type: "SpanType" = "component",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1479,6 +1480,7 @@ class PipeController(ObservableProcess):
         Returns:
             Next child process from the generator or replay buffer
         """
+        from ..versioning import ExecutionSpan
         if not self._did_start:
             await self.on_start()
             self._did_start = True
@@ -1575,7 +1577,7 @@ class EvaluatorController(ObservableProcess):
         self, 
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "evaluator",
+        span_type: "SpanType" = "evaluator",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,

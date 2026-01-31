@@ -16,6 +16,7 @@ from .dataflow_models import (
     DataArtifact,
     Log,
     ValueIOKind,
+    LlmCall,
 )
 
 from .eval_models import (
@@ -68,4 +69,5 @@ __all__ = [
     "compute_block_hash",
     "SpanType",
     "ValueIOKind",
+    "LlmCall",
 ]

@@ -7,41 +7,8 @@ from ..block import BlockChunk, Block, BlockList
 # from ..prompt.flow_components import StreamController
 from ..prompt.fbp_process import StreamController, Stream, compute_stream_cache_key, Accumulator, Process
 from dataclasses import dataclass
+from .types import LlmConfig, LLMResponse, LLMUsage
 
-
-
-ToolChoice = Literal['auto', 'required', 'none']
-
-class LlmConfig(BaseModel):
-    model: str | None = Field(default=None, description="The model to use")
-    temperature: float = Field(default=0, ge=0, le=1, description="The temperature of the response")
-    max_tokens: int | None = Field(default=None, ge=0, description="The maximum number of tokens in the response")
-    stop_sequences: List[str] | None = Field(default=None, description="The stop sequences of the response")
-    stream: bool = Field(default=False, description="If the response should be streamed")
-    logit_bias: Dict[str, int] | None = Field(default=None, description="The logit bias of the response")
-    top_p: float = Field(default=1, ge=0, le=1, description="The top p of the response")
-    presence_penalty: float | None = Field(default=None, ge=-2, le=2, description="The presence penalty of the response")
-    logprobs: bool | None = Field(default=None, description="If the logprobs should be returned")
-    seed: int | None = Field(default=None, description="The seed of the response")
-    frequency_penalty: float | None = Field(default=None, ge=-2, le=2, description="The frequency penalty of the response")
-    tools: List[Type[BaseModel]] | None = Field(default=None, description="The tools of the response")
-    retries: int = Field(default=3, ge=1, description="The number of retries")
-    parallel_tool_calls: bool = Field(default=False, description="If the tool calls should be parallel")
-    tool_choice: ToolChoice | None = Field(default=None, description="The tool choice of the response")
-
-
-
-class LLMResponse(BaseModel):
-    id: str
-    item_id: str
-
-
-class LLMUsage(BaseModel):
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-    cached_tokens: int | None = None
-    reasoning_tokens: int | None = None
 
 
 
@@ -117,14 +84,26 @@ class LLMStreamController(StreamController):
         """
         Mark span as completed when process exhausts.
         """
+        from ..versioning.dataflow_models import LlmCall
         if self.span:
             self.span.status = "completed"
             self.span.end_time = __import__('datetime').datetime.now()
-            if hasattr(self._stream, "usage"):
-                self.span.usage = self._stream.usage.model_dump()
-                self.span.request_id = self._stream.response.id
-                self.span.message_id = self._stream.response.item_id
             await self.span.save()
+            if hasattr(self._stream, "usage"):
+                if self._parser:
+                    chunks = self._parser.get_chunks()
+                else:
+                    chunks = []
+                llm_call = await LlmCall(
+                    config=self.llm_config,
+                    usage=self._stream.usage,
+                    chunks=chunks,
+                    request_id=self._stream.response.id,
+                    message_id=self._stream.response.item_id,
+                    span_id=self.span.id
+                ).save()
+                await self.span.add(llm_call)
+            
 
         # Pop from context execution stack
         if self.ctx:

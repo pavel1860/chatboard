@@ -7,9 +7,12 @@ from ..model.fields import KeyField, ModelField, RelationField
 from .models import VersionedModel, Artifact, ArtifactKindEnum, Turn, SpanType
 from .block_storage import BlockModel
 
+from ..llms.types import LlmConfig, LLMUsage
+from ..block.block12.chunk import BlockChunk
 
 if TYPE_CHECKING:
     from ..prompt.context import Context
+    
 
 
 
@@ -150,6 +153,22 @@ class DataFlowNode(Model):
         return dump
 
 
+
+class LlmCall(Model):
+    """a single call to an llm"""
+    id: int = KeyField(primary_key=True)
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+    config: "LlmConfig" = ModelField()
+    usage: "LLMUsage" = ModelField()
+    chunks: list[BlockChunk] = ModelField()
+    request_id: str = ModelField()
+    message_id: str = ModelField()
+    span_id: int = ModelField(foreign_key=True)
+    
+    
+    @property
+    def text(self) -> str:
+        return "".join([c.content for c in self.chunks])
   
 
 class ExecutionSpan(VersionedModel):
@@ -164,17 +183,18 @@ class ExecutionSpan(VersionedModel):
     end_time: dt.datetime | None = ModelField(default=None)
     tags: list[str] | None = ModelField(default=None)
     metadata: dict[str, Any] = ModelField(default={})
-    usage: dict[str, Any] = ModelField(default={})
-    config: dict[str, Any] = ModelField(default={})
+    # usage: dict[str, Any] = ModelField(default={})
+    # config: dict[str, Any] = ModelField(default={})
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
     turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
-    request_id: str | None = ModelField(default=None)
-    message_id: str | None = ModelField(default=None)
+    # request_id: str | None = ModelField(default=None)
+    # message_id: str | None = ModelField(default=None)
     
     # Relations
     data: List["DataFlowNode"] = RelationField([], foreign_key="span_id")
     artifacts: List[Artifact] = RelationField(foreign_key="span_id")
     block_trees: List[BlockModel] = RelationField(foreign_key="span_id")
+    llm_calls: List[LlmCall] = RelationField(foreign_key="span_id")
     
     _parent_value: "DataFlowNode | None" = None
     

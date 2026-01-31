@@ -658,6 +658,9 @@ class XmlParser(Process):
             return None
         return self._stack[-1][0]
 
+    
+    def get_chunks(self) -> list[BlockChunk]:
+        return [c[2] for c in self._chunks if self._root_tag not in c[2].content]
     # -------------------------------------------------------------------------
     # Process interface
     # -------------------------------------------------------------------------

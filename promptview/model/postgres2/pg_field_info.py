@@ -63,7 +63,7 @@ class PgFieldInfo(BaseFieldInfo):
         self.sql_type = sql_type or self._resolve_sql_type()
         
     def get_placeholder(self, index: int) -> str:
-        cast_types = {"UUID", "UUID[]", "INTEGER[]", "FLOAT[]", "TEXT[]", "BOOLEAN[]"}
+        cast_types = {"UUID", "UUID[]", "INTEGER[]", "FLOAT[]", "TEXT[]", "BOOLEAN[]", "JSONB[]"}
         if self.sql_type in cast_types:
             return f"${index}::{self.sql_type}"
         return f"${index}"
@@ -80,6 +80,11 @@ class PgFieldInfo(BaseFieldInfo):
             if py_type == str: return "TEXT[]"
             if py_type == bool: return "BOOLEAN[]"
             if py_type == uuid.UUID: return "UUID[]"
+            if inspect.isclass(py_type):
+                if issubclass(py_type, BaseModel):
+                    return "JSONB[]"
+                elif hasattr(py_type, "model_dump") and hasattr(py_type, "model_load"):
+                    return "JSONB[]"                
         if py_type == int: return "INTEGER"
         if py_type == float: return "FLOAT"
         if py_type == str: return "TEXT"
@@ -120,6 +125,10 @@ class PgFieldInfo(BaseFieldInfo):
                         return json.dumps(value.serialize())
                     return json.dumps(make_json_serializable(value))
 
+            # JSONB[] handling - PostgreSQL array of JSONB values
+            if self.sql_type == "JSONB[]":
+                return [json.dumps(make_json_serializable(v)) for v in value]
+
             return value
         except Exception as e:
             print(f"Error serializing {self.name}: {e}")
@@ -140,9 +149,18 @@ class PgFieldInfo(BaseFieldInfo):
             if isinstance(value, str):
                 value = json.loads(value)
             if self.is_list:
-                value = [self.data_type.model_validate(v) for v in value]
+                value = [
+                    self.data_type.model_validate(json.loads(v) if isinstance(v, str) else v)
+                    for v in value
+                ]
             else:
                 value = self.data_type.model_validate(value)
+        elif self.is_list:
+            if self.sql_type == "JSONB[]":
+                if hasattr(self.data_type, "model_load"):
+                    value = [self.data_type.model_load(json.loads(v) if isinstance(v, str) else v) for v in value]
+                else:
+                    value = [self.data_type.model_validate(json.loads(v) if isinstance(v, str) else v) for v in value]
         elif self.is_vector:
             from ..vectors import Vector
             value = Vector(value)
