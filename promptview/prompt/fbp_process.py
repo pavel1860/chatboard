@@ -1584,8 +1584,7 @@ class PipeController(ObservableProcess):
         if self._gen is None:
             raise FlowException("Process is not initialized")
         return await self._gen.aclose()
-
-
+        
 
 
 
@@ -1723,6 +1722,7 @@ class FlowRunner:
         """
         from .context import Context
         self.stack: list[Process] = [root_process]
+        self.ctx = ctx or Context.current_or_none()
         self.last_value: Any = None
         self._output_events = False
         self._error_to_raise: Exception | None = None
@@ -1731,7 +1731,7 @@ class FlowRunner:
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
         self._exited_processes: list[ObservableProcess] = []
-        self.ctx = ctx or Context.current_or_none()
+        
         self._need_ctx = need_ctx
 
     @property
@@ -1861,6 +1861,17 @@ class FlowRunner:
     async def _handle_value(self, process: Process, value: Any):
         return value
     
+    
+    async def _handle_process_stop(self, process: Process):
+        if hasattr(process, 'get_response'):
+            response = process.get_response()
+        else:
+            response = self.last_value
+            
+        await self._try_evaluate_value(process)
+        return response
+
+    
 
     async def __anext__(self):
         """
@@ -1936,12 +1947,13 @@ class FlowRunner:
                 # Process exhausted, pop from stack
                 process = self.pop()
                 # Get the response from the completed process
-                if hasattr(process, 'get_response'):
-                    response = process.get_response()
-                else:
-                    response = self.last_value
+                response = await self._handle_process_stop(process)
+                # if hasattr(process, 'get_response'):
+                #     response = process.get_response()
+                # else:
+                #     response = self.last_value
                     
-                await self._try_evaluate_value(process)
+                # await self._try_evaluate_value(process)
 
                 # If there's a parent waiting, save the response to send
                 if self.stack:
@@ -2097,9 +2109,27 @@ class FlowPrintRunner(FlowRunner):
     
     
     async def _handle_step(self, process: Process):
+        from ..llms import LLMStreamController
         response = self._get_response()
-        value = await process.asend(response)
-        return value
+        
+        if isinstance(process, LLMStreamController):
+            process.print_inputs()
+            raise StopAsyncIteration
+        else:
+            value = await process.asend(response)
+            return value
+        
+    async def _handle_process_stop(self, process: Process):
+        return None
+        from ..llms import LLMStreamController
+        if isinstance(process, LLMStreamController):
+            return None
+        else:
+            return await super()._handle_process_stop(process)
+            
+        # print("response", response)
+        # 
+        # 
     
     
     # async def _handle_process_value(self, process: Process, value: Any):

@@ -248,6 +248,17 @@ class LLMStreamController(StreamController):
     #     self._load_eval_args = load_eval_args
     #     return FlowRunner(self, ctx=ctx, event_level=event_level).stream_events()
     
+    def print_inputs(self):
+        sep = "─" * 50
+        for i,block in enumerate(self.blocks):
+            print(sep)
+            print(f"{i}: {block.role.title()} Message")
+            print(sep)
+            block.print()
+            print(" ")
+        for key, value in self._kwargs.items():
+            print(sep)
+    
     def print(self, inputs: bool = False):
         sep = "─" * 50
         
