@@ -20,9 +20,9 @@ class Controller(Generic[P, R]):
     _complete: Callable[P, R]
     
     def _filter_args_for_trace(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
-        from ..llms import LLM
+        from ..llms import LLMRegistry
         from .context import Context
-        _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLM, Context))
+        _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLMRegistry, Context))
         return {"args": _args, "kwargs": _kwargs}
     
     

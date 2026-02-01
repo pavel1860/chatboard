@@ -435,14 +435,14 @@ T = TypeVar("T")
 
 
 async def build_input_values(comp: "StreamController | PipeController", kwargs: dict):
-    from ..llms import LLM, LlmConfig
+    from ..llms import LLMRegistry, LlmConfig
     is_stream = isinstance(comp, StreamController)
     try:
         value_kwargs = {}
         for key, value in kwargs.items():
             if value is None:
                 continue
-            if isinstance(value, LLM):
+            if isinstance(value, LLMRegistry):
                 continue
             if isinstance(value, LlmConfig):
                 continue

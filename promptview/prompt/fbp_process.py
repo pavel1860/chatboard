@@ -167,7 +167,7 @@ def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
     """
     # Filter out non-serializable types (Context, LLM instances, etc.)
     from .context import Context
-    from ..llms import LLM, LlmConfig
+    from ..llms import LLMRegistry, LlmConfig
     from ..evaluation.decorators import EvalCtx
 
     filtered_args = {}
@@ -177,7 +177,7 @@ def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
         # Skip 'self' argument (method bound to instance)
         if key == 'self':
             continue
-        if isinstance(value, (Context, LLM, LlmConfig, EvalCtx)):
+        if isinstance(value, (Context, LLMRegistry, LlmConfig, EvalCtx)):
             continue
         # Skip private arguments
         if key.startswith('_'):
@@ -702,6 +702,7 @@ class ObservableProcess(Process):
         self._ctx: "Context | None" = None
         self._load_eval_args: bool = False
         self._input_data_flows: dict[str, "DataFlowNode"] = {}
+        self.dry_run: bool = False
         
         
     @property
@@ -765,8 +766,18 @@ class ObservableProcess(Process):
             Tuple of (bound_arguments, resolved_kwargs)
         """
         from .injector import resolve_dependencies_kwargs
-        from ..llms import LLM, LlmConfig, BaseLLM
+        from ..llms import LLMRegistry, LlmConfig, LLM
         from ..evaluation.decorators import EvalCtx
+        
+        
+        if self.dry_run:
+            bound, kwargs = await resolve_dependencies_kwargs(
+                    self._gen_func,
+                    args=self._args,
+                    kwargs=self._kwargs
+                )
+            self.resolved_kwargs = kwargs
+            return bound, kwargs
         
         
         self._data_flow = await self.ctx.start_span(
@@ -802,7 +813,7 @@ class ObservableProcess(Process):
             # Log resolved kwargs as inputs
             if self.span and self._should_log_inputs:
                 for key, value in kwargs.items():
-                    if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx] and not isinstance(value, BaseLLM):
+                    if value is not None and type(value) not in [LLMRegistry, LlmConfig, EvalCtx] and not isinstance(value, LLM):
                         data_flow = await self.span.log_value(value, io_kind="input", name=key)
                         self._input_data_flows[data_flow.path] = data_flow                    
         if self.span.outputs and not self.span.need_to_replay:
@@ -1007,8 +1018,8 @@ class ObservableProcess(Process):
             return self._last_ip.get_response()
         return self._last_ip
     
-    async def print_prompts(self, ctx: "Context | None" = None):        
-        async for event in FlowPrintRunner(self, ctx=ctx).stream_events():
+    async def print_prompt(self, ctx: "Context | None" = None):        
+        async for event in FlowPrintRunner(self, ctx=ctx):
             print(event)
     
     def print(self):
@@ -1121,6 +1132,8 @@ class StreamController(ObservableProcess):
     
     def _load_cache(self, bound):
         load_filepath = self._load_filepath
+        if self.dry_run:
+            return None
         if self.ctx is not None:
             if load_filepath is None:
                 load_filepath = self.ctx.load_cache.get(self._name)
@@ -1548,20 +1561,22 @@ class PipeController(ObservableProcess):
                     self._last_value = value
 
                 # Log child as output
-                if self.span and isinstance(child, (StreamController, PipeController)):
-                    # Log the child's span tree once it's created
-                    # Note: child span is created when child.on_start() is called by FlowRunner
-                    pass
+                # if self.span and isinstance(child, (StreamController, PipeController)):
+                #     # Log the child's span tree once it's created
+                #     # Note: child span is created when child.on_start() is called by FlowRunner
+                #     pass
 
                 if not self._did_yield:
                     self._did_yield = True
 
                 return child
         except StopAsyncIteration:
-            await self.on_stop()
+            if not self.dry_run:
+                await self.on_stop()
             raise StopAsyncIteration
         except Exception as e:
-            await self.on_error(e)
+            if not self.dry_run:
+                await self.on_error(e)
             raise e
 
     async def __anext__(self):
@@ -2107,6 +2122,19 @@ class FlowRunner:
 class FlowPrintRunner(FlowRunner):
     
     
+    
+    async def enter_context(self):
+        return self
+    
+    async def exit_context(self, error: Exception | None = None):
+        return self
+    
+    async def _handle_init(self, process: Process):
+        process.dry_run = True
+        await process.on_start()
+        process._did_start = True        
+        return process
+
     
     async def _handle_step(self, process: Process):
         from ..llms import LLMStreamController

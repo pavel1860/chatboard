@@ -85,7 +85,7 @@ async def resolve_dependency(dependency_func, *args, **kwargs):
     Recursively resolve the dependencies of `dependency_func` by inspecting
     its signature. Calls sub-dependencies first, then calls `dependency_func`.
     """
-    from ..llms import BaseLLM, LLM
+    from ..llms import LLM, LLMRegistry
     signature = inspect.signature(dependency_func)
     dep_kwargs = {}
     
@@ -101,8 +101,8 @@ async def resolve_dependency(dependency_func, *args, **kwargs):
     # Once all sub-dependencies are resolved, call the function
     try:
         # return await call_function(dependency_func, *args, **kwargs, **dep_kwargs)
-        if dependency_func is BaseLLM:
-            llm = LLM.build_llm(kwargs.get("model"))
+        if dependency_func is LLM:
+            llm = LLMRegistry.build_llm(kwargs.get("model"))
             return llm            
         return await call_function(dependency_func, *args, **(kwargs | dep_kwargs))
     except TypeError as e:

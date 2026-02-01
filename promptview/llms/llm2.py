@@ -76,7 +76,7 @@ class LLMStream(Stream):
     
 
 class LLMStreamController(StreamController):
-    llm: "BaseLLM"
+    llm: "LLM"
     blocks: BlockList
     llm_config: LlmConfig
     tools: List[Type[BaseModel]] | None = None
@@ -87,7 +87,7 @@ class LLMStreamController(StreamController):
     def __init__(
         self, 
         # gen_func: Callable[..., AsyncGenerator], 
-        llm: "BaseLLM",
+        llm: "LLM",
         blocks: BlockList, 
         config: LlmConfig, 
         tools: List[Type[BaseModel]] | None = None, 
@@ -146,7 +146,7 @@ class LLMStreamController(StreamController):
         
         load_filepath = self._load_cache(bound)
         llm_call_id = None
-        if self.ctx is not None:
+        if not self.dry_run and self.ctx is not None:
             llm_call_id = self.ctx.load_llm_calls.get(self._name)
         # stream = self._init_stream(bound.args, bound.kwargs)
         
@@ -263,15 +263,16 @@ class LLMStreamController(StreamController):
         sep = "─" * 50
         
         if inputs:            
-            for i,block in enumerate(self.blocks):
-                print(sep)
-                print(f"{i}: {block.role.title()} Message")
-                print(sep)
-                block.print()
-                print(" ")
-            for key, value in self._kwargs.items():
-                print(sep)
-                print(key, value)
+            self.print_inputs()
+            # for i,block in enumerate(self.blocks):
+            #     print(sep)
+            #     print(f"{i}: {block.role.title()} Message")
+            #     print(sep)
+            #     block.print()
+            #     print(" ")
+            # for key, value in self._kwargs.items():
+            #     print(sep)
+            #     print(key, value)
             print("######################## Output ########################")
         self.span.llm_calls[0].print()
         # self.get_response().print()
@@ -370,7 +371,7 @@ def llm_stream(
     return llm_stream_decorator
     
  
-class BaseLLM: 
+class LLM: 
     config: LlmConfig   
     default_model: str
     models: List[str]
@@ -429,15 +430,15 @@ class BaseLLM:
 
     
     
-class LLM():
+class LLMRegistry():
     
-    _model_registry: Dict[str, Type[BaseLLM]] = {}
+    _model_registry: Dict[str, Type[LLM]] = {}
     _default_model: str | None = None
         
     
     
     @classmethod
-    def register(cls, model_cls: Type[BaseLLM], default_model: str | None = None) -> Type[BaseLLM]:
+    def register(cls, model_cls: Type[LLM], default_model: str | None = None) -> Type[LLM]:
         """Decorator to register a new LLM model implementation"""
         if model_cls.__name__ in cls._model_registry:
             raise ValueError(f"Model {model_cls.__name__} is already registered")
@@ -448,7 +449,7 @@ class LLM():
         return model_cls
     
     @classmethod
-    def get_llm(cls, model: str | None = None) -> Type[BaseLLM]:
+    def get_llm(cls, model: str | None = None) -> Type[LLM]:
         """Get a registered model by name"""
         if model is None:
             if cls._default_model is None:
@@ -461,7 +462,7 @@ class LLM():
     
     
     @classmethod
-    def build_llm(cls, model: str | None = None) -> BaseLLM:
+    def build_llm(cls, model: str | None = None) -> LLM:
         llm_cls = cls.get_llm(model)
         return llm_cls()
     

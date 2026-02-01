@@ -3,7 +3,7 @@ from typing import AsyncGenerator, Callable, Union, Optional, Any
 
 from promptview.prompt.stream2 import StreamController, stream  # Adjust the import
 from promptview.prompt import component, Depends
-from promptview.llms import LLM
+from promptview.llms import LLMRegistry
 from promptview.block import Block, BlockList, BlockSent, BlockChunk
 from promptview.model3.versioning.models import Branch
 from promptview.model3 import NamespaceManager
@@ -119,7 +119,7 @@ async def test_stream_non_appendable_handling():
 async def test_basic_component():
     await NamespaceManager.initialize_all()
     @component()
-    async def test_city_prompt(message: Block, llm: LLM = Depends(LLM)):
+    async def test_city_prompt(message: Block, llm: LLMRegistry = Depends(LLMRegistry)):
         with Block(role="system") as s:
             s /= "answer as short as possible"
             s /= "no unneccesary words"

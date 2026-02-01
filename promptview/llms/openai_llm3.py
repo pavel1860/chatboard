@@ -7,13 +7,13 @@ from pydantic import BaseModel
 from ..block import BlockChunk, BlockList
 from ..block.util import LLMEvent, ToolCall
 from ..context.execution_context import ExecutionContext
-from ..llms.llm2 import BaseLLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
+from ..llms.llm2 import LLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
 from openai.types.chat import ChatCompletionMessageParam
 from ..utils.model_utils import schema_to_function
 from ..tracer.langsmith_tracer import Tracer
 
 
-class OpenAiLLM(BaseLLM):
+class OpenAiLLM(LLM):
     name: str = "OpenAiLLM"
     default_model: str= "gpt-4o"
     models = ["gpt-4o", "gpt-4o-mini"]
