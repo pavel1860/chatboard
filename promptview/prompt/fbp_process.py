@@ -1007,7 +1007,9 @@ class ObservableProcess(Process):
             return self._last_ip.get_response()
         return self._last_ip
     
-    
+    async def print_prompts(self, ctx: "Context | None" = None):        
+        async for event in FlowPrintRunner(self, ctx=ctx).stream_events():
+            print(event)
     
     def print(self):
         
@@ -1836,6 +1838,26 @@ class FlowRunner:
         else:
             await self.ctx.__aexit__(None, None, None)
         return self
+    
+    async def _handle_init(self, process: Process):
+        await process.on_start()
+        process._did_start = True
+        return process
+    
+    
+    async def _handle_step(self, process: Process):
+        response = self._get_response()
+        value = await process.asend(response)
+        return value
+            
+    async def _handle_process_value(self, process: Process, value: Any):
+        if isinstance(value, StreamController):
+            value._name = process._name + "_" + value._name
+        return value
+     
+    async def _handle_value(self, process: Process, value: Any):
+        return value
+    
 
     async def __anext__(self):
         """
@@ -1867,26 +1889,27 @@ class FlowRunner:
                 # Check if process is starting - emit start event before first value
                 if not process._did_start:
                     # Start the process and get first value
-                    await process.on_start()
-                    process._did_start = True
+                    process = await self._handle_init(process)
+                    # await process.on_start()
+                    # process._did_start = True
 
-                    # Now emit start event if needed (before getting first value)
+                    # # Now emit start event if needed (before getting first value)
                     if self.should_output_events:
                         if event := await self.try_build_start_event(process, None):
                             return event
 
                 # Get next value using asend (to support yield-based communication)
-                response = self._get_response()
-                value = await process.asend(response)
+                # response = self._get_response()
+                # value = await process.asend(response)
+                value = await self._handle_step(process)
                 self.last_value = value
 
                 # Trigger evaluation if context has evaluation enabled
                 
 
                 # If value is a Process (from PipeController), push to stack
-                if isinstance(value, (StreamController, PipeController)):
-                    if isinstance(value, StreamController):
-                        value._name = process._name + "_" + value._name
+                if isinstance(value, ObservableProcess):
+                    value = await self._handle_process_value(process, value)
                     self.push(value)
                     # Emit event for child process if needed
                     if self.should_output_events:
@@ -1896,7 +1919,7 @@ class FlowRunner:
                 
                 # if not isinstance(process, EvaluatorController):
                 #     await self._try_evaluate_value(process)
-
+                value = await self._handle_value(process, value)
                 # Emit value event if needed
                 if self.should_output_events:
                     if event := await self.try_build_value_event(process, value):
@@ -1909,9 +1932,6 @@ class FlowRunner:
             except StopAsyncIteration:
                 # Process exhausted, pop from stack
                 process = self.pop()
-                                
-                
-
                 # Get the response from the completed process
                 if hasattr(process, 'get_response'):
                     response = process.get_response()
@@ -2065,6 +2085,26 @@ class FlowRunner:
             self._event_level = event_level
         self._output_events = True
         return self
+    
+    
+    
+    
+class FlowPrintRunner(FlowRunner):
+    
+    
+    
+    async def _handle_step(self, process: Process):
+        response = self._get_response()
+        value = await process.asend(response)
+        return value
+    
+    
+    # async def _handle_process_value(self, process: Process, value: Any):
+    #     if isinstance(value, StreamController):
+    #         value._name = process._name + "_" + value._name
+            
+    #     return value
+
 
     # def print(self):
 
