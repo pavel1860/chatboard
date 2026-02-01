@@ -719,6 +719,12 @@ class ObservableProcess(Process):
     def name(self):
         """Get the name."""
         return self._name
+    
+    
+    @property
+    def inputs(self) -> list[Any]:
+        """Get the inputs."""
+        return list(self._args) + list(self._kwargs.values())
 
     @property
     def span(self):
@@ -1002,6 +1008,16 @@ class ObservableProcess(Process):
         return self._last_ip
     
     
+    
+    def print(self):
+        
+        for arg in self._args:
+            print(arg)
+        for key, value in self._kwargs.items():
+            print(key, value)
+        print("--------------------------------")
+        out = self.get_output()
+        print(out)
 
     
 
@@ -1772,6 +1788,13 @@ class FlowRunner:
             self._response_to_send = None
             return response
         return None
+    
+    
+    def get(self, name: str) -> "Process":
+        for process in self._exited_processes:
+            if process.name == name:
+                return process
+        raise ValueError(f"Process {name} not found")
     
     def get_span(self, name: str) -> "ExecutionSpan":
         for process in self._exited_processes:

@@ -98,7 +98,10 @@ class LLMStreamController(StreamController):
         self.tools = tools
         self.model = config.model
         
-        
+    @property
+    def inputs(self) -> list[Any]:
+        """Get the inputs."""
+        return self.blocks
 
     def _init_stream(self, args: tuple, kwargs: dict):
         gen_instance = self._gen_func(*args, **kwargs)
@@ -212,6 +215,23 @@ class LLMStreamController(StreamController):
         if self.ctx:
             await self.ctx.end_span()
     
+    def print(self, inputs: bool = False):
+        sep = "─" * 50
+        
+        if inputs:            
+            for i,block in enumerate(self.blocks):
+                print(sep)
+                print(f"{i}: {block.role.title()} Message")
+                print(sep)
+                block.print()
+                print(" ")
+            for key, value in self._kwargs.items():
+                print(sep)
+                print(key, value)
+            print("######################## Output ########################")
+        self.span.llm_calls[0].print()
+        # self.get_response().print()
+        
         
 
 
