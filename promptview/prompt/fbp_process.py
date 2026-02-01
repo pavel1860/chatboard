@@ -765,7 +765,7 @@ class ObservableProcess(Process):
             Tuple of (bound_arguments, resolved_kwargs)
         """
         from .injector import resolve_dependencies_kwargs
-        from ..llms import LLM, LlmConfig
+        from ..llms import LLM, LlmConfig, BaseLLM
         from ..evaluation.decorators import EvalCtx
         
         
@@ -802,7 +802,7 @@ class ObservableProcess(Process):
             # Log resolved kwargs as inputs
             if self.span and self._should_log_inputs:
                 for key, value in kwargs.items():
-                    if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx]:
+                    if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx] and not isinstance(value, BaseLLM):
                         data_flow = await self.span.log_value(value, io_kind="input", name=key)
                         self._input_data_flows[data_flow.path] = data_flow                    
         if self.span.outputs and not self.span.need_to_replay:
@@ -1258,8 +1258,8 @@ class StreamController(ObservableProcess):
         from .context import Context
         if self._parser is not None:
             raise FlowException("Parser already initialized")
-        if self._gen_func is None:
-            raise FlowException("StreamController is not initialized")
+        # if self._gen_func is None:
+            # raise FlowException("StreamController is not initialized")
         ctx = Context.current_or_none()
         verbose = False
         if ctx is not None:
@@ -1851,8 +1851,11 @@ class FlowRunner:
         return value
             
     async def _handle_process_value(self, process: Process, value: Any):
+        from ..llms import LLMStreamController
         if isinstance(value, StreamController):
             value._name = process._name + "_" + value._name
+            if isinstance(value, LLMStreamController):
+                value.set_stream()
         return value
      
     async def _handle_value(self, process: Process, value: Any):

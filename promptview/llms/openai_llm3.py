@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Type
+from typing import List, Type, AsyncGenerator, Any
 import openai
 import os
 
@@ -50,13 +50,12 @@ class OpenAiLLM(BaseLLM):
         schema = schema_to_function(tool)
         return schema
     
-    @llm_stream(name="openai_llm")
     async def stream(
         self, 
         blocks: BlockList,
         config: LlmConfig,
         tools: List[Type[BaseModel]] | None = None
-    ):
+    ) -> AsyncGenerator[Any, None]:
         
             
         messages = [
