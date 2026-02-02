@@ -109,16 +109,6 @@ class BlockSchema(Block):
         """Get the type annotation for this schema."""
         return self._type
     
-    @property
-    def is_block_type(self) -> bool:
-        from typing import Union, get_origin, get_args
-        from types import UnionType
-        origin = get_origin(self._type)
-        if origin is Union or isinstance(self._type, UnionType):
-            args = get_args(self._type)
-            return any(arg is Block for arg in args)
-        return self._type is Block
-    
     
     @property
     def type_str(self) -> str | None:

@@ -422,6 +422,17 @@ class Block:
     def type(self) -> Type | None:
         """Get the type of the content value."""
         return self._type
+    
+    
+    @property
+    def is_block_type(self) -> bool:
+        from typing import Union, get_origin, get_args
+        from types import UnionType
+        origin = get_origin(self._type)
+        if origin is Union or isinstance(self._type, UnionType):
+            args = get_args(self._type)
+            return any(arg is Block for arg in args)
+        return self._type is Block
 
     @property
     def path(self) -> "IndexPath":
@@ -506,7 +517,7 @@ class Block:
             return parse_union_content(self.text, self._type or str)
         elif kind == "record":
             # return self.body[0].get_value()
-            if self._type is Block:
+            if self.is_block_type:
                 return self.body[0]
             return parse_union_content(self.body[0].text, self._type or str)
         else:

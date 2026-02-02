@@ -157,7 +157,7 @@ class DataFlowNode(Model):
 class LlmCall(Model):
     """a single call to an llm"""
     id: int = KeyField(primary_key=True)
-    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now)
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now, order_by=True)
     config: "LlmConfig" = ModelField()
     usage: "LLMUsage" = ModelField()
     chunks: list[BlockChunk] = ModelField()

@@ -47,8 +47,10 @@ def _get_target_meta(target: Any) -> tuple[ArtifactKindEnum, int | None]:
     #     if target == self:
     #         print(f"target == self {target.id} {self.id}")
     #     return "span", target.artifact_id
+    elif isinstance(target, Parameter):
+        return "parameter", target.artifact_id
     elif isinstance(target, VersionedModel):
-        return "model", target.artifact_id
+        return target.get_namespace_name(), target.artifact_id
     else:
         return "parameter", None
 
@@ -291,7 +293,7 @@ class ArtifactLog:
                 await value.add(artifact, kind=kind)
                 value._value = target
                 return value
-            elif kind == "model":
+            else:
                 artifact = target.artifact
                 artifact_id = target.artifact_id
                 
