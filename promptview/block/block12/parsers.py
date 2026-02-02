@@ -259,12 +259,12 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                     block = self.block.append_child(self._md_parser.result, copy=False)
                     print("### MD ROOT BLOCK ###")
                     block.print_debug()
-                    # yield block
-                    if len(block.body):
-                        yield block.copy(False)
-                        yield block.body[0].copy(False)
-                    else:
-                        yield block
+                    yield block
+                    # if len(block.body):
+                    #     yield block.copy(False)
+                    #     yield block.body[0].copy(False)
+                    # else:
+                    #     yield block
                 # print(chunk)
                 else:
                     events = self._md_parser.feed(chunk)
@@ -1143,6 +1143,9 @@ class MdContextStack:
         self._should_add_newline = False
         block_ctx = MdBlockCtx(tag_name, chunks, attrs, style, depth)
         self.push(block_ctx)
+        # print("----------------------------")
+        # if self._stack:
+        #     self._stack[0].block.print_debug()
     
     
     def commit(self, tag_name: str, chunks: list[BlockChunk]):
@@ -1255,6 +1258,7 @@ class MarkdownParser:
 
         # Split chunk at newlines for consistent handling
         sub_chunks = self._split_at_newlines(chunk)
+        # sub_chunks = [chunk]
 
         for sub_chunk in sub_chunks:
             # Process chunk and generate events
@@ -1377,9 +1381,12 @@ class MarkdownParser:
         """Process a single character, return events."""
         events = []
         if self._verbose:
-            print(f"{self._index}  [ MD CHAR ] {char} state: {self._state}")
+            print(f"{self._index}  [ MD CHAR ] {char!r} state: {self._state}")
         if self._state == self.STATE_LINE_START:
-            if char == '#':
+            if char == ' ' or char == '\t':
+                # Skip leading whitespace at line start (e.g. XML indentation)
+                pass
+            elif char == '#':
                 self._markup_buffer += char
                 self._state = self.STATE_IN_MARKUP
             elif char == '\n':
@@ -1482,7 +1489,13 @@ class MarkdownParser:
         """
         # self._index += 1
         if self._verbose:
+            if event.type == "open":
+                print(f"*********************** {event.type} {event.tag} *************************")
+            if event.type in ["delta", "close"]:
+                print("__________________")
             print(f"{self._index}  [ MD EVENT ] {event.type} {event.tag} content={event.content!r}")
+            if event.type == "close":
+                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event.type} {event.tag} ^^^^^^^^^^^^^^^^^^^^^^^")
 
         if event.type == "open":
             return self._handle_open(event)
