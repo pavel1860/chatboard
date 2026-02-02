@@ -336,3 +336,50 @@ class TestMarkdownListParser:
         assert out.get("tool_list")[0].get("title").value == "Animals"
 
         # assert pipe.result.render() == xml_str
+        
+        
+        
+        
+        
+        
+        
+        
+class TestMarkdownCatArticleListParser:
+    """Tests for Markdown list parsing."""
+
+    @pytest.mark.asyncio
+    async def test_parse_markdown_list(self):
+        from promptview.prompt.fbp_process import Stream
+
+        filepath = "__tests__/data/cat_article.jsonl"
+
+
+        class CreateArticle(BaseModel):
+            """ use this action if the user wants to create a new article. the user can ask for the content of the article or not. if they don't ask for the content, you can leave it blank. the same goes for the title. """
+            title: str | None = Field(description="the title of the article. if the user didn't provide a title, you can leave it blank.", json_schema_extra={"example": "the title of the article"} )
+            # tags: list[str] = Field(description="the tags of the article", json_schema_extra={"example": ["tag1", "tag2"]} )
+            content: Block | None = Field(description="the content of the article if the user asked for it. it should be a in markdown format.", json_schema_extra={"example": "this is the content of the article"} )
+            
+   
+
+        with Block.schema_view(tags=["output","writer"]) as schema:
+            with schema.view("thought", str) as t:
+                t /= "think step by step what to do with the information you observed and thinkg if there is a tool that can help you to complete the tasks."
+            with schema.view("answer", str) as r:
+                r /= "the answer to the user's question goes here. you should use is to give textual answer to the user's question."        
+            with schema.view_list("tool", key="name") as actions:            
+                actions.register(CreateArticle)
+
+
+
+        parser = XmlParser(schema, verbose=True, verbose_debug=False, verbose_markdown=False)
+        stream = Stream.load(filepath)
+        # stream = Stream.from_list(chunks, name="stream_from_list")
+
+        pipe = stream | parser
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+            pass
+        assert_events(events)
+        

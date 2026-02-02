@@ -92,6 +92,11 @@ class SchemaCtx[TxSchema]:
     
     @property
     def path(self) -> str:
+        return str(self.block.path)
+    
+    
+    @property
+    def tail_path(self) -> str:
         return str(self.block.tail.path)
     
     
@@ -281,9 +286,7 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                     #     yield block
                 # print(chunk)
                 else:
-                    events = self._md_parser.feed(chunk)
-                    for event in events:
-                        yield event
+                    yield from self._md_parser.feed(chunk)
         
     
     
@@ -440,7 +443,7 @@ class ContextStack:
         style = None
         for chunk in chunks:            
             # if chunk.starts_with_tab() and self._state in ["wait_for_block", "in_markdown"]:                
-            if chunk.starts_with_tab() and self._state in ["wait_for_block"]:
+            if chunk.isspace() and self._state in ["wait_for_block"]:
                 self._push_pending_chunk(chunk)
                 continue
             elif chunk.is_newline() and self._state == "in_block":
@@ -453,12 +456,12 @@ class ContextStack:
                     last_block = None
                     for block in event.iter_depth_first():                    
                         last_block = block
-                        self._add_event("block", str(event.path), block.copy(False))
+                        self._add_event("block", str(block.path), block.copy(False))
                     self._prepend_pending_chunks(last_block)
                     self._state = "in_block"
                     # print(f"append Block!")
                 else:
-                    self._add_event("block_delta", str(self.top().path), event)
+                    self._add_event("block_delta", self.top().tail_path, event)
     
     
     
@@ -1323,12 +1326,13 @@ class MarkdownParser:
             for event in events:
                 output = self._handle_event(event)
                 if output is not None:
-                    outputs.append(output)
+                    yield output
+                    # outputs.append(output)
 
-            if self._verbose:
-                print(f"[MD] fed {sub_chunk.content!r} → {len(events)} events, {len(outputs)} outputs")
+            # if self._verbose:
+                # print(f"[MD] fed {sub_chunk.content!r} → {len(events)} events, {len(outputs)} outputs")
 
-        return outputs
+        # return outputs
 
     def _split_at_newlines(self, chunk: BlockChunk) -> list[BlockChunk]:
         """

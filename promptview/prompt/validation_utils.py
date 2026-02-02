@@ -59,6 +59,7 @@ def assert_events(events):
                     assert ev.path in path_lookup, f"commit path '{ev.path}' not found"                
                     path_lookup[ev.path] = "commit"
                 is_first_chunk_in_block = False
+                last_block_event = None
             elif ev.type == "block":
                 if len(ev.value.body) > 0:
                     raise ValueError(f"Block has body at {ev.int_path}")

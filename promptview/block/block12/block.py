@@ -581,6 +581,8 @@ class Block:
                     events.append(event)
 
         result_chunks = self._raw_append(chunks)
+        if len(events) and isinstance(events[0], Block):
+            return events
         events.extend(result_chunks)
         return events
 
