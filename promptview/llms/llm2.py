@@ -393,7 +393,7 @@ class LLM:
             config = LlmConfig(model=self.default_model)
         llm_blocks, extra_args = pack_blocks(blocks)
         llm = LLMStreamController(llm=self, blocks=llm_blocks, config=config, tools=tools, args=(llm_blocks, config, tools, *extra_args))
-        if schema:
+        if schema is not None:
             llm.parse(schema)
         return llm
     

@@ -363,7 +363,7 @@ class BlockMutator(Mutator):
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not prev.is_wrapper and not prev.has_newline():
-            yield child.prev().add_newline(style=self.styles[0])
+            yield prev.add_newline(style=self.styles[0])
         
         
         
@@ -508,7 +508,8 @@ class MarkdownMutator(BlockMutator):
     def init(cls, block: Block) -> Block:
         prefix, content = block.split_prefix(r"#+\s+", regex=True)        
         if not prefix:
-            prefix = "#" * (block.path.depth + 1) + " "
+            # prefix = "#" * (block.path.depth + 1) + " "
+            prefix = "#" * (len(block.iter_path(lambda x: "md" in x.style))) + " "
         
         content.prepend(prefix, style="md")
         return content
@@ -609,8 +610,9 @@ class ToolDescriptionMutator(Mutator):
                 purpose /= description.body[0].content
             with blk("## Parameters") as params:
                 for i, param in enumerate(parameters.body):
-                    with params(f"{i + 1}.", tags=["param", param.content]) as param_blk: 
-                        param_blk /= "  name: " + param.content
+                    with params(f"{i + 1}. name: " + param.content, tags=["param", param.content]) as param_blk: 
+                    # with params(f"{i + 1}.", tags=["param", param.content]) as param_blk: 
+                        # param_blk /= "  name: " + param.content
                         if hasattr(param, 'type_str') and param.type_str is not None:
                             param_blk /= "  Type: ", param.type_str
                         if hasattr(param, 'is_required'):

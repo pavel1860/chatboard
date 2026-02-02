@@ -1,7 +1,7 @@
 """Tests for XmlParser."""
 import pytest
 from promptview.block.block12 import Block, XmlParser
-from __tests__.utils import chunk_xml_for_llm_simulation, strip_text, validate_events
+from promptview.prompt.validation_utils import chunk_xml_for_llm_simulation, strip_text, assert_events
 from pydantic import BaseModel, Field
 class TestXmlParserBasic:
     """Tests for basic XML parsing."""
@@ -26,7 +26,7 @@ class TestXmlParserBasic:
         async for ip in pipe:
             events.append(ip)
         
-        validate_events(events)
+        assert_events(events)
 
         assert pipe.result.render() == xml_str
         
@@ -57,7 +57,7 @@ class TestXmlParserBasic:
         async for ip in pipe:
             events.append(ip)
         
-        validate_events(events)
+        assert_events(events)
 
         assert pipe.result.render() == xml_str        
         
@@ -82,7 +82,7 @@ class TestXmlParserBasic:
         events = []
         async for ip in pipe:
             events.append(ip)
-        validate_events(events)
+        assert_events(events)
 
         assert pipe.result.render() == xml_str
 
@@ -117,7 +117,7 @@ class TestXmlParserMultipleTags:
         async for ip in pipe:
             events.append(ip)
             # print(ip)
-        validate_events(events)
+        assert_events(events)
 
         blk = pipe.result
 
@@ -150,7 +150,7 @@ class TestXmlParserMultipleTags:
         async for ip in pipe:
             events.append(ip)
             # print(ip)
-        validate_events(events)
+        assert_events(events)
 
  
 
@@ -205,7 +205,7 @@ class TestXmlParserWithTools:
         events = []
         async for ip in pipe:
             events.append(ip)
-        validate_events(events)
+        assert_events(events)
 
         assert pipe.result.render() == xml_str
 
@@ -230,7 +230,7 @@ class TestXmlParserStreaming:
         events = []
         async for ip in pipe:
             events.append(ip)
-        validate_events(events)
+        assert_events(events)
 
         assert pipe.result is not None
         assert "hello world" in pipe.result.render()
@@ -274,7 +274,7 @@ class TestMarkdownParser:
             print(ip.path, ip.type, ip.value)
             # print_event(ip)
             events.append(ip)
-        validate_events(events)
+        assert_events(events)
                 
         out = pipe.result        
         assert out.get("title").value == "Animals"
@@ -326,7 +326,7 @@ class TestMarkdownListParser:
         events = []
         async for ip in pipe:
             events.append(ip)
-        validate_events(events)
+        assert_events(events)
         
         out = pipe.result        
         assert out.get("thought").value == "lets say hello world"

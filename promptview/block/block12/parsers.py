@@ -46,7 +46,7 @@ class ParserEvent:
             # print("-------------------------------")
             # self.value.print_debug()
             if len(self.value.body) > 0:
-                raise ParserError("Block body is not empty")
+                raise ParserError(f"Block Event was emitted with non empty body. Path: {path} Block:\n {value.debug_tree()}")
         elif isinstance(value, list):
             self.value = value
         elif isinstance(value, BlockChunk):
@@ -102,8 +102,8 @@ class SchemaCtx[TxSchema]:
         raise NotImplementedError("init not implemented")
     
     
-    def append(self, chunks: list[BlockChunk]):
-        return self.block.append(chunks)
+    def append(self, chunks: list[BlockChunk], style: str | None = None):
+        return self.block.append(chunks, style=style)
     
     def commit(self, name: str, chunks: list[BlockChunk]):
         raise NotImplementedError("commit not implemented")
@@ -119,7 +119,7 @@ class SchemaCtx[TxSchema]:
         if isinstance(schema, BlockListSchema):
             return BlockListSchemaCtx(schema)
         elif isinstance(schema, BlockSchema):
-            if schema.type is Block:
+            if schema.is_block_type:
                 return BlockMarkdownSchemaCtx(schema)
             return BlockSchemaCtx(schema)
         else:
@@ -238,7 +238,7 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
 
         
         
-    def append(self, chunks: list[BlockChunk]):                      
+    def append(self, chunks: list[BlockChunk], style: str | None = None):                      
         for chunk in chunks:
             if self._markdown_ended:
                 yield from super().append(chunks) 
@@ -257,7 +257,14 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                     self._markdown_started = True
                     events = self._md_parser.feed(chunk)
                     block = self.block.append_child(self._md_parser.result, copy=False)
-                    yield block
+                    print("### MD ROOT BLOCK ###")
+                    block.print_debug()
+                    # yield block
+                    if len(block.body):
+                        yield block.copy(False)
+                        yield block.body[0].copy(False)
+                    else:
+                        yield block
                 # print(chunk)
                 else:
                     events = self._md_parser.feed(chunk)
@@ -277,7 +284,7 @@ ContextState = Literal["wait_for_block", "in_block", "in_markdown"]
 
 class ContextStack:
     
-    def __init__(self, schema: "BlockSchema | BlockListSchema", output_queue: list[ParserEvent], root_name: str | None = None, verbose: bool = False):
+    def __init__(self, schema: "BlockSchema | BlockListSchema", output_queue: list[ParserEvent], root_name: str | None = None, verbose: bool = False, verbose_markdown: bool = False):
         self._stack: list[SchemaCtx] = []
         self._commited_stack: list[SchemaCtx] = []
         self._schema = schema
@@ -289,6 +296,7 @@ class ContextStack:
         self.events = output_queue
         self.index = -1
         self._verbose = verbose
+        self._verbose_markdown = verbose_markdown
     
     @property
     def curr_block(self) -> Block:
@@ -313,6 +321,12 @@ class ContextStack:
             # events.append(schema_ctx)
         self._pending_pop = schema_ctx
         return schema_ctx
+    
+    
+    def set_index(self, index: int):
+        self.index = index
+        if not self.is_empty() and isinstance(self.top(), BlockMarkdownSchemaCtx):
+            self.top()._md_parser.set_index(index)
     
     def is_empty(self) -> bool:
         return not self._stack
@@ -369,7 +383,8 @@ class ContextStack:
         # chunks = self._append_pending_chunks(chunks)
         schema_ctx = schema_ctx.init(name, attrs, chunks)
         
-        # if isinstance(schema_ctx, BlockMarkdownSchemaCtx):
+        if isinstance(schema_ctx, BlockMarkdownSchemaCtx):
+            schema_ctx._md_parser._verbose = self._verbose_markdown
             # schema_ctx._md_parser._verbose = self._verbose
             # self._state = "in_markdown"
                 
@@ -408,20 +423,23 @@ class ContextStack:
         
     def append(self, chunks: list[BlockChunk]):
         top = self.top()
+        style = None
         for chunk in chunks:            
             # if chunk.starts_with_tab() and self._state in ["wait_for_block", "in_markdown"]:                
             if chunk.starts_with_tab() and self._state in ["wait_for_block"]:                
                 self._push_pending_chunk(chunk)
                 continue
             elif chunk.is_newline() and self._state == "in_block":
-                # self._state = "wait_for_block" if not isinstance(top, BlockMarkdownSchemaCtx) else "in_markdown"         
+                # self._state = "wait_for_block" if not isinstance(top, BlockMarkdownSchemaCtx) else "in_markdown"                         
                 self._state = "wait_for_block"
-            for event in top.append([chunk]):
+                style = top.get_style()
+                chunk.meta.style = style
+            for event in top.append([chunk], style=style):
                 if isinstance(event, Block):
                     self._add_event("block", str(event.path), event)
                     self._prepend_pending_chunks(event)
                     self._state = "in_block"
-                    print(f"append Block!")
+                    # print(f"append Block!")
                 else:
                     self._add_event("block_delta", str(self.top().path), event)
     
@@ -571,7 +589,9 @@ class XmlParser(Process):
         schema: "BlockSchema", 
         upstream: Process | None = None, 
         verbose: bool = False,
-        exhaust_stream_on_exception: bool = True
+        exhaust_stream_on_exception: bool = True,
+        verbose_debug: bool = False,
+        verbose_markdown: bool = False
     ):
         super().__init__(upstream)
 
@@ -588,6 +608,8 @@ class XmlParser(Process):
         self._stack: list[tuple["BlockSchema", Block]] = []        
         self._verbose = verbose
         self._exhaust_stream_on_exception = exhaust_stream_on_exception
+        self._verbose_debug = verbose_debug
+        self._verbose_markdown = verbose_markdown
         # Expat parser setup
         self._parser = expat.ParserCreate()
         self._parser.buffer_text = False
@@ -623,7 +645,7 @@ class XmlParser(Process):
             self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
             self._wrapper_schema._raw_append_child(self.schema)
         self._index = -1
-        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, output_queue=self._output_queue, root_name=self._root_tag, verbose=verbose)
+        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, output_queue=self._output_queue, root_name=self._root_tag, verbose=verbose, verbose_markdown=verbose_markdown)
         
         self._exception_to_raise: Exception | None = None
 
@@ -858,13 +880,16 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Event handling
     # -------------------------------------------------------------------------
+    
+    def inc_index(self):
+        self._index += 1
+        self._ctx_stack.set_index(self._index)
 
     def _flush_pending(self, end_byte: int):
         """Process any pending event."""
         if self._pending is None:
             return
-        self._index += 1
-        self._ctx_stack.index = self._index
+        self.inc_index()
         event_type, event_data, start_byte = self._pending
         chunks = self._get_chunks_in_range(start_byte, end_byte)
         self._pending = None
@@ -890,17 +915,10 @@ class XmlParser(Process):
             self._ctx_stack.commit(name, chunks)
         elif event_type == "chardata":
             self._ctx_stack.append(chunks)
-        print(f"({self._ctx_stack._state}) {self._ctx_stack._pending_chunks}")
-        # if event_type == "start":
-        #     name, attrs = event_data
-        #     self._handle_start(name, attrs, chunks)
-        # elif event_type == "end":
-        #     name = event_data
-        #     self._handle_end(name, chunks)
-        # elif event_type == "chardata":
-        #     self._handle_chardata(chunks)
+        # print(f"({self._ctx_stack._state}) {self._ctx_stack._pending_chunks}")
         
-        if self._verbose:
+        
+        if self._verbose_debug:
             if not self._ctx_stack.is_empty():
                 print("---")                
                 self._ctx_stack._stack[0].block.print_debug()
@@ -1128,7 +1146,9 @@ class MdContextStack:
     
     
     def commit(self, tag_name: str, chunks: list[BlockChunk]):
-        pass
+        if len(self._stack) > 1:  # Don't pop the root md-root
+            ctx = self.pop()
+            self._committed_stack.append(ctx)
     
     # def append(self, chunks: list[BlockChunk]) -> Block |list[BlockChunk]:
     #     return self.top().append(chunks)
@@ -1138,7 +1158,7 @@ class MdContextStack:
         for chunk in chunks:
             style = None
             if self._should_add_newline:
-                if "md" not in self.top().block.style:
+                if len(self._stack) > 1 and "md" not in self.top().block.style:
                     self.pop()
                 block = self.add_newline()
             if chunk.is_newline():
@@ -1300,6 +1320,9 @@ class MarkdownParser:
             result.append(BlockChunk(after_content, meta=after_meta))
 
         return result
+    
+    def set_index(self, index: int):
+        self._index = index
 
     def close(self) -> list[Block | list[BlockChunk]]:
         """Close the parser and finalize any open blocks."""
@@ -1353,7 +1376,8 @@ class MarkdownParser:
     def _process_char(self, char: str, chunk: BlockChunk) -> list[MdEvent]:
         """Process a single character, return events."""
         events = []
-
+        if self._verbose:
+            print(f"{self._index}  [ MD CHAR ] {char} state: {self._state}")
         if self._state == self.STATE_LINE_START:
             if char == '#':
                 self._markup_buffer += char
@@ -1456,9 +1480,9 @@ class MarkdownParser:
         Handle an event by calling ctx_stack methods.
         Returns the output for streaming.
         """
-        self._index += 1
+        # self._index += 1
         if self._verbose:
-            print(f"{self._index}  [ MD EVENT] {event.type} {event.tag} content={event.content!r}")
+            print(f"{self._index}  [ MD EVENT ] {event.type} {event.tag} content={event.content!r}")
 
         if event.type == "open":
             return self._handle_open(event)

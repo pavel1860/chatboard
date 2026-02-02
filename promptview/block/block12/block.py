@@ -15,7 +15,7 @@ Usage:
 
 from __future__ import annotations
 import builtins
-from typing import Any, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsIndex, overload
+from typing import Any, Callable, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsIndex, overload
 from collections import UserList
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import core_schema
@@ -638,7 +638,8 @@ class Block:
         if is_transforming():
             prev = child.prev()
             if not prev.is_wrapper and not prev.has_newline():
-                prev.append("\n")    
+                # prev.append("\n")    
+                prev.add_newline()
         else:
             if to_body and self._should_use_mutator("on_append_child"):
                 for event in self.mutator.on_append_child(child=child):
@@ -919,6 +920,7 @@ class Block:
     def _raw_append(
         self,
         chunks: list[BlockChunk],
+        to_tail: bool = True,
     ) -> list[BlockChunk]:
         """
         Low-level append chunks to this block's local text.
@@ -933,7 +935,7 @@ class Block:
             List of BlockChunk objects with updated metadata
         """
         # target = self.head
-        target = self.tail
+        target = self.tail if to_tail else self.head
         results = []
 
         for chunk in chunks:
@@ -1649,7 +1651,24 @@ class Block:
     def add_newline(self, style: str | None = None) -> list[BlockChunk]:
         """Add a newline to the end of this block."""
         chunks = self.promote_content("\n", style=style)
-        return self._raw_append(chunks)
+        return self._raw_append(chunks, to_tail=False)
+    
+    
+    def iter_path(self, func: Callable[[Block], bool], exclude_wrappers: bool = True) -> list[int]:
+        curr = self
+        path = []
+        while curr is not None:
+            if exclude_wrappers and curr.is_wrapper:
+                curr = curr.parent
+                continue
+            if func(curr):
+                p = curr.path                
+                index =  p[-1] if len(p) > 0 else 0
+                path.append(index)
+            else:
+                break
+            curr = curr.parent
+        return path
 
     # =========================================================================
     # String Operations

@@ -109,6 +109,16 @@ class BlockSchema(Block):
         """Get the type annotation for this schema."""
         return self._type
     
+    @property
+    def is_block_type(self) -> bool:
+        from typing import Union, get_origin, get_args
+        from types import UnionType
+        origin = get_origin(self._type)
+        if origin is Union or isinstance(self._type, UnionType):
+            args = get_args(self._type)
+            return any(arg is Block for arg in args)
+        return self._type is Block
+    
     
     @property
     def type_str(self) -> str | None:
@@ -741,8 +751,7 @@ class BlockListSchema(BlockSchema):
             for schema in self.list_schemas:
                 if schema.attrs.get(self.key) == key_value:
                     return schema
-
-        return self.list_schemas[0] if self.list_schemas else None
+        raise ValueError(f"Could not find item schema for model: {model_cls.__name__}")
 
     # -------------------------------------------------------------------------
     # Instantiation

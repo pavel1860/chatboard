@@ -117,7 +117,7 @@ import os
 # from ..versioning import DataFlowNode, ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
-    from ..block import Block
+    from ..block import Block, BlockChunk
     from ..versioning import DataFlowNode, ExecutionSpan, SpanType, LlmCall
 
 
@@ -536,6 +536,13 @@ class Stream(Process):
             from ..block import BlockChunk
             for chunk in chunks:
                 yield BlockChunk(content=chunk, logprob=1.0)
+        return cls(gen(), name=name)
+    
+    @classmethod
+    def from_chunks(cls, chunks: list["BlockChunk"], name: str = "chunk_stream"):
+        async def gen():
+            for chunk in chunks:
+                yield chunk
         return cls(gen(), name=name)
 
     async def __anext__(self):

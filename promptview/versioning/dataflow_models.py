@@ -207,6 +207,14 @@ class LlmCall(Model):
             print(f"  Created  : {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
             print(sep)
         print(self.text)
+        
+        
+    def to_file(self, filename: str):
+        import json
+        with open(filename, "w") as f:
+            for chunk in self.chunks:
+                data = chunk.model_dump()
+                f.write(json.dumps(data) + "\n")
   
 
 class ExecutionSpan(VersionedModel):
