@@ -15,7 +15,8 @@ def assert_events(events):
     path_lookup = {}
     root = None
     index = -1
-    
+    last_block_event = None
+    is_first_chunk_in_block = False
     for ev in events:
         try:
             index += 1
@@ -24,15 +25,15 @@ def assert_events(events):
             # if root is not None:
                 # assert len(ev.path) > 0
                 
-            if ev.type == "block_init":
-                
+            if ev.type == "block_init":                
                 if len(ev.value.body) > 0:
                     raise ValueError(f"Block has body at {ev.int_path}")
                 # handle root block
+                is_first_chunk_in_block = True
                 if root is None:
                     root = ev.get_value()
                     continue               
-                
+                last_block_event = ev
                 assert ev.path not in path_lookup, f"duplicate path {ev.path}"
                 path_lookup[ev.path] = "init"
                 if validate_existing(root, ev.int_path):
@@ -41,20 +42,30 @@ def assert_events(events):
                 
             elif ev.type == "block_delta":
                 if not validate_existing(root, ev.int_path):
-                    raise ValueError(f"Block does not exist at {ev.int_path}")        
+                    raise ValueError(f"Block does not exist at {ev.int_path}")  
+                if last_block_event is not None and ev.path != last_block_event.path:      
+                    raise ValueError(f"Chunk has different path from block: {ev.path} != {last_block_event.path}")
                 target = root[ev.int_path]
+                
+                if is_first_chunk_in_block and last_block_event is not None:
+                    if last_block_event.get_value().text == ev.get_value()[0].content:
+                        raise ValueError(f"First Chunk is the same as the block content: {last_block_event.get_value()} == {ev.get_value()[0]}")
+                    
                 target.append(ev.get_value())
+                is_first_chunk_in_block = False
                             
             elif ev.type == "block_commit":
                 if ev.path:
                     assert ev.path in path_lookup, f"commit path '{ev.path}' not found"                
                     path_lookup[ev.path] = "commit"
-            
+                is_first_chunk_in_block = False
             elif ev.type == "block":
                 if len(ev.value.body) > 0:
                     raise ValueError(f"Block has body at {ev.int_path}")
                 if validate_existing(root, ev.int_path):
                     raise ValueError(f"Block already exists at {ev.int_path}")
+                is_first_chunk_in_block = True
+                last_block_event = ev
                 root.insert_child(ev.int_path, ev.get_value())
             else:
                 raise ValueError(f"Unknown event type: {ev.type}")

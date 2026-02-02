@@ -92,7 +92,7 @@ class SchemaCtx[TxSchema]:
     
     @property
     def path(self) -> str:
-        return str(self.block.path)
+        return str(self.block.tail.path)
     
     
     def get_style(self) -> str:
@@ -129,6 +129,11 @@ class SchemaCtx[TxSchema]:
         block = self.block.append_child()
         self._should_add_newline = False
         return block
+    
+    
+    def prepend_chunks(self, chunks: list[BlockChunk], style: str | None = None):        
+        for chunk in reversed(chunks):
+            self.block.prepend(chunk.content, style=style, logprob=chunk.logprob)
     
 class BlockSchemaCtx(SchemaCtx[BlockSchema]):
     
@@ -170,6 +175,10 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         self._should_add_newline = False
         self.block.commit(postfix)
         return postfix
+    
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.schema.name!r}, path={self.path})"
 
 class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
     
@@ -232,6 +241,11 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
         return "md"
     
     
+    # @property
+    # def path(self) -> str:
+    #     return str(self.block.tail.path)
+    
+    
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:    
         self._block = self.schema.init_partial(chunks, is_streaming=True)        
         return self
@@ -257,8 +271,8 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                     self._markdown_started = True
                     events = self._md_parser.feed(chunk)
                     block = self.block.append_child(self._md_parser.result, copy=False)
-                    print("### MD ROOT BLOCK ###")
-                    block.print_debug()
+                    # print("### MD ROOT BLOCK ###")
+                    # block.print_debug()
                     yield block
                     # if len(block.body):
                     #     yield block.copy(False)
@@ -426,7 +440,7 @@ class ContextStack:
         style = None
         for chunk in chunks:            
             # if chunk.starts_with_tab() and self._state in ["wait_for_block", "in_markdown"]:                
-            if chunk.starts_with_tab() and self._state in ["wait_for_block"]:                
+            if chunk.starts_with_tab() and self._state in ["wait_for_block"]:
                 self._push_pending_chunk(chunk)
                 continue
             elif chunk.is_newline() and self._state == "in_block":
@@ -436,8 +450,11 @@ class ContextStack:
                 chunk.meta.style = style
             for event in top.append([chunk], style=style):
                 if isinstance(event, Block):
-                    self._add_event("block", str(event.path), event)
-                    self._prepend_pending_chunks(event)
+                    last_block = None
+                    for block in event.iter_depth_first():                    
+                        last_block = block
+                        self._add_event("block", str(event.path), block.copy(False))
+                    self._prepend_pending_chunks(last_block)
                     self._state = "in_block"
                     # print(f"append Block!")
                 else:
@@ -1088,24 +1105,35 @@ class MdBlockCtx:
     def __init__(self, tag_name: str, chunks: list[BlockChunk], attrs: dict, style: str, depth: int):
         from .mutator import MutatorMeta
         config = MutatorMeta.resolve([style])
-        self.block = config.create_block(chunks, tags=[tag_name], attrs=attrs)
+        self.block = config.create_block(chunks, tags=[tag_name], attrs=attrs, role="assistant")
         # self.block = Block(style=style)
-        self._should_add_newline = False
         self._tag_name = tag_name
         self.depth = depth
-        self._should_add_newline = False
-        
-    
         
     def add_newline(self):
         block = self.block.append_child()
-        self._should_add_newline = False
         return block
     
+    @classmethod
+    def init(cls, tag_name: str, chunks: list[BlockChunk], attrs: dict, style: str, depth: int):
+        return cls(tag_name, chunks, attrs, style, depth)
     
     def append(self, chunk: BlockChunk) -> list[BlockChunk]:        
         return self.block.tail.append(chunk.content, style=chunk.style, logprob=chunk.logprob)                
-        
+
+class HeaderBlockCtx(MdBlockCtx):
+    pass
+    
+
+class ParagraphBlockCtx(MdBlockCtx):
+    # pass
+    
+    @classmethod
+    def init(cls, tag_name: str, chunks: list[BlockChunk], attrs: dict, style: str, depth: int):
+        # self.block.append_child()
+        ctx = cls(tag_name, [], attrs, style, depth)
+        ctx.block.append_child(Block(chunks))
+        return ctx
     
 class MdContextStack:
     def __init__(self):
@@ -1116,12 +1144,25 @@ class MdContextStack:
         
         
     def add_newline(self):
-        block = self.top().block.append_child()
+        # block = self.top().block.append_child()
+        block = self.top().add_newline()
         self._should_add_newline = False
         return block
+    
+    
+    def _try_pop_header(self, new_ctx: MdBlockCtx) -> bool:
+        if self.is_empty():
+            return False
+        top = self.top()
+        if isinstance(top, HeaderBlockCtx) and isinstance(new_ctx, HeaderBlockCtx):            
+            if top.depth >= new_ctx.depth:
+                self.pop()
+                return True
+        return False
 
 
     def push(self, block_ctx: MdBlockCtx):
+        self._try_pop_header(block_ctx)
         if self._stack:
             self._stack[-1].block.append_child(block_ctx.block)
         self._stack.append(block_ctx)
@@ -1141,16 +1182,30 @@ class MdContextStack:
     def init(self, tag_name: str, attrs: dict, chunks: list[BlockChunk], style: str, depth: int):
         # Reset newline flag when starting a new block
         self._should_add_newline = False
-        block_ctx = MdBlockCtx(tag_name, chunks, attrs, style, depth)
+        # block_ctx = MdBlockCtx(tag_name, chunks, attrs, style, depth)
+        if tag_name == "md-root":
+            block_ctx = MdBlockCtx.init(tag_name, chunks, attrs, style, depth)        
+        elif tag_name == "p":
+            block_ctx = ParagraphBlockCtx.init(tag_name, chunks, attrs, style, depth)
+        elif tag_name.startswith("h"):
+            block_ctx = HeaderBlockCtx.init(tag_name, chunks, attrs, style, depth)
+        else:
+            raise ParserError(f"Unknown tag '{tag_name}' - no matching block context found")
         self.push(block_ctx)
         # print("----------------------------")
         # if self._stack:
         #     self._stack[0].block.print_debug()
     
     
+
+    
     def commit(self, tag_name: str, chunks: list[BlockChunk]):
         if len(self._stack) > 1:  # Don't pop the root md-root
-            ctx = self.pop()
+            top = self.top()
+            if isinstance(top, HeaderBlockCtx):
+                return
+            else:
+                ctx = self.pop()
             self._committed_stack.append(ctx)
     
     # def append(self, chunks: list[BlockChunk]) -> Block |list[BlockChunk]:
@@ -1161,8 +1216,8 @@ class MdContextStack:
         for chunk in chunks:
             style = None
             if self._should_add_newline:
-                if len(self._stack) > 1 and "md" not in self.top().block.style:
-                    self.pop()
+                # if len(self._stack) > 1 and "md" not in self.top().block.style:
+                    # self.pop()
                 block = self.add_newline()
             if chunk.is_newline():
                 self._should_add_newline = True
