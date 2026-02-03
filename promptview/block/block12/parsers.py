@@ -1289,6 +1289,7 @@ class MarkdownParser:
         # State machine
         self._state = self.STATE_LINE_START
         self._markup_buffer = ""  # Accumulated markup (e.g., "##")
+        self._whitespace_buffer = ""  # Accumulated leading whitespace at line start
         self._current_tag: str | None = None  # Current block tag (h1, h2, p)
         self._current_level: int = 0  # Heading level
         self._pending_newlines: int = 0  # Track newlines for paragraph close
@@ -1454,13 +1455,15 @@ class MarkdownParser:
             print(f"{self.index}  [ MD CHAR ] {char!r} state: {self._state}")
         if self._state == self.STATE_LINE_START:
             if char == ' ' or char == '\t':
-                # Skip leading whitespace at line start (e.g. XML indentation)
-                pass
+                # Buffer leading whitespace until we know what follows
+                self._whitespace_buffer += char
             elif char == '#':
+                # Heading markup — keep buffered whitespace for inclusion in markup
                 self._markup_buffer += char
                 self._state = self.STATE_IN_MARKUP
             elif char == '\n':
-                # Blank line
+                # Blank line — discard buffered whitespace
+                self._whitespace_buffer = ""
                 self._pending_newlines += 1
                 if self._current_tag == 'p' and self._pending_newlines >= 1:
                     # Emit any pending content first
@@ -1475,13 +1478,14 @@ class MarkdownParser:
                     self._current_tag = None
                     self._current_level = 0
             else:
-                # Start of paragraph
+                # Start of paragraph — flush buffered whitespace into content
                 self._pending_newlines = 0
                 if self._current_tag is None:
                     self._current_tag = 'p'
                     events.append(MdEvent("open", "p", "", chunk, 0))
                 self._state = self.STATE_IN_CONTENT
-                self._content_buffer += char
+                self._content_buffer += self._whitespace_buffer + char
+                self._whitespace_buffer = ""
 
         elif self._state == self.STATE_IN_MARKUP:
             if char == '#':
@@ -1497,7 +1501,8 @@ class MarkdownParser:
 
                 self._current_tag = tag
                 self._current_level = level
-                markup_content = self._markup_buffer + " "
+                markup_content = self._whitespace_buffer + self._markup_buffer + " "
+                self._whitespace_buffer = ""
                 self._markup_buffer = ""
                 self._pending_newlines = 0
                 self._state = self.STATE_IN_CONTENT
