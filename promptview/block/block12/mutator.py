@@ -451,6 +451,7 @@ class XmlMutator(Mutator):
                 # with opening_tag() as body:
                 #     pass
         return blk
+
     
     
     # def extract(self) -> Block:
@@ -475,14 +476,14 @@ class XmlMutator(Mutator):
     #     if not self.body and (self.head.has_newline() or content != "\n"):
     #         yield self.block.children[0].append_child("")
             
-        
-
+    
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not self.is_streaming and not prev.has_newline():
             yield prev.add_newline(style="xml")
         if not self.is_streaming:
             yield child.indent(style="xml")
+
         
         
     def on_append(self, chunk: BlockChunk) -> Generator[Block | list[BlockChunk], Any, Any]:

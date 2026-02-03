@@ -268,13 +268,6 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                 events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=chunk.style)
                 yield events
             else:
-                # if not self._markdown_started:
-                #     self._markdown_started = True
-                #     events = self._md_parser.feed(chunk)
-                #     block = self.block.append_child(self._md_parser.result, copy=False)
-                #     yield block                    
-                # else:
-                #     yield from self._md_parser.feed(chunk)
                 if not self._markdown_started:
                     self._markdown_started = True
                     yield self.block.append_child(self._md_parser.result, copy=False)
@@ -300,8 +293,6 @@ class ContextStack:
         self._pending_pop: SchemaCtx | None = None
         self._did_start = False
         self._root_name = root_name
-        self._pending_chunks: list[BlockChunk] = []
-        self._state: ContextState = "none"
         self.events = output_queue
         self.index = -1
         self._verbose = verbose
@@ -344,34 +335,43 @@ class ContextStack:
         return len(self._stack) == 1 and self.top().schema == self._schema
     
     
-    def _append_pending_chunks(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
-        if self._pending_chunks and not isinstance(self.top(), BlockMarkdownSchemaCtx):
-        # if self._pending_chunks:
-            pending_chunks = []
-            style = self.top().block.mutator.get_style()
-            for c in self._pending_chunks:
-                c.meta.style = style
-                pending_chunks.append(c)
-            chunks = pending_chunks + chunks
-            self._pending_chunks = []
-        return chunks
+    # def _append_pending_chunks(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
+    #     if self._pending_chunks and not isinstance(self.top(), BlockMarkdownSchemaCtx):
+    #     # if self._pending_chunks:
+    #         pending_chunks = []
+    #         style = self.top().block.mutator.get_style()
+    #         for c in self._pending_chunks:
+    #             c.meta.style = style
+    #             pending_chunks.append(c)
+    #         chunks = pending_chunks + chunks
+    #         self._pending_chunks = []
+    #     return chunks
     
-    def _push_pending_chunk(self, chunk: BlockChunk):
-        self._pending_chunks.append(chunk)
+    # def _push_pending_chunk(self, chunk: BlockChunk):
+    #     self._pending_chunks.append(chunk)
         
         
-    def _prepend_pending_chunks(self, block: Block):        
-        if self._pending_chunks:
-            style = self.top().get_style()
-            for chunk in reversed(self._pending_chunks):
-                block.prepend(chunk.content, style=style, logprob=chunk.logprob)
-            self._pending_chunks = []
-        return block
+    # def _prepend_pending_chunks(self, block: Block):        
+    #     if self._pending_chunks:
+    #         style = self.top().get_style()
+    #         for chunk in reversed(self._pending_chunks):
+    #             block.prepend(chunk.content, style=style, logprob=chunk.logprob)
+    #         self._pending_chunks = []
+    #     return block
+    
+    def block_from_chunks(self, chunks: list[BlockChunk]) -> Block:
+        last_block = self.top().block.tail if not self.is_empty() and len(self.top().block.body) > 0 else None
+        if last_block is not None and not last_block.has_content():
+            block = self.top().block.remove_child(last_block)
+            block.append(chunks)
+            return block
+        else:
+            return Block(chunks)
+            
         
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]):
         if name == self._root_name:
             chunks = []
-        self._state = "in_block"
         self._pending_pop = None
         if self.is_empty():
             if self._did_start:
@@ -398,7 +398,7 @@ class ContextStack:
             # self._state = "in_markdown"
                 
         self.push(schema_ctx)  
-        self._prepend_pending_chunks(schema_ctx.block)
+        # self._prepend_pending_chunks(schema_ctx.block)
         self._add_event("block_init", schema_ctx.path, schema_ctx.block)
         # events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
         # return events
@@ -406,7 +406,6 @@ class ContextStack:
     def commit(self, name: str, chunks: list[BlockChunk]):
         if name == self._root_name:
             chunks = []
-        self._state = "in_block"
         # chunks = self._append_pending_chunks(chunks)
         if self.top(False).schema.name != name:
             if isinstance(self.top(False), BlockListSchemaCtx):
@@ -421,16 +420,25 @@ class ContextStack:
         
         postfix = schema_ctx.commit(name, chunks)
         self._add_event("block_commit", schema_ctx.path, postfix)
-        self._prepend_pending_chunks(postfix)
+        # self._prepend_pending_chunks(postfix)
         self._commited_stack.append(schema_ctx)        
     
     def _add_event(self, type: Literal["block_init", "block_commit", "block_delta", "block"], path: str | IndexPath , value: Block | list[BlockChunk]):
         if isinstance(path, IndexPath):
             path = str(path)
         self.events.append(ParserEvent(path=path, type=type, value=value))
-        
-        
+    
+    
     def append(self, chunks: list[BlockChunk]):
+        top = self.top()
+        for event in top.append(chunks):
+            if isinstance(event, Block):
+                for block in event.iter_depth_first():
+                    self._add_event("block", str(block.path), block.copy(False))
+            else:
+                self._add_event("block_delta", self.top().tail_path, event)
+        
+    def append3(self, chunks: list[BlockChunk]):
         top = self.top()
         style = None
         for chunk in chunks:            
@@ -637,6 +645,9 @@ class XmlParser(Process):
         # Pending event for deferred processing
         self._pending: tuple[str, Any, int] | None = None
 
+        # Buffered whitespace-only chardata chunks (XML indentation)
+        self._pending_whitespace: list[BlockChunk] = []
+
         # Output queue for events
         self._output_queue: list[ParserEvent] = []
 
@@ -656,7 +667,7 @@ class XmlParser(Process):
             # Single schema - wrap it
             self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
             self._wrapper_schema._raw_append_child(self.schema)
-        self._index = -1
+        self.index = -1
         self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, output_queue=self._output_queue, root_name=self._root_tag, verbose=verbose, verbose_markdown=verbose_markdown)
         
         self._exception_to_raise: Exception | None = None
@@ -877,13 +888,14 @@ class XmlParser(Process):
                 # Split off the part before our range
                 _, chunk = chunk.split(start - chunk_start)
             if chunk.content:
-                if chunk.starts_with_tab():
-                    lchunk, chunk = chunk.split_tab()
-                    result.append(lchunk)
-                    if chunk.content:
-                        result.append(chunk)
-                else:                    
-                    result.append(chunk)
+                # if chunk.starts_with_tab():
+                #     lchunk, chunk = chunk.split_tab()
+                #     result.append(lchunk)
+                #     if chunk.content:
+                #         result.append(chunk)
+                # else:
+                #     result.append(chunk)
+                result.append(chunk)
 
             i += 1
 
@@ -894,8 +906,8 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     
     def inc_index(self):
-        self._index += 1
-        self._ctx_stack.set_index(self._index)
+        self.index += 1
+        self._ctx_stack.set_index(self.index)
 
     def _flush_pending(self, end_byte: int):
         """Process any pending event."""
@@ -906,21 +918,28 @@ class XmlParser(Process):
         chunks = self._get_chunks_in_range(start_byte, end_byte)
         self._pending = None
 
-        # if not chunks:
-        #     return
+        # Buffer whitespace-only chardata (XML indentation)
+        if event_type == "chardata" and chunks and all(c.isspace() for c in chunks):
+            self._pending_whitespace.extend(chunks)
+            return
+
+        # Prepend buffered whitespace to this event's chunks
+        if self._pending_whitespace:
+            chunks = self._pending_whitespace + chunks
+            self._pending_whitespace = []
 
         if self._verbose:
             if event_type == "start":
                 print(f"*********************** {event_data[0]} *************************")
             if event_type in ["chardata", "end"]:
                 print("__________________")
-            print(f"Event {self._index}: {event_type}, data={event_data!r}, chunks={chunks}")
+            print(f"Event {self.index}: {event_type}, data={event_data!r}, chunks={chunks}")
             if event_type == "end":
                 # print(f"####################### {event_data} #########################")
-                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event_data} ^^^^^^^^^^^^^^^^^^^^^^^^")        
-            
+                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event_data} ^^^^^^^^^^^^^^^^^^^^^^^^")
+
         if event_type == "start":
-            name, attrs = event_data            
+            name, attrs = event_data
             self._ctx_stack.init(name, attrs, chunks)
         elif event_type == "end":
             name = event_data

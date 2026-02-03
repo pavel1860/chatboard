@@ -124,7 +124,11 @@ class BlockSchema(Block):
         from .mutator import BlockMutator
         content = content if use_mutator else self.name
         config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)
-        tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming, type=self._type)
+        if isinstance(content, Block):
+            tran_block = config.build_block(content, is_streaming=is_streaming)
+        else:
+            tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming, type=self._type)
+        
         return tran_block
 
 

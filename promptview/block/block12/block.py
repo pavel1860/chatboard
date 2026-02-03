@@ -1172,11 +1172,11 @@ class Block:
         """
         Remove a child block from the tree.
         """
-        if child not in self.children:
+        if child not in self.body:
             raise ValueError("Block is not a child of this block")
 
         child.parent = None
-        self.children.remove(child)
+        self.body.remove(child)
         return child
 
     # =========================================================================
@@ -1656,6 +1656,10 @@ class Block:
         if result is None:
             raise ValueError("No next block: at the end of the tree")
         return result
+    
+    def has_content(self) -> bool:
+        """Check if this block has content."""
+        return self.text and not self.text.isspace()
 
     def has_newline(self) -> bool:
         """Check if this block's text ends with a newline."""
