@@ -1939,9 +1939,9 @@ class Block:
     def extract(self) -> Block:     
         # if not self.is_rendered:
         #     return self
-        ex_block = self.mutator.extract() if self.is_rendered else self.copy(deep=False)
+        ex_block = self.mutator.extract() if self.is_rendered else self.copy(deep=False)        
         for child in self.body:
-            ex_child = child.extract()
+            ex_child = child.extract() if not ex_block.is_block_type else child.copy(deep=True)
             ex_block.append_child(ex_child)
         return ex_block
         
@@ -2380,8 +2380,10 @@ class Block:
         return get_text_diff(self, other, context_lines)
 
     def __repr__(self) -> str:
-        content_preview = self._text[:20] if self._text else ""
-        if len(self._text) > 20:
+        # _text = self.render()
+        _text = self.text
+        content_preview = _text[:20] if _text else ""
+        if len(_text) > 20:
             content_preview += "..."
         
         block_meta = ""

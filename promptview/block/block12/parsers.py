@@ -257,15 +257,18 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
 
         
         
-    def append(self, chunks: list[BlockChunk], style: str | None = None):                      
+    def append(self, chunks: list[BlockChunk], style: str | None = None):
+                            
         for chunk in chunks:
+            style = None
             if self._markdown_ended:
                 yield from super().append(chunks) 
                 return               
             if not self._found_content:
                 if chunk.is_newline():
                     self._found_content = True
-                events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=chunk.style)
+                    style = self.block.mutator.get_style()
+                events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style)
                 yield events
             else:
                 if not self._markdown_started:
@@ -359,14 +362,6 @@ class ContextStack:
     #         self._pending_chunks = []
     #     return block
     
-    def block_from_chunks(self, chunks: list[BlockChunk]) -> Block:
-        last_block = self.top().block.tail if not self.is_empty() and len(self.top().block.body) > 0 else None
-        if last_block is not None and not last_block.has_content():
-            block = self.top().block.remove_child(last_block)
-            block.append(chunks)
-            return block
-        else:
-            return Block(chunks)
             
         
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]):
@@ -888,14 +883,14 @@ class XmlParser(Process):
                 # Split off the part before our range
                 _, chunk = chunk.split(start - chunk_start)
             if chunk.content:
-                # if chunk.starts_with_tab():
-                #     lchunk, chunk = chunk.split_tab()
-                #     result.append(lchunk)
-                #     if chunk.content:
-                #         result.append(chunk)
-                # else:
-                #     result.append(chunk)
-                result.append(chunk)
+                if chunk.starts_with_tab():
+                    lchunk, chunk = chunk.split_tab()
+                    result.append(lchunk)
+                    if chunk.content:
+                        result.append(chunk)
+                else:
+                    result.append(chunk)
+                # result.append(chunk)
 
             i += 1
 
@@ -1155,6 +1150,7 @@ class MdContextStack:
         self._committed_stack: list[MdBlockCtx] = []
         self.init("md-root", {}, [], "root", 0)
         self._should_add_newline = False
+        self.index = -1
         
         
     def add_newline(self):
@@ -1255,7 +1251,7 @@ class MdEvent:
     type: Literal["open", "delta", "close"]
     tag: str
     content: str  # The actual content for this event (may be subset of chunk)
-    chunk: BlockChunk  # Original chunk (for logprob etc.)
+    chunks: list[BlockChunk]  # Chunks for this event (may have different styles)
     level: int = 0  # For headings: 1-6
 
 
@@ -1398,6 +1394,7 @@ class MarkdownParser:
     
     def set_index(self, index: int):
         self.index = index
+        self._ctx_stack.index = index
 
     def close(self) -> list[Block | list[BlockChunk]]:
         """Close the parser and finalize any open blocks."""
@@ -1409,7 +1406,7 @@ class MarkdownParser:
 
         # Close any open block
         if self._current_tag:
-            close_event = MdEvent("close", self._current_tag, "", BlockChunk(""), self._current_level)
+            close_event = MdEvent("close", self._current_tag, "", [BlockChunk("")], self._current_level)
             output = self._handle_event(close_event)
             if output:
                 outputs.append(output)
@@ -1441,7 +1438,7 @@ class MarkdownParser:
                 "delta",
                 self._current_tag,
                 self._content_buffer,
-                BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style),
+                [BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style)],
                 self._current_level
             ))
             self._content_buffer = ""
@@ -1470,22 +1467,28 @@ class MarkdownParser:
                     if self._content_buffer:
                         events.append(MdEvent(
                             "delta", "p", self._content_buffer,
-                            BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style), 0
+                            [BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style)], 0
                         ))
                         self._content_buffer = ""
                     # Close paragraph on blank line
-                    events.append(MdEvent("close", "p", "", chunk, 0))
+                    events.append(MdEvent("close", "p", "", [chunk], 0))
                     self._current_tag = None
                     self._current_level = 0
             else:
-                # Start of paragraph — flush buffered whitespace into content
+                # Start of paragraph — emit whitespace separately with "sp" style
                 self._pending_newlines = 0
                 if self._current_tag is None:
                     self._current_tag = 'p'
-                    events.append(MdEvent("open", "p", "", chunk, 0))
+                    events.append(MdEvent("open", "p", "", [chunk], 0))
+                if self._whitespace_buffer:
+                    events.append(MdEvent(
+                        "delta", self._current_tag, self._whitespace_buffer,
+                        [BlockChunk(self._whitespace_buffer, logprob=chunk.logprob, style="sp")],
+                        self._current_level
+                    ))
+                    self._whitespace_buffer = ""
                 self._state = self.STATE_IN_CONTENT
-                self._content_buffer += self._whitespace_buffer + char
-                self._whitespace_buffer = ""
+                self._content_buffer += char
 
         elif self._state == self.STATE_IN_MARKUP:
             if char == '#':
@@ -1497,18 +1500,22 @@ class MarkdownParser:
 
                 # Close previous block if needed
                 if self._current_tag:
-                    events.append(MdEvent("close", self._current_tag, "", chunk, self._current_level))
+                    events.append(MdEvent("close", self._current_tag, "", [chunk], self._current_level))
 
                 self._current_tag = tag
                 self._current_level = level
-                markup_content = self._whitespace_buffer + self._markup_buffer + " "
+                markup_str = self._markup_buffer + " "
+                markup_content = self._whitespace_buffer + markup_str
+                open_chunks = []
+                if self._whitespace_buffer:
+                    open_chunks.append(BlockChunk(self._whitespace_buffer, logprob=chunk.logprob, style="sp"))
+                open_chunks.append(BlockChunk(markup_str, logprob=chunk.logprob, style="md"))
                 self._whitespace_buffer = ""
                 self._markup_buffer = ""
                 self._pending_newlines = 0
                 self._state = self.STATE_IN_CONTENT
                 events.append(MdEvent(
-                    "open", tag, markup_content,
-                    BlockChunk(markup_content, logprob=chunk.logprob, style="md"), level
+                    "open", tag, markup_content, open_chunks, level
                 ))
             elif char == '\n':
                 # Just "#" without space - treat as paragraph content
@@ -1518,7 +1525,7 @@ class MarkdownParser:
                 # Not a heading - treat as paragraph
                 if self._current_tag is None:
                     self._current_tag = 'p'
-                    events.append(MdEvent("open", "p", "", chunk, 0))
+                    events.append(MdEvent("open", "p", "", [chunk], 0))
                 self._state = self.STATE_IN_CONTENT
                 self._content_buffer += self._markup_buffer + char
                 self._markup_buffer = ""
@@ -1527,26 +1534,28 @@ class MarkdownParser:
             if char == '\n':
                 self._pending_newlines += 1
 
+                # Flush content buffer first
+                if self._content_buffer:
+                    events.append(MdEvent(
+                        "delta", self._current_tag, self._content_buffer,
+                        [BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style)],
+                        self._current_level
+                    ))
+                    self._content_buffer = ""
+                # Emit newline separately with "md" style
+                events.append(MdEvent(
+                    "delta", self._current_tag, "\n",
+                    [BlockChunk("\n", logprob=chunk.logprob, style="md")],
+                    self._current_level
+                ))
+
                 if self._current_tag and self._current_tag.startswith('h'):
-                    # Include the newline in the content buffer
-                    self._content_buffer += char
-                    # Emit content including newline
-                    if self._content_buffer:
-                        events.append(MdEvent(
-                            "delta", self._current_tag, self._content_buffer,
-                            BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style),
-                            self._current_level
-                        ))
-                        self._content_buffer = ""
                     # Headings close on newline
-                    events.append(MdEvent("close", self._current_tag, "", chunk, self._current_level))
+                    events.append(MdEvent("close", self._current_tag, "", [chunk], self._current_level))
                     self._current_tag = None
                     self._current_level = 0
-                    self._state = self.STATE_LINE_START
-                else:
-                    # Paragraph continues, include newline in content
-                    self._content_buffer += char
-                    self._state = self.STATE_LINE_START
+
+                self._state = self.STATE_LINE_START
             else:
                 self._pending_newlines = 0
                 self._content_buffer += char
@@ -1586,7 +1595,7 @@ class MarkdownParser:
         style = "md" if event.tag.startswith('h') else "p"
         # Only pass chunks for elements with markup (headings)
         # Paragraphs have no markup - content comes via delta events
-        chunks = [event.chunk] if event.tag.startswith('h') and event.content else []
+        chunks = event.chunks if event.tag.startswith('h') and event.content else []
         self._ctx_stack.init(event.tag, {}, chunks, style, event.level)
         return self._ctx_stack.top().block
 
@@ -1595,12 +1604,12 @@ class MarkdownParser:
         # Skip empty deltas
         if not event.content:
             return None
-        # Use the event's chunk which contains just the content
-        output = self._ctx_stack.append([event.chunk])
+        # Use the event's chunks which contain just the content
+        output = self._ctx_stack.append(event.chunks)
         return output
 
     def _handle_close(self, event: MdEvent) -> Block | None:
         """Handle CLOSE event - finalize block."""
-        result = self._ctx_stack.commit(event.tag, [event.chunk])
+        result = self._ctx_stack.commit(event.tag, event.chunks)
         return result
 

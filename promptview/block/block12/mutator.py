@@ -487,6 +487,8 @@ class XmlMutator(Mutator):
         
         
     def on_append(self, chunk: BlockChunk) -> Generator[Block | list[BlockChunk], Any, Any]:
+        if chunk.is_newline():
+            chunk.style = "xml"
         if self._state == "init":
             if not chunk.is_newline():                
                 yield self.block._raw_append_child()            
@@ -512,7 +514,7 @@ class MarkdownMutator(BlockMutator):
             # prefix = "#" * (block.path.depth + 1) + " "
             prefix = "#" * (len(block.iter_path(lambda x: "md" in x.style))) + " "
         
-        content.prepend(prefix, style="md")
+        content.prepend(prefix)
         return content
         # if content:
         #     content.prepend(prefix, style="md")

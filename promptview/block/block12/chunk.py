@@ -157,6 +157,10 @@ class BlockChunk:
     def style(self) -> str | None:
         """Style label (from meta)."""
         return self.meta.style
+    
+    @style.setter
+    def style(self, value: str | None):
+        self.meta.style = value
 
     @property
     def id(self) -> str:
