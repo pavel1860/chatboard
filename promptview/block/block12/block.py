@@ -518,7 +518,7 @@ class Block:
         elif kind == "record":
             # return self.body[0].get_value()
             if self.is_block_type:
-                return self.body[0]
+                return self.body[0].dedent()
             return parse_union_content(self.body[0].text, self._type or str)
         else:
             result = {}
@@ -1717,10 +1717,14 @@ class Block:
 
     def indent(self, spaces: int = 2, style: str | None = None):
         if not self.is_wrapper:
-            self.prepend(" " * spaces, style=style or "tab")
+            self.prepend(" " * spaces, style=style or "sp")
         for child in self.children:
             child.indent(spaces, style=style)
         return self
+    
+    
+    def dedent(self):
+        return self.extract("sp")
     
     
     def apply_style(self, style: str, only_views: bool = False, copy: bool = True, recursive: bool = True):
@@ -1936,12 +1940,10 @@ class Block:
     # Copy Operations
     # =========================================================================
     
-    def extract(self) -> Block:     
-        # if not self.is_rendered:
-        #     return self
-        ex_block = self.mutator.extract() if self.is_rendered else self.copy(deep=False)        
+    def extract(self, style: str | None = None) -> Block:                
+        ex_block = self.mutator.extract(style) if self.is_rendered or style is not None else self.copy(deep=False)        
         for child in self.body:
-            ex_child = child.extract() if not ex_block.is_block_type else child.copy(deep=True)
+            ex_child = child.extract(style) if not ex_block.is_block_type or style is not None else child.copy(deep=True)
             ex_block.append_child(ex_child)
         return ex_block
         

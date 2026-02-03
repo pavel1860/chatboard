@@ -281,7 +281,7 @@ class Mutator(metaclass=MutatorMeta):
             return None
         return self.__class__.styles[0]
 
-    def content_chunks(self) -> list[BlockChunk]:
+    def content_chunks(self, extract_style: str | None = None) -> list[BlockChunk]:
         """
         Get content chunks only (chunks without a style).
 
@@ -295,11 +295,18 @@ class Mutator(metaclass=MutatorMeta):
             return []
 
         result = []
-        for chunk in block.chunks:
-            if chunk.style is None:
-                content = block._text[chunk.start:chunk.end]
-                if content:
-                    result.append(BlockChunk(content, logprob=chunk.logprob))
+        if extract_style is None:
+            for chunk in block.chunks:
+                if chunk.style is None:
+                    content = block._text[chunk.start:chunk.end]
+                    if content:
+                        result.append(BlockChunk(content, logprob=chunk.logprob))
+        else:
+            for chunk in block.chunks:
+                if chunk.style != extract_style:
+                    content = block._text[chunk.start:chunk.end]
+                    if content:
+                        result.append(BlockChunk(content, logprob=chunk.logprob))
         return result
 
     @classmethod
@@ -316,8 +323,8 @@ class Mutator(metaclass=MutatorMeta):
         return block.copy_head()
     
     
-    def extract(self) -> Block:
-        return Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
+    def extract(self, style: str | None = None) -> Block:
+        return Block(self.block.mutator.content_chunks(style), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
     
     
     def on_append(self, chunk: BlockChunk) -> Generator[Block | BlockChunk, Any, Any]:
