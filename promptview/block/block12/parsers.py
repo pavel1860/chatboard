@@ -268,25 +268,17 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
                 events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=chunk.style)
                 yield events
             else:
-                # skip tabs
-                # if chunk.starts_with_tab():
-                    # continue
-                
+                # if not self._markdown_started:
+                #     self._markdown_started = True
+                #     events = self._md_parser.feed(chunk)
+                #     block = self.block.append_child(self._md_parser.result, copy=False)
+                #     yield block                    
+                # else:
+                #     yield from self._md_parser.feed(chunk)
                 if not self._markdown_started:
                     self._markdown_started = True
-                    events = self._md_parser.feed(chunk)
-                    block = self.block.append_child(self._md_parser.result, copy=False)
-                    # print("### MD ROOT BLOCK ###")
-                    # block.print_debug()
-                    yield block
-                    # if len(block.body):
-                    #     yield block.copy(False)
-                    #     yield block.body[0].copy(False)
-                    # else:
-                    #     yield block
-                # print(chunk)
-                else:
-                    yield from self._md_parser.feed(chunk)
+                    yield self.block.append_child(self._md_parser.result, copy=False)
+                yield from self._md_parser.feed(chunk)
         
     
     
@@ -1274,7 +1266,7 @@ class MarkdownParser:
 
     def __init__(self, verbose: bool = False):
         self._verbose = verbose
-        self._index = 0
+        self.index = 0
         # State machine
         self._state = self.STATE_LINE_START
         self._markup_buffer = ""  # Accumulated markup (e.g., "##")
@@ -1385,7 +1377,7 @@ class MarkdownParser:
         return result
     
     def set_index(self, index: int):
-        self._index = index
+        self.index = index
 
     def close(self) -> list[Block | list[BlockChunk]]:
         """Close the parser and finalize any open blocks."""
@@ -1440,7 +1432,7 @@ class MarkdownParser:
         """Process a single character, return events."""
         events = []
         if self._verbose:
-            print(f"{self._index}  [ MD CHAR ] {char!r} state: {self._state}")
+            print(f"{self.index}  [ MD CHAR ] {char!r} state: {self._state}")
         if self._state == self.STATE_LINE_START:
             if char == ' ' or char == '\t':
                 # Skip leading whitespace at line start (e.g. XML indentation)
@@ -1552,7 +1544,7 @@ class MarkdownParser:
                 print(f"*********************** {event.type} {event.tag} *************************")
             if event.type in ["delta", "close"]:
                 print("__________________")
-            print(f"{self._index}  [ MD EVENT ] {event.type} {event.tag} content={event.content!r}")
+            print(f"{self.index}  [ MD EVENT ] {event.type} {event.tag} content={event.content!r}")
             if event.type == "close":
                 print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event.type} {event.tag} ^^^^^^^^^^^^^^^^^^^^^^^")
 
