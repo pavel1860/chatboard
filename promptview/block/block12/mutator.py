@@ -511,23 +511,49 @@ class XmlMutator(Mutator):
 
 
 class MarkdownMutator(BlockMutator):
-    styles = ("md",)
+    styles = ("md", "h1", "h2", "h3", "h4", "h5", "h6")
     
     
     @classmethod
-    def init(cls, block: Block) -> Block:
+    def _get_heading_level(cls, block: Block) -> int | None:
+        if "h1" in block.style:
+            return 1
+        elif "h2" in block.style:
+            return 2
+        elif "h3" in block.style:
+            return 3
+        elif "h4" in block.style:
+            return 4
+        elif "h5" in block.style:
+            return 5
+        elif "h6" in block.style:
+            return 6
+        return None
+    
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:        
         prefix, content = block.split_prefix(r"#+\s+", regex=True)        
         if not prefix:
             # prefix = "#" * (block.path.depth + 1) + " "
-            prefix = "#" * (len(block.iter_path(lambda x: "md" in x.style))) + " "
+            level = cls._get_heading_level(block)
+            if level is not None:
+                prefix = "#" * level + " "
+            else:                
+                prefix = "#" * (len(block.iter_path(lambda x: "md" in x.style))) + " "
         
         content.prepend(prefix)
         return content
-        # if content:
-        #     content.prepend(prefix, style="md")
-        #     return content
-        # else:
-        #     return prefix.apply_style("md")            
+
+
+
+class ParagraphMutator(BlockMutator):
+    styles = ("p",)
+    
+    
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        if not child.endswith("."):
+            yield child.append_content(". ", style="p")
         
         
         

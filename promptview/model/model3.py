@@ -160,9 +160,15 @@ class Model(BaseModel, metaclass=ModelMeta):
         ns = self.get_namespace()
         return ns.insert(self.model_dump()).select("*")
     
-    def update(self):
+    def update(self) -> Self:
         ns = self.get_namespace()
-        return ns.update(self.primary_id, self.model_dump()).select("*")
+        return ns.update(self.primary_id, self.model_dump()).select("*").one()
+    
+    @classmethod
+    async def update_query(cls, id: Any, data: dict[str, Any]) -> Self:
+        """Update the model instance"""
+        ns = cls.get_namespace()
+        return await ns.update(id, data).select("*").one()
     
     def _load_context_vars(self):
         ns = self.get_namespace()

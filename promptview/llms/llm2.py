@@ -151,7 +151,7 @@ class LLMStreamController(StreamController):
         # stream = self._init_stream(bound.args, bound.kwargs)
         
         if llm_call_id is not None:
-            stream = await LLMStream.load_llm_call(llm_call_id, delay=self._load_delay or 0.05)
+            stream = await LLMStream.load_llm_call(llm_call_id, delay=self._load_delay or 0.01)
         elif load_filepath is not None:
             stream = LLMStream.load(load_filepath, delay=self._load_delay or 0.05)
         else:

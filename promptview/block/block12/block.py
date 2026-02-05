@@ -552,6 +552,20 @@ class Block:
     # =========================================================================
     # Public API (delegates to mutator)
     # =========================================================================
+    
+    def append_content(self, content: ContentType, style: str | None = None, logprob: float | None = None) -> list[Block | BlockChunk]:
+        """
+        Append content to this block.
+        """
+        chunks = self.promote_content(content, style=style, logprob=logprob)
+        return self._raw_append(chunks, to_tail=False)
+    
+    def prepend_content(self, content: ContentType, style: str | None = None, logprob: float | None = None) -> list[Block | BlockChunk]:
+        """
+        Prepend content to this block.
+        """
+        chunks = self.promote_content(content, style=style, logprob=logprob)
+        return self._raw_prepend(chunks)
 
     def append(
         self,
@@ -1694,6 +1708,14 @@ class Block:
     def find(self, pattern: str) -> int:
         """Find pattern in this block's text. Returns position or -1."""
         return self._text.find(pattern)
+
+    def startswith(self, prefix: str) -> bool:
+        """Check if this block's text starts with the given prefix."""
+        return self._text.startswith(prefix)
+
+    def endswith(self, suffix: str) -> bool:
+        """Check if this block's text ends with the given suffix."""
+        return self._text.endswith(suffix)
 
     def find_all(self, pattern: str) -> list[int]:
         """Find all occurrences of pattern. Returns positions."""
