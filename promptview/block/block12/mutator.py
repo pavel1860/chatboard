@@ -324,7 +324,7 @@ class Mutator(metaclass=MutatorMeta):
     
     
     def extract(self, style: str | None = None) -> Block:
-        return Block(self.block.mutator.content_chunks(style), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
+        return Block(self.block.mutator.content_chunks(style), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type, id=self.block.id)
     
     
     def on_append(self, chunk: BlockChunk) -> Generator[Block | BlockChunk, Any, Any]:
@@ -545,6 +545,21 @@ class MarkdownMutator(BlockMutator):
         content.prepend(prefix)
         return content
 
+class DefinitionMutator(Mutator):
+    styles = ("def",)
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        block = block.copy_head()
+        block.prepend_content("**")
+        block.append_content("** - ")
+        return block
+        
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        prev = child.prev()
+        if not prev.is_wrapper and not prev.has_newline() and not prev is self.head:
+            yield prev.add_newline(style=self.styles[0])
+
 
 
 class ParagraphMutator(BlockMutator):
@@ -620,7 +635,9 @@ class MarkdownNumberListStylizer(Stylizer):
         yield child.prepend(f"{child.path[-1] + 1}. ", style="li")
         # yield child.prepend(child.path[-1], style="li-num")
         
-        
+
+
+    
         
 class XmlDefMutator(Mutator):
     styles = ("xml-def",)

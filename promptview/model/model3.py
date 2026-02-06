@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .sql2.pg_query_builder import PgQueryBuilder
     from .base.base_namespace import BaseNamespace
     from .relation_info import RelationInfo
+    from ..block import Block
 
 MODEL = TypeVar("MODEL", bound="Model")
 JUNCTION_MODEL = TypeVar("JUNCTION_MODEL", bound="Model")
@@ -339,3 +340,27 @@ class Model(BaseModel, metaclass=ModelMeta):
     @classmethod
     def q(cls) -> "PgQueryBuilder[Self]":
         return cls.query()
+    
+    
+    
+    def to_block(self, exclude: set[str] | None = None, include_artifact: bool = False) -> "Block":
+        from ..block import Block
+        from ..block.block12.object_helpers import pydantic_to_schema        
+        artifact_fields = {"artifact_id", "artifact"} if not include_artifact else set()
+        exclude = exclude or set()
+        with Block(self.__class__.__name__, style="md") as blk:
+            for name, field in self.__class__.model_fields.items():
+                if name in artifact_fields or name in exclude:
+                    continue
+                with blk.view(name, type=field.annotation, style="def") as view:
+                    view /= getattr(self, name)                    
+        return blk
+    
+    
+    def print(self):
+        block = self.to_block()
+        block.print()
+        
+        
+    def render(self) -> str:
+        return self.to_block().render()

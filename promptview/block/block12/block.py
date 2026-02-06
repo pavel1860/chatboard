@@ -270,6 +270,7 @@ class Block:
         attrs: dict[str, Any] | None = None,
         children: list[Block] | None = None,
         type: Type | None = None,
+        id: str | None = None,
     ):
         """
         Create a block with optional initial content.
@@ -282,6 +283,7 @@ class Block:
             attrs: Arbitrary attributes
             children: List of child blocks
             type: Type of the content value (auto-detected if not provided)
+            id: Optional unique identifier (auto-generated if not provided)
         """
         from .mutator import Mutator, Stylizer
         # Tree structure
@@ -304,7 +306,7 @@ class Block:
         self._type: Type | None = type
 
         # ID
-        self.id: str = _generate_id()
+        self.id: str = id if id is not None else _generate_id()
 
         # Mutator (lazy initialized)
         self.mutator: Mutator = Mutator(self)
@@ -1970,12 +1972,13 @@ class Block:
         return ex_block
         
 
-    def copy(self, deep: bool = True) -> Block:
+    def copy(self, deep: bool = True, copy_id: bool = False) -> Block:
         """
         Create a copy of this block.
 
         Args:
             deep: If True, copy entire subtree. If False, just this block.
+            copy_id: If True, copy the id from this block. If False, generate a new id.
 
         Returns:
             New block with copied content
@@ -1986,20 +1989,21 @@ class Block:
             style=list(self.style),
             attrs=dict(self.attrs),
             type=self._type,
+            id=self.id if copy_id else None,
         )
         new_block._text = self._text
         new_block.chunks = [c.copy() for c in self.chunks]
 
         if deep:
             for child in self.children:
-                child_copy = child.copy(deep=True)
+                child_copy = child.copy(deep=True, copy_id=copy_id)
                 new_block._raw_append_child(child_copy, to_body=False)
 
         return new_block
 
     
-    def copy_head(self) -> Block:
-        return self.copy(deep=False)
+    def copy_head(self, copy_id: bool = False) -> Block:
+        return self.copy(deep=False, copy_id=copy_id)
     # =========================================================================
     # Serialization
     # =========================================================================

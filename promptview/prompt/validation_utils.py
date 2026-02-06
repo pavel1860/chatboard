@@ -1,7 +1,10 @@
 import textwrap
 import random
-from promptview.block.block12.block import BlockChunk
+from ..block import BlockChunk
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from ..versioning import Turn
 
 
 def assert_events(events):  
@@ -255,3 +258,78 @@ def print_event(ev, split: bool = False):
 #                 path_lookup[pe.path] = "commit"
 #     for path, status in path_lookup.items():
 #         assert status == "commit", f"path {path} not committed"
+
+
+
+
+
+
+
+
+
+
+
+
+class Results:
+    
+    def __init__(self, turns):
+        self.turns = turns
+    
+    @classmethod
+    async def get(cls, limit: int = 10, offset: int = 0):
+        turns = await cls._get_turns(limit, offset)
+        return cls(turns)
+
+    @classmethod
+    async def _get_turns(cls, limit: int = 10, offset: int = 0):
+        from promptview.versioning import Branch, Turn, TestTurn, EvaluatorConfig, TurnStatus
+        turns = await (
+            Turn.query(include_executions=True)
+            .include(TestTurn.query().include(EvaluatorConfig))
+            .include(Branch)
+            .where(Turn.status == TurnStatus.COMMITTED)
+            .limit(limit)
+            .offset(offset)
+            .order_by("-created_at")
+        )
+        return turns
+    
+    def _get_llm_call(self, turn: "Turn"):
+        return turn.get_data("1.1.1.1").value
+    
+    def _get_artifacts(self, turn: "Turn"):
+        return [df.value for df in turn.get_data_many("1.*") if df.kind != "span"]
+
+    def get_artifact(self, index: int=0):
+        artifacts = self._get_artifacts(self.turns[index])
+        return artifacts[0]
+    
+    def get_artifacts(self, index: int=0):
+        artifacts = self._get_artifacts(self.turns[index])
+        return artifacts[0]
+
+    def get_response(self, index: int=0):
+        return self._get_llm_call(self.turns[index])
+
+    
+    def get_state(self, index: int=0):
+        response = self._get_llm_call(self.turns[index])
+        artifacts = self._get_artifacts(self.turns[index])
+        return {
+            "response": response,
+            "artifacts": artifacts
+        }
+        
+    def print_state(self, index: int=0):
+        sep = "—" * 25
+        state = self.get_state(index)
+        print(sep, "Response", sep)
+        state["response"].print()
+        print(sep, "Artifacts", sep)        
+        for artifact in state["artifacts"]:
+            artifact.print()
+            # if isinstance(artifact, BlockArtifact):
+            #     artifact.content.print()
+            # else:
+            #     print(artifact)
+            print("-" * 25)

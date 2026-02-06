@@ -267,7 +267,7 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
             if not self._found_content:
                 if chunk.is_newline():
                     self._found_content = True
-                    style = self.block.mutator.get_style()
+                style = self.block.mutator.get_style()
                 events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style)
                 yield events
             else:
@@ -664,8 +664,11 @@ class XmlParser(Process):
             self._wrapper_schema._raw_append_child(self.schema)
         self.index = -1
         self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, output_queue=self._output_queue, root_name=self._root_tag, verbose=verbose, verbose_markdown=verbose_markdown)
-        
+
         self._exception_to_raise: Exception | None = None
+
+        # Buffer for sanitizing invalid XML tokens split across chunks
+        self._sanitize_buffer: str = ""
 
         # Start with synthetic root
         self.feed("<{}>".format(self._root_tag))
@@ -784,6 +787,54 @@ class XmlParser(Process):
     # Feeding data
     # -------------------------------------------------------------------------
 
+    def _sanitize_xml_tokens(self, content: str) -> str:
+        """
+        Sanitize content by removing invalid XML tokens (stateful for streaming).
+
+        Removes empty tags like <> and </> that some LLMs produce
+        which are not valid XML. Handles tokens split across chunks.
+
+        States:
+        - "": normal processing
+        - "<": saw '<', waiting to see if it's '<>' or '</'
+        - "</": saw '</', waiting to see if it's '</>'
+        """
+        result = []
+        i = 0
+
+        # Prepend buffered content from previous chunk
+        content = self._sanitize_buffer + content
+        self._sanitize_buffer = ""
+
+        while i < len(content):
+            char = content[i]
+
+            if char == '<':
+                # Look ahead to determine what kind of tag
+                remaining = content[i:]
+
+                if remaining.startswith('<>'):
+                    # Empty tag <> - skip it
+                    i += 2
+                    continue
+                elif remaining.startswith('</>'):
+                    # Empty closing tag </> - skip it
+                    i += 3
+                    continue
+                elif remaining == '<' or remaining == '</':
+                    # Incomplete - buffer for next chunk
+                    self._sanitize_buffer = remaining
+                    break
+                else:
+                    # Valid tag start - keep it
+                    result.append(char)
+                    i += 1
+            else:
+                result.append(char)
+                i += 1
+
+        return ''.join(result)
+
     def feed(self, chunk: BlockChunk | str, logprob: float | None = None, is_final: bool = False):
         """
         Feed a chunk to the parser.
@@ -797,7 +848,17 @@ class XmlParser(Process):
         if isinstance(chunk, str):
             chunk = BlockChunk(chunk, logprob=logprob)
 
-        data = chunk.content.encode("utf-8")
+        # Sanitize invalid XML tokens
+        sanitized_content = self._sanitize_xml_tokens(chunk.content)
+
+        # Skip if all content was buffered or removed
+        if not sanitized_content:
+            return
+
+        if sanitized_content != chunk.content:
+            chunk = BlockChunk(sanitized_content, logprob=chunk.logprob, style=chunk.style)
+
+        data = sanitized_content.encode("utf-8")
         start = self._total_bytes
         end = start + len(data)
         self._chunks.append((start, end, chunk))
@@ -814,6 +875,9 @@ class XmlParser(Process):
         if self._is_closed:
             return
         self._is_closed = True
+
+        # Discard any incomplete invalid tokens in the sanitize buffer
+        self._sanitize_buffer = ""
 
         if not self._exception_to_raise:
             if self._has_synthetic_root:

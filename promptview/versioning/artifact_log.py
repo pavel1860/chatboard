@@ -11,6 +11,7 @@ from typing import Any, Iterator, TYPE_CHECKING
 
 from ..utils.type_utils import SerializableType, serialize_value, type_to_str_or_none
 from . import ArtifactKindEnum, Turn, Branch, ExecutionSpan, SpanType, DataFlowNode, Artifact, DataArtifact, ValueIOKind, Parameter, Log, VersionedModel
+from .models import _kind_to_table
 from ..block import BlockList, Block
 # from ..block_models.block_log import store_block, get_blocks
 from .block_storage import store_block, BlockModel as StoredBlockModel
@@ -99,56 +100,61 @@ class ArtifactLog:
         from ..model import NamespaceManager
         from .models import Artifact
 
-        def kind2table(k: str):
-            if k == "parameter":
-                return "parameters"
-            elif k == "block":
-                return "blocks"  # New table name
-            elif k == "span":
-                return "execution_spans"
-            return k
-
         models_to_load = defaultdict(list)
 
+        # Collect artifact IDs grouped by table name
         for turn in turns:
-            for value in turn.data:
-                for da in value.artifact_data:
-                    models_to_load[kind2table(da.kind)].append(da.artifact_id)
+            for table, artifact_id in turn.iter_artifact_ids():
+                models_to_load[table].append(artifact_id)
 
         model_lookup = {}
 
-        for k in models_to_load:
-            if k == "list":
-                models = await Artifact.query(include_branch_turn=True).where(Artifact.id.isin(models_to_load[k]))
-                model_lookup["list"] = {m.id: m for m in models}
-            elif k == "blocks":
-                # Use new StoredBlockModel and convert to Block
+        for table in models_to_load:
+            if table == "blocks":
+                # Special handling for blocks - convert to Block objects
                 block_models = await StoredBlockModel.query(include_branch_turn=True).where(
-                    StoredBlockModel.artifact_id.isin(models_to_load[k])
+                    StoredBlockModel.artifact_id.isin(models_to_load[table])
                 )
-                model_lookup[k] = {bm.artifact_id: bm.to_block() for bm in block_models}
+                model_lookup[table] = {bm.artifact_id: bm.to_block() for bm in block_models}
             else:
-                ns = NamespaceManager.get_namespace(k)
-                models = await ns._model_cls.query(include_branch_turn=True).where(ns._model_cls.artifact_id.isin(models_to_load[k]))
-                model_lookup[k] = {m.artifact_id: m for m in models}
+                # Regular model - use NamespaceManager
+                try:
+                    ns = NamespaceManager.get_namespace(table)
+                    models = await ns._model_cls.query(include_branch_turn=True).where(
+                        ns._model_cls.artifact_id.isin(models_to_load[table])
+                    )
+                    model_lookup[table] = {m.artifact_id: m for m in models}
+                except ValueError:
+                    # Namespace not found - skip
+                    continue
 
         for turn in turns:
             for value in turn.data:
+                table = _kind_to_table(value.kind)
                 if value.kind == "list":
                     value._value = []
                     for da in value.artifact_data:
+                        da_table = _kind_to_table(da.kind)
                         if da.kind == "list":
-                            value._container_value = model_lookup[kind2table(da.kind)][da.artifact_id]
-                        else:
-                            value._value.append(model_lookup[kind2table(da.kind)][da.artifact_id])
-                else:
-                    value._value = model_lookup[kind2table(value.kind)][value.artifact_id]
+                            # Container artifact - look up by id directly
+                            if "list" not in model_lookup:
+                                list_artifacts = await Artifact.query(include_branch_turn=True).where(
+                                    Artifact.id.isin([d.artifact_id for d in value.artifact_data if d.kind == "list"])
+                                )
+                                model_lookup["list"] = {m.id: m for m in list_artifacts}
+                            value._container_value = model_lookup.get("list", {}).get(da.artifact_id)
+                        elif da_table and da_table in model_lookup:
+                            value._value.append(model_lookup[da_table][da.artifact_id])
+                elif table and table in model_lookup:
+                    value._value = model_lookup[table].get(value.artifact_id)
         return turns    
     
     
 
 
-    
+    async def get_many(artifact_ids: List[int]):
+        from .models import Artifact
+        models = await Artifact.query(include_branch_turn=True).where(Artifact.id.isin(artifact_ids))
     
     # async def log_value(self, value: Any, io_kind: ValueIOKind = "input", name: str | None = None):
     #     """

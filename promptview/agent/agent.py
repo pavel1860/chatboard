@@ -95,13 +95,28 @@ class Agent(Generic[P]):
             auth: AuthModel = Depends(get_auth),
             # ctx: tuple[User, Branch, Partition, Message, ExecutionContext] = Depends(get_ctx),
         ):  
+            from ..versioning import Artifact
             # context = await Context.from_request(request)
             content, options, state, files = payload
             message = self._block_from_content(content, options['role'])
             # state = process_state(state)
+            artifact_view = None
+            if artifact_view_id := state.get("artifact_view"):
+                artifact = await Artifact.get(artifact_view_id)
+                artifact_view = await artifact.load_target()
             if self.state_model is not None:
                 state = self.state_model.model_validate(state)
-            context = await Context.from_kwargs(**ctx, auth=auth, message=message, state=state)            
+            
+            context = await Context.from_kwargs(
+                **ctx, 
+                auth=auth, 
+                message=message, 
+                state=state,
+                artifact_view=artifact_view,
+                load_llm_calls={
+                    "writer_reasoning_openai_llm": 1
+                }
+            )            
             context = context.start_turn()
             agent_gen = self.stream_agent_with_context(context, message, state=state)
             return StreamingResponse(agent_gen, media_type="text/plain")

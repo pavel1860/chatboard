@@ -80,7 +80,7 @@ class Context(BaseModel):
     events: list[StreamEvent] = []
     message: "Block | None" = None
     state: dict | None = None
-    
+    artifact_view: "Artifact | None" = None
     
     def __init__(
         self,
@@ -98,6 +98,7 @@ class Context(BaseModel):
         cache_dir: str | None = None,
         load_cache: dict[str, str] | None = None,
         load_llm_calls: dict[str, int] | None = None,
+        artifact_view: "Artifact | None" = None,
     ):
         super().__init__()
         self._ctx_models = {m.__class__.__name__:m for m in models}
@@ -123,6 +124,7 @@ class Context(BaseModel):
         self.cache_dir = cache_dir or CACHE_DIR
         self.load_cache = load_cache or {}
         self.load_llm_calls = load_llm_calls or {}
+        self.artifact_view = artifact_view
         
     @property
     def request_id(self):

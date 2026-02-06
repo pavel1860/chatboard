@@ -73,6 +73,23 @@ class BlockArtifact(ArtifactModel):
                     rec.content = stored_block.to_block()
             return recs
 
-        query.include(StoredBlockModel.query()).parse(parse_models, target="models")
+        query.include(StoredBlockModel.query(use_liniage=use_liniage)).parse(parse_models, target="models")
 
         return query
+
+    
+    def to_block(self, exclude: set[str] | None = None, include_artifact: bool = False) -> Block:
+        from .block import Block
+        from .block.block12.object_helpers import pydantic_to_schema        
+        artifact_fields = {"artifact_id", "artifact", "stored_block"} if not include_artifact else set()
+        exclude = exclude or set()
+        with Block(self.__class__.__name__, style="md") as blk:
+            for name, field in self.__class__.model_fields.items():
+                if name in artifact_fields or name in exclude or name == "content":
+                    continue                
+                with blk.view(name, type=field.annotation, style="def") as view:
+                        view /= getattr(self, name)
+                        
+            with blk.view("content", type=Block, style="md") as view:
+                view /= self.content
+        return blk
