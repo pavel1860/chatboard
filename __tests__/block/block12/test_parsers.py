@@ -1,14 +1,14 @@
 """Tests for XmlParser."""
 import pytest
-from promptview.block.block12 import Block, XmlParser
-from promptview.prompt.validation_utils import chunk_xml_for_llm_simulation, strip_text, assert_events
+from chatboard.block.block12 import Block, XmlParser
+from chatboard.prompt.validation_utils import chunk_xml_for_llm_simulation, strip_text, assert_events
 from pydantic import BaseModel, Field
 class TestXmlParserBasic:
     """Tests for basic XML parsing."""
 
     @pytest.mark.asyncio
     async def test_parse_simple_xml(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         xml_str =  strip_text("<item>hello</item>")
         chunks = chunk_xml_for_llm_simulation(xml_str, seed=42)
@@ -32,7 +32,7 @@ class TestXmlParserBasic:
         
     @pytest.mark.asyncio
     async def test_parse_simple_xml_with_output_format(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         xml_str = strip_text("""
         <output>
@@ -63,7 +63,7 @@ class TestXmlParserBasic:
         
     @pytest.mark.asyncio
     async def test_parse_with_code_fence(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         xml_str = """```xml
 <item>hello</item>
@@ -92,7 +92,7 @@ class TestXmlParserMultipleTags:
 
     @pytest.mark.asyncio
     async def test_parse_thought_answer(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         with Block(tags=["schema"]) as out_fmt:
             with out_fmt("output schema", tags=["schema", "pirate"]) as schema:    
@@ -173,7 +173,7 @@ class TestXmlParserWithTools:
 
     @pytest.mark.asyncio
     async def test_parse_with_tool(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
         from pydantic import BaseModel, Field
 
         class Attack(BaseModel):
@@ -215,7 +215,7 @@ class TestXmlParserStreaming:
 
     @pytest.mark.asyncio
     async def test_chunked_parsing(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         chunks = ['<', 'item', '>', 'hello', ' wo', 'rld', '<', '/', 'item', '>']
 
@@ -244,7 +244,7 @@ class TestMarkdownParser:
 
     @pytest.mark.asyncio
     async def test_parse_markdown(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         xml_str =  strip_text("""
             <title>Animals</title>
@@ -289,7 +289,7 @@ class TestMarkdownListParser:
 
     @pytest.mark.asyncio
     async def test_parse_markdown_list(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         xml_str = strip_text("""
             <thought>lets say hello world</thought>
@@ -349,7 +349,7 @@ class TestMarkdownCatArticleListParser:
 
     @pytest.mark.asyncio
     async def test_parse_markdown_list(self):
-        from promptview.prompt.fbp_process import Stream
+        from chatboard.prompt.fbp_process import Stream
 
         filepath = "__tests__/data/cat_article.jsonl"
 

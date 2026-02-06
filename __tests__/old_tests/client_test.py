@@ -2,10 +2,10 @@
 import pytest
 from pydantic import Field, BaseModel
 import pytest_asyncio
-from promptview.llms.clients.openai_client import OpenAiLlmClient
-from promptview.llms.clients.anthropic_client import AnthropicLlmClient
+from chatboard.llms.clients.openai_client import OpenAiLlmClient
+from chatboard.llms.clients.anthropic_client import AnthropicLlmClient
 
-from promptview.llms.messages import HumanMessage
+from chatboard.llms.messages import HumanMessage
 
 
 

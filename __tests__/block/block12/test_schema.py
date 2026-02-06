@@ -1,6 +1,6 @@
 """Tests for BlockSchema."""
 import pytest
-from promptview.block.block12 import Block, BlockSchema
+from chatboard.block.block12 import Block, BlockSchema
 from pydantic import BaseModel, Field
 
 

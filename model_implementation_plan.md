@@ -1,17 +1,17 @@
 # Model Implementation Plan
 
-This document outlines the specific implementation steps to create the decorator-based ORM system using the existing files in the `promptview/model2` directory.
+This document outlines the specific implementation steps to create the decorator-based ORM system using the existing files in the `chatboard/model2` directory.
 
 ## Files to Modify/Create
 
-1. `promptview/model2/fields.py` - Implement ModelField and Model base class
-2. `promptview/model2/model.py` - Implement the model factory and decorators
-3. `promptview/model2/namespace_manager.py` - Extend the existing namespace manager
-4. `promptview/model2/postgres/namespace.py` - Extend the PostgresNamespace implementation
+1. `chatboard/model2/fields.py` - Implement ModelField and Model base class
+2. `chatboard/model2/model.py` - Implement the model factory and decorators
+3. `chatboard/model2/namespace_manager.py` - Extend the existing namespace manager
+4. `chatboard/model2/postgres/namespace.py` - Extend the PostgresNamespace implementation
 
 ## Implementation Details
 
-### 1. Update `promptview/model2/fields.py`
+### 1. Update `chatboard/model2/fields.py`
 
 ```python
 from pydantic._internal._model_construction import ModelMetaclass
@@ -54,14 +54,14 @@ class VersionedModel(Model):
     pass
 ```
 
-### 2. Create `promptview/model2/model.py`
+### 2. Create `chatboard/model2/model.py`
 
 ```python
 from typing import Any, Dict, Optional, Type, TypeVar, Callable
 from pydantic import BaseModel
 
-from promptview.model2.namespace_manager import NamespaceManager
-from promptview.model2.base_namespace import DatabaseType
+from chatboard.model2.namespace_manager import NamespaceManager
+from chatboard.model2.base_namespace import DatabaseType
 
 T = TypeVar('T', bound=BaseModel)
 
@@ -141,18 +141,18 @@ class ModelFactory:
 model = ModelFactory()
 ```
 
-### 3. Update `promptview/model2/namespace_manager.py`
+### 3. Update `chatboard/model2/namespace_manager.py`
 
 The existing file already has a good structure, but we need to add a few methods:
 
 ```python
-from promptview.model2.base_namespace import DatabaseType, Namespace
+from chatboard.model2.base_namespace import DatabaseType, Namespace
 from typing import TYPE_CHECKING, Type, TypeVar, Dict, Any
 
-from promptview.model2.postgres.namespace import PostgresNamespace
+from chatboard.model2.postgres.namespace import PostgresNamespace
 
 if TYPE_CHECKING:
-    from promptview.model2.fields import Model
+    from chatboard.model2.fields import Model
 
 MODEL = TypeVar("MODEL", bound="Model")   
 
@@ -212,7 +212,7 @@ class NamespaceManager:
         return namespace.query(**kwargs)
 ```
 
-### 4. Update `promptview/model2/postgres/namespace.py`
+### 4. Update `chatboard/model2/postgres/namespace.py`
 
 The existing file needs to be extended with the actual database operations:
 
@@ -220,10 +220,10 @@ The existing file needs to be extended with the actual database operations:
 from typing import Any, Dict, Literal, Type
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-from promptview.model2.postgres.builder import SQLBuilder
-from promptview.utils.model_utils import get_list_type, is_list_type
-from promptview.model2.base_namespace import Namespace, NSFieldInfo
-from promptview.utils.db_connections import PGConnectionManager
+from chatboard.model2.postgres.builder import SQLBuilder
+from chatboard.utils.model_utils import get_list_type, is_list_type
+from chatboard.model2.base_namespace import Namespace, NSFieldInfo
+from chatboard.utils.db_connections import PGConnectionManager
 import datetime as dt
 
 PgIndexType = Literal["btree", "hash", "gin", "gist", "spgist", "brin"]
@@ -293,11 +293,11 @@ class PostgresNamespace(Namespace):
         """Create a query for this namespace"""
         # Implementation for creating a query
         # This would return a QuerySet for this namespace
-        from promptview.model2.postgres.query import PostgresQuerySet
+        from chatboard.model2.postgres.query import PostgresQuerySet
         return PostgresQuerySet(self, **kwargs)
 ```
 
-### 5. Create `promptview/model2/postgres/query.py`
+### 5. Create `chatboard/model2/postgres/query.py`
 
 ```python
 from typing import Any, Dict, List, Optional
@@ -363,8 +363,8 @@ Once implemented, the usage would look like:
 
 ```python
 from pydantic import BaseModel
-from promptview.model2.fields import Model, ModelField
-from promptview.model2.model import model
+from chatboard.model2.fields import Model, ModelField
+from chatboard.model2.model import model
 
 @model.postgres(namespace="users")
 class User(Model):

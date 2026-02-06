@@ -1,9 +1,9 @@
 import pytest
 import pytest_asyncio
 
-from promptview.block import BlockChunk
-from promptview.block import BlockList
-from promptview.llms.openai_llm3 import OpenAiLLM
+from chatboard.block import BlockChunk
+from chatboard.block import BlockList
+from chatboard.llms.openai_llm3 import OpenAiLLM
 
 
 

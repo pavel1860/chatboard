@@ -2,7 +2,7 @@
 
 ## Current Issues
 
-The current model architecture in `promptview/model/` has several issues:
+The current model architecture in `chatboard/model/` has several issues:
 
 1. **Complex Metaclass Implementation**: The `ModelMeta` class handles too many responsibilities
 2. **Tight Coupling**: The `Model` class is tightly coupled with database operations
@@ -16,7 +16,7 @@ Move from a metaclass-based approach to a decorator-based pattern:
 
 ```python
 from pydantic import BaseModel
-from promptview import model
+from chatboard import model
 
 
 @model.postgres()
@@ -47,7 +47,7 @@ The decorator interface will be the main entry point for defining models:
 
 ```python
 # Module structure
-from promptview.model import model, ModelField
+from chatboard.model import model, ModelField
 
 # Database-specific decorators
 @model.postgres(
@@ -353,7 +353,7 @@ With this implementation, the usage would look like:
 
 ```python
 from pydantic import BaseModel
-from promptview.model import model, ModelField
+from chatboard.model import model, ModelField
 
 @model.postgres(namespace="users")
 class User(BaseModel):

@@ -1,10 +1,10 @@
 import pytest
 import pytest_asyncio
-from promptview.block.block11 import Block, BlockSchema
-from promptview.block.block11.span import BlockChunk, Span
-from promptview.block.block11.parsers import XmlParser
-from promptview.block.block11.schema import BlockSchema, BlockListSchema
-from promptview.prompt.fbp_process import Stream
+from chatboard.block.block11 import Block, BlockSchema
+from chatboard.block.block11.span import BlockChunk, Span
+from chatboard.block.block11.parsers import XmlParser
+from chatboard.block.block11.schema import BlockSchema, BlockListSchema
+from chatboard.prompt.fbp_process import Stream
 from pydantic import BaseModel, Field
 from ..helpers import chunk_xml_for_llm_simulation
 import textwrap

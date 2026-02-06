@@ -3,12 +3,12 @@ Tests for SQL2 LTREE operations (PostgreSQL hierarchical tree queries)
 """
 import pytest
 import pytest_asyncio
-from promptview.model import KeyField, ModelField, VersionedModel
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.sql2.relations import NsRelation
-from promptview.model.sql2.relational_queries import SelectQuerySet
-from promptview.model.sql2.compiler import Compiler
-from promptview.model.sql2.expressions import LtreeNlevel, LtreeSubpath, LtreeLca, Value
+from chatboard.model import KeyField, ModelField, VersionedModel
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.sql2.relations import NsRelation
+from chatboard.model.sql2.relational_queries import SelectQuerySet
+from chatboard.model.sql2.compiler import Compiler
+from chatboard.model.sql2.expressions import LtreeNlevel, LtreeSubpath, LtreeLca, Value
 
 
 class Category(VersionedModel):

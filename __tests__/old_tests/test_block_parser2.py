@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from promptview.prompt.block_parser2 import (
+from chatboard.prompt.block_parser2 import (
     ActionContent,
     ParsedBlock,
     parse_blocks,

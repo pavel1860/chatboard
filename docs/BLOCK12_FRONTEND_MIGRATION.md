@@ -109,7 +109,7 @@ tree_id, block_id, position, is_root
 **Storage API:**
 
 ```python
-from promptview.model.block_models.block12_storage import BlockLog
+from chatboard.model.block_models.block12_storage import BlockLog
 
 # Store a block tree
 tree = await BlockLog.add(block, branch_id, turn_id)
@@ -320,25 +320,25 @@ data = block.model_dump()
 ## Relevant Files
 
 ### Block12 Core
-- `promptview/block/block12/block.py` - Block class with local text ownership
-- `promptview/block/block12/chunk.py` - ChunkMeta and BlockChunk classes
-- `promptview/block/block12/schema.py` - BlockSchema, BlockListSchema
-- `promptview/block/block12/parsers.py` - XmlParser, ParserEvent
-- `promptview/block/block12/mutator.py` - Mutator and Stylizer classes
-- `promptview/block/block12/transform.py` - Block transformation logic
+- `chatboard/block/block12/block.py` - Block class with local text ownership
+- `chatboard/block/block12/chunk.py` - ChunkMeta and BlockChunk classes
+- `chatboard/block/block12/schema.py` - BlockSchema, BlockListSchema
+- `chatboard/block/block12/parsers.py` - XmlParser, ParserEvent
+- `chatboard/block/block12/mutator.py` - Mutator and Stylizer classes
+- `chatboard/block/block12/transform.py` - Block transformation logic
 
 ### Block12 Storage
-- `promptview/model/block_models/block12_storage.py` - Merkle tree storage layer
-- `promptview/model/versioning/models.py` - BlockTree, BlockModel, BlockSpan models
+- `chatboard/model/block_models/block12_storage.py` - Merkle tree storage layer
+- `chatboard/model/versioning/models.py` - BlockTree, BlockModel, BlockSpan models
 
 ### Block11 (Legacy)
-- `promptview/block/block11/block.py` - Legacy Block class
-- `promptview/block/block11/span.py` - Span, BlockChunk, BlockChunkList
-- `promptview/block/block11/parsers.py` - Legacy XmlParser
-- `promptview/block/block11/schema.py` - Legacy BlockSchema
+- `chatboard/block/block11/block.py` - Legacy Block class
+- `chatboard/block/block11/span.py` - Span, BlockChunk, BlockChunkList
+- `chatboard/block/block11/parsers.py` - Legacy XmlParser
+- `chatboard/block/block11/schema.py` - Legacy BlockSchema
 
 ### FBP/Streaming
-- `promptview/prompt/fbp_process.py` - Process base class, Stream, StreamController
+- `chatboard/prompt/fbp_process.py` - Process base class, Stream, StreamController
 
 ---
 

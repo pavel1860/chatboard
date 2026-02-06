@@ -1,11 +1,11 @@
-from promptview.auth.user_manager import UserModel
-from promptview.model.fields import ModelField
-from promptview.model.model import Model
+from chatboard.auth.user_manager import UserModel
+from chatboard.model.fields import ModelField
+from chatboard.model.model import Model
 import datetime as dt
 
-from promptview.prompt.legacy.block2 import StrBlock
-from promptview.prompt.legacy.context import Context
-from promptview.testing import TestCase, TestRun, Evaluator
+from chatboard.prompt.legacy.block2 import StrBlock
+from chatboard.prompt.legacy.context import Context
+from chatboard.testing import TestCase, TestRun, Evaluator
 
 
 

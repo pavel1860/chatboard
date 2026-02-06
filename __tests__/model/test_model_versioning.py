@@ -8,20 +8,20 @@ from typing import Literal, List
 from uuid import UUID
 
 
-from promptview.auth.user_manager2 import AuthModel
-from promptview.model.fields import ModelField, KeyField, RelationField
-from promptview.model import Model, 
-from promptview.versioning import VersionedModel, ArtifactModel
-from promptview.model.relation_model import RelationModel
-from promptview.model.postgres2.pg_query_set import select
-from promptview.prompt.context import Context
-from promptview.versioning import Branch, Turn, TurnStatus
+from chatboard.auth.user_manager2 import AuthModel
+from chatboard.model.fields import ModelField, KeyField, RelationField
+from chatboard.model import Model, 
+from chatboard.versioning import VersionedModel, ArtifactModel
+from chatboard.model.relation_model import RelationModel
+from chatboard.model.postgres2.pg_query_set import select
+from chatboard.prompt.context import Context
+from chatboard.versioning import Branch, Turn, TurnStatus
 import datetime as dt
 
 
-# from promptview.model.artifact_models import Artifact, VersioningStrategy
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model import Model, KeyField, ModelField, VersionedModel, Artifact
+# from chatboard.model.artifact_models import Artifact, VersioningStrategy
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model import Model, KeyField, ModelField, VersionedModel, Artifact
 
 
 class Post(VersionedModel):

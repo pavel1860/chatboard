@@ -5,7 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 import uuid
 
-from promptview.conversation.models import Base, MessageSession, Branch, Turn, Message
+from chatboard.conversation.models import Base, MessageSession, Branch, Turn, Message
 
 @pytest.fixture(scope="function")
 def db_url():

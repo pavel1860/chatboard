@@ -1,6 +1,6 @@
 # Block System API Guide
 
-A comprehensive guide to using the PromptView block system for building, storing, and managing structured prompts.
+A comprehensive guide to using the chatboard block system for building, storing, and managing structured prompts.
 
 ---
 
@@ -33,7 +33,7 @@ The block system provides a composable, versionable way to build prompts. Each b
 The fundamental unit of content. Contains text and optional styling metadata.
 
 ```python
-from promptview.block import Block
+from chatboard.block import Block
 
 # Simple block
 block = Block("Hello, world!")
@@ -60,7 +60,7 @@ A content-addressed identifier combining block content + styling. Enables effici
 ### Basic Block Creation
 
 ```python
-from promptview.block import Block
+from chatboard.block import Block
 
 # Create a simple block
 greeting = Block("Hello!")
@@ -111,8 +111,8 @@ block = Block(
 Blocks are saved within a `Turn` context, which provides versioning and artifact tracking.
 
 ```python
-from promptview.prompt import Context
-from promptview.model.block_models.block_log import BlockLog
+from chatboard.prompt import Context
+from chatboard.model.block_models.block_log import BlockLog
 
 # Create a block
 prompt = Block("You are a helpful assistant")
@@ -142,7 +142,7 @@ async with Context().start_turn() as ctx:
 ### Query Recent Blocks
 
 ```python
-from promptview.model.block_models.block_log import BlockLog
+from chatboard.model.block_models.block_log import BlockLog
 
 # Get last 5 blocks
 blocks = await BlockLog.last(5)
@@ -164,7 +164,7 @@ blocks = await BlockLog.span("my_component").last(5)
 ### Filter by Status
 
 ```python
-from promptview.versioning.models import TurnStatus
+from chatboard.versioning.models import TurnStatus
 
 # Only committed turns (default)
 blocks = await BlockLog.last(5)
@@ -200,7 +200,7 @@ blocks = await query
 For advanced queries, use the ORM directly:
 
 ```python
-from promptview.versioning.models import BlockTree, BlockNode, BlockSignature, BlockModel
+from chatboard.versioning.models import BlockTree, BlockNode, BlockSignature, BlockModel
 
 # Get all trees from last 7 days
 trees = await BlockTree.vquery(
@@ -222,7 +222,7 @@ trees = await BlockTree.vquery(
 ### Compare Saved Trees
 
 ```python
-from promptview.model.block_models.block_diff import diff_block_trees
+from chatboard.model.block_models.block_diff import diff_block_trees
 
 # Compare two saved block trees
 diff = await diff_block_trees(tree1_id=1, tree2_id=2)
@@ -239,7 +239,7 @@ print(f"Changes: +{summary['added']} -{summary['removed']} ~{summary['modified']
 ### Compare In-Memory Blocks
 
 ```python
-from promptview.model.block_models.block_diff import diff_block_objects
+from chatboard.model.block_models.block_diff import diff_block_objects
 
 # Create two blocks
 block1 = Block("Version 1")
@@ -423,7 +423,7 @@ if diff.has_changes:
 ### 6. Clean Up Experiments
 
 ```python
-from promptview.versioning.models import TurnStatus
+from chatboard.versioning.models import TurnStatus
 
 # Mark experimental turns as reverted
 async with Context().start_turn() as ctx:
@@ -465,18 +465,18 @@ trees = await BlockTree.vquery(
 ## API Reference Quick Links
 
 ### Core Classes
-- `Block` - [`@promptview/block`](./promptview/block/block9/block.py)
-- `BlockLog` - [`@promptview/model/block_models/block_log.py`](./promptview/model/block_models/block_log.py)
-- `BlockTree` - [`@promptview/model/versioning/models.py`](./promptview/model/versioning/models.py)
+- `Block` - [`@chatboard/block`](./chatboard/block/block9/block.py)
+- `BlockLog` - [`@chatboard/model/block_models/block_log.py`](./chatboard/model/block_models/block_log.py)
+- `BlockTree` - [`@chatboard/model/versioning/models.py`](./chatboard/model/versioning/models.py)
 
 ### Diff Utilities
-- `diff_block_trees()` - [`@promptview/model/block_models/block_diff.py`](./promptview/model/block_models/block_diff.py)
-- `diff_block_objects()` - [`@promptview/model/block_models/block_diff.py`](./promptview/model/block_models/block_diff.py)
+- `diff_block_trees()` - [`@chatboard/model/block_models/block_diff.py`](./chatboard/model/block_models/block_diff.py)
+- `diff_block_objects()` - [`@chatboard/model/block_models/block_diff.py`](./chatboard/model/block_models/block_diff.py)
 
 ### Context & Versioning
-- `Context` - [`@promptview/prompt/context.py`](./promptview/prompt/context.py)
-- `Turn` - [`@promptview/model/versioning/models.py`](./promptview/model/versioning/models.py)
-- `Artifact` - [`@promptview/model/versioning/models.py`](./promptview/model/versioning/models.py)
+- `Context` - [`@chatboard/prompt/context.py`](./chatboard/prompt/context.py)
+- `Turn` - [`@chatboard/model/versioning/models.py`](./chatboard/model/versioning/models.py)
+- `Artifact` - [`@chatboard/model/versioning/models.py`](./chatboard/model/versioning/models.py)
 
 ---
 
@@ -523,7 +523,7 @@ await BlockLog.add(block)
 1. Are you creating new Block instances each time? (Expected behavior)
 2. Check signature reuse in database:
 ```python
-from promptview.utils.db_connections import PGConnectionManager
+from chatboard.utils.db_connections import PGConnectionManager
 
 stats = await PGConnectionManager.fetch_one("""
     SELECT COUNT(DISTINCT bs.id) as unique_sigs,

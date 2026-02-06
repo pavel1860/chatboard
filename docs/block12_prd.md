@@ -303,12 +303,12 @@ def regex_find(self, pattern: str) -> list[re.Match]:
 ### Phase 1: Core Data Structures
 
 **Step 1.1: Create ChunkMeta class**
-- File: `promptview/block/block12/chunk.py`
+- File: `chatboard/block/block12/chunk.py`
 - Simple dataclass with start, end, logprob, style, id
 - No linked list, no owner references
 
 **Step 1.2: Create Block class skeleton**
-- File: `promptview/block/block12/block.py`
+- File: `chatboard/block/block12/block.py`
 - Tree fields: parent, children
 - Position fields: start, end
 - Metadata fields: role, tags, style, attrs, chunks
@@ -342,7 +342,7 @@ def regex_find(self, pattern: str) -> list[re.Match]:
 ### Phase 3: Mutator System
 
 **Step 3.1: Create MutatorMeta registry**
-- File: `promptview/block/block12/mutator.py`
+- File: `chatboard/block/block12/mutator.py`
 - Metaclass that registers mutators by style
 - `get_mutator(style)` lookup
 
@@ -454,7 +454,7 @@ with Block("Parent") as parent:
 ## File Structure
 
 ```
-promptview/block/block12/
+chatboard/block/block12/
 ├── __init__.py
 ├── chunk.py          # ChunkMeta dataclass
 ├── block.py          # Block class (data + raw operations)

@@ -1,8 +1,8 @@
 from enum import StrEnum
 from typing import Literal, Optional, Type
-from promptview.model.model import Model
-from promptview.model.fields import ModelField
-from promptview.model.postgres.namespace import PgFieldInfo, PostgresNamespace
+from chatboard.model.model import Model
+from chatboard.model.fields import ModelField
+from chatboard.model.postgres.namespace import PgFieldInfo, PostgresNamespace
 from pydantic import BaseModel
 
 

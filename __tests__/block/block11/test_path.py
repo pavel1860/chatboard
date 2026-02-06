@@ -1,7 +1,7 @@
 """Tests for Path class and compute_path function."""
 
 import pytest
-from promptview.block.block11 import Block, Path, compute_path, BlockSchema
+from chatboard.block.block11 import Block, Path, compute_path, BlockSchema
 
 
 class TestPathCreation:

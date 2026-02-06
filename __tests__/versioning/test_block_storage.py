@@ -17,14 +17,14 @@ import pytest_asyncio
 from pydantic import BaseModel, Field
 
 # Set test database URL
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
 
-from promptview.block.block12 import Block, BlockSchema, BlockListSchema
-from promptview.versioning import BlockLog, StoredBlockModel
-from promptview.versioning.block_storage import compute_block_hash, BlockModel
-from promptview.versioning.models import Branch, Turn
-from promptview.prompt.context import Context
-from promptview.model.namespace_manager2 import NamespaceManager
+from chatboard.block.block12 import Block, BlockSchema, BlockListSchema
+from chatboard.versioning import BlockLog, StoredBlockModel
+from chatboard.versioning.block_storage import compute_block_hash, BlockModel
+from chatboard.versioning.models import Branch, Turn
+from chatboard.prompt.context import Context
+from chatboard.model.namespace_manager2 import NamespaceManager
 
 
 # =============================================================================

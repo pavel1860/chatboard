@@ -4,10 +4,10 @@ Tests for PgQueryBuilder.agg() method - custom aggregation with explicit correla
 from typing import List
 import pytest
 import pytest_asyncio
-from promptview.model import KeyField, ModelField, VersionedModel, RelationField
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.sql2.pg_query_builder import select
-from promptview.model.sql2.compiler import Compiler
+from chatboard.model import KeyField, ModelField, VersionedModel, RelationField
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.sql2.pg_query_builder import select
+from chatboard.model.sql2.compiler import Compiler
 
 
 class Comment(VersionedModel):

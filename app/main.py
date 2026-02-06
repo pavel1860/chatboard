@@ -4,7 +4,7 @@ import json
 from typing import Annotated
 from fastapi import Depends, FastAPI, Form, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from promptview.app import Chatboard
+from chatboard.app import Chatboard
 from app.test_models import TestContext, Manager, Message
 from app.test_agent import chat_prompt, run_agent
 

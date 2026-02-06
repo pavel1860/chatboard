@@ -1,8 +1,8 @@
 """Test Context-managed replay mode."""
 import asyncio
-from promptview.model import NamespaceManager
-from promptview.prompt import component, stream, Context
-from promptview.prompt.span_tree import SpanTree
+from chatboard.model import NamespaceManager
+from chatboard.prompt import component, stream, Context
+from chatboard.prompt.span_tree import SpanTree
 
 
 async def test_replay():

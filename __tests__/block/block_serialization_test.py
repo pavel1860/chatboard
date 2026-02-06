@@ -1,4 +1,4 @@
-from promptview.block import BlockChunk
+from chatboard.block import BlockChunk
 
 
 def recursive_validate(blk1: BlockChunk, blk2: BlockChunk):

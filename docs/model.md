@@ -1,6 +1,6 @@
-# PromptView Model Documentation
+# chatboard Model Documentation
 
-The `Model` class is the core component of PromptView's data layer, providing a Pydantic-based ORM system with advanced vector database capabilities. It supports multiple database backends, including Qdrant (vector database) and PostgreSQL, with features for vector search, filtering, relations, and more.
+The `Model` class is the core component of chatboard's data layer, providing a Pydantic-based ORM system with advanced vector database capabilities. It supports multiple database backends, including Qdrant (vector database) and PostgreSQL, with features for vector search, filtering, relations, and more.
 
 ## Table of Contents
 - [Basic Model Definition](#basic-model-definition)
@@ -16,8 +16,8 @@ The `Model` class is the core component of PromptView's data layer, providing a 
 Models are defined by subclassing the `Model` class and defining fields with appropriate types and field definitions:
 
 ```python
-from promptview.model import Model, ModelField, IndexType
-from promptview.model.vectors.openai_vectorizer import OpenAISmallVectorizer
+from chatboard.model import Model, ModelField, IndexType
+from chatboard.model.vectors.openai_vectorizer import OpenAISmallVectorizer
 import datetime as dt
 
 class BasicTestModel(Model):

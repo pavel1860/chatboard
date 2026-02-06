@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel
-from promptview.conversation.history import History
-from promptview.prompt.local_state import LocalStore, LocalState, TurnHooks
+from chatboard.conversation.history import History
+from chatboard.prompt.local_state import LocalStore, LocalState, TurnHooks
 
 class TestModel(BaseModel):
     value: int

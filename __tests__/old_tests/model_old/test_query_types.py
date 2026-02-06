@@ -2,7 +2,7 @@ import json
 import pytest
 from typing import Any, List, Dict
 
-from promptview.model.query_types import (
+from chatboard.model.query_types import (
     validate_query
 )
 

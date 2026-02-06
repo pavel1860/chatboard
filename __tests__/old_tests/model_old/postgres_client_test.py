@@ -1,14 +1,14 @@
 import os
-# os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/promptview_test"
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+# os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/chatboard_test"
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
 import pytest
 import pytest_asyncio
 import datetime as dt
-from promptview.model.fields import ModelField, IndexType
-from promptview.model.model import Model
-from promptview.model.resource_manager import connection_manager
-from promptview.model.vectors.openai_vectorizer import OpenAISmallVectorizer
-from promptview.model.postgres_client import PostgresClient
+from chatboard.model.fields import ModelField, IndexType
+from chatboard.model.model import Model
+from chatboard.model.resource_manager import connection_manager
+from chatboard.model.vectors.openai_vectorizer import OpenAISmallVectorizer
+from chatboard.model.postgres_client import PostgresClient
 
 class BasicPostgresModel(Model):
     created_at: dt.datetime = ModelField(auto_now_add=True)

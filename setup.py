@@ -1,11 +1,11 @@
 from setuptools import setup, find_packages, find_namespace_packages
 
 setup(
-    name="promptview",
+    name="chatboard",
     version="0.1.0",
     author='Pavel Schudel',
     author_email='pavel1860@gmail.com',
-    url='https://github.com/pavel1860/promptview',
+    url='https://github.com/pavel1860/chatboard',
     description="A framework for generating prompts for LLMs",
     packages=find_packages(),
     install_requires=[

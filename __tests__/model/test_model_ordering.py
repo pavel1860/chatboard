@@ -3,10 +3,10 @@ from datetime import datetime, timedelta
 
 import pytest_asyncio
 
-from promptview.model3.fields import ModelField, KeyField
-from promptview.model3.model3 import Model
-from promptview.model3.namespace_manager2 import NamespaceManager
-from promptview.model3.postgres2.pg_query_set import select
+from chatboard.model3.fields import ModelField, KeyField
+from chatboard.model3.model3 import Model
+from chatboard.model3.namespace_manager2 import NamespaceManager
+from chatboard.model3.postgres2.pg_query_set import select
 
 
 @pytest_asyncio.fixture()

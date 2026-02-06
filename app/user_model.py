@@ -1,7 +1,7 @@
 
 
-from promptview.conversation.alchemy_models import BaseUserModel, Base
-from promptview.conversation.models import User, engine
+from chatboard.conversation.alchemy_models import BaseUserModel, Base
+from chatboard.conversation.models import User, engine
 from sqlalchemy import UUID, create_engine, Column, Integer, String, JSON, ForeignKey, DateTime, Text, Boolean, inspect
 import os
 

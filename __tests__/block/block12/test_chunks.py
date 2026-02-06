@@ -1,6 +1,6 @@
 """Tests for Block chunks and metadata."""
 import pytest
-from promptview.block.block12 import Block, BlockChunk
+from chatboard.block.block12 import Block, BlockChunk
 
 
 class TestBlockChunkMetadata:

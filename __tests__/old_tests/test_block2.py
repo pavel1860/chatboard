@@ -1,5 +1,5 @@
 import pytest
-from promptview.prompt.legacy.block2 import StrBlock, TitleBlock, Block
+from chatboard.prompt.legacy.block2 import StrBlock, TitleBlock, Block
 
 def test_str_block_basic():
     # Test basic string block with different input formats

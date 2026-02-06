@@ -1,6 +1,6 @@
 """Tests for Block diff functionality."""
 import pytest
-from promptview.block.block12 import (
+from chatboard.block.block12 import (
     Block,
     diff_blocks,
     BlockDiff,

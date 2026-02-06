@@ -1,6 +1,6 @@
 """Tests for Block mutator system."""
 import pytest
-from promptview.block.block12 import Block, MutatorMeta
+from chatboard.block.block12 import Block, MutatorMeta
 
 
 class TestMutatorRegistry:
@@ -16,7 +16,7 @@ class TestMutatorRegistry:
 
     def test_get_unknown_mutator_returns_base(self):
         # Unknown styles return the base Mutator class
-        from promptview.block.block12.mutator import Mutator
+        from chatboard.block.block12.mutator import Mutator
         unknown = MutatorMeta.get_mutator("unknown")
         assert unknown is Mutator
 
@@ -49,7 +49,7 @@ class TestXmlMutator:
         assert "Content" in rendered
 
     def test_xml_schema_transform(self):
-        from promptview.block.block12 import BlockSchema
+        from chatboard.block.block12 import BlockSchema
 
         with BlockSchema('response', style='xml') as schema:
             with schema.view("thinking", style="xml") as thinking:

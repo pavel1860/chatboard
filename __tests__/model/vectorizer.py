@@ -1,4 +1,4 @@
-from promptview.algebra.vectors.base_vectorizer import BaseVectorizer, VectorType
+from chatboard.algebra.vectors.base_vectorizer import BaseVectorizer, VectorType
 from typing import ClassVar, List
 import numpy as np
 # from scipy.sparse import csr_matrix

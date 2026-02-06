@@ -4,10 +4,10 @@ Tests for deeply nested .include() relations
 from typing import List
 import pytest
 import pytest_asyncio
-from promptview.model import KeyField, ModelField, VersionedModel, RelationField
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.sql2.pg_query_builder import select
-from promptview.model.sql2.compiler import Compiler
+from chatboard.model import KeyField, ModelField, VersionedModel, RelationField
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.sql2.pg_query_builder import select
+from chatboard.model.sql2.compiler import Compiler
 
 
 class Reaction(VersionedModel):
@@ -263,7 +263,7 @@ class TestNestedIncludeWithMultipleSources:
         """Test that nested include uses correct source when parent has multiple sources"""
         # Create query with a join, then include nested relation
         # This tests that the relation_source is correctly identified
-        from promptview.model.sql2.pg_query_builder import PgQueryBuilder
+        from chatboard.model.sql2.pg_query_builder import PgQueryBuilder
 
         # Build a query: User -> Post (joined) -> Comments (included with nested Reactions)
         user_query = select(User)

@@ -1,6 +1,6 @@
 """Tests for XmlParser class."""
 import pytest
-from promptview.block.block11 import (
+from chatboard.block.block11 import (
     Block,
     BlockSchema,
     BlockListSchema,

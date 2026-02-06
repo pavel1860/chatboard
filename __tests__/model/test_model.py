@@ -1,6 +1,6 @@
 import os
 import uuid
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
 
 import pytest
 import pytest_asyncio
@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, Any, List, Literal, Type
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from promptview.auth.user_manager import AuthModel
-from promptview.model import Model, ArtifactModel, ModelField, RelationField, ArtifactModel, Relation
+from chatboard.auth.user_manager import AuthModel
+from chatboard.model import Model, ArtifactModel, ModelField, RelationField, ArtifactModel, Relation
 import datetime as dt
-from promptview.model.fields import KeyField, RelationField, ModelField
-from promptview.model.namespace_manager import NamespaceManager
-from promptview.block import BlockChunk, ToolCall
+from chatboard.model.fields import KeyField, RelationField, ModelField
+from chatboard.model.namespace_manager import NamespaceManager
+from chatboard.block import BlockChunk, ToolCall
 
 from __tests__.utils import clean_database, test_db_pool
     

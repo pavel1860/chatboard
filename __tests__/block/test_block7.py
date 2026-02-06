@@ -1,6 +1,6 @@
 import pytest
-from promptview.block import BlockSent, BlockChunk, BlockList, Block
-from promptview.block.style import style_manager
+from chatboard.block import BlockSent, BlockChunk, BlockList, Block
+from chatboard.block.style import style_manager
 
 
 

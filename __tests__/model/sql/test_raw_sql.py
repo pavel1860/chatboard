@@ -3,12 +3,12 @@ Tests for SQL2 raw SQL escape hatches: Raw expressions and RawRelation
 """
 import pytest
 import pytest_asyncio
-from promptview.model import KeyField, ModelField, VersionedModel, RelationField
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.sql2.relations import NsRelation, RawRelation
-from promptview.model.sql2.relational_queries import SelectQuerySet
-from promptview.model.sql2.compiler import Compiler
-from promptview.model.sql2.expressions import Raw, Value
+from chatboard.model import KeyField, ModelField, VersionedModel, RelationField
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.sql2.relations import NsRelation, RawRelation
+from chatboard.model.sql2.relational_queries import SelectQuerySet
+from chatboard.model.sql2.compiler import Compiler
+from chatboard.model.sql2.expressions import Raw, Value
 from typing import List
 
 

@@ -7,7 +7,7 @@ def normalize_sql(sql: str) -> str:
 
 
 def assert_sql(query, expected_sql: str, expected_params: list, compiler_cls=None):
-    from promptview.model.postgres.sql.compiler import Compiler
+    from chatboard.model.postgres.sql.compiler import Compiler
 
     compiler = (compiler_cls or Compiler)()
     actual_sql, actual_params = compiler.compile(query)

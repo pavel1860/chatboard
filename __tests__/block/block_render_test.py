@@ -1,6 +1,6 @@
 import pytest
 
-from promptview.block.block import Block
+from chatboard.block.block import Block
 
 
 

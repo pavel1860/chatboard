@@ -1,8 +1,8 @@
 import pytest
 import pytest_asyncio
-from promptview import view
-from promptview.prompt.legacy.mvc import render_block
-from promptview.prompt.legacy.chat_prompt import ChatPrompt
+from chatboard import view
+from chatboard.prompt.legacy.mvc import render_block
+from chatboard.prompt.legacy.chat_prompt import ChatPrompt
 
 prompt = ChatPrompt.decorator_factory()
 

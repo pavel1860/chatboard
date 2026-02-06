@@ -10,9 +10,9 @@ Tests cover:
 """
 
 import pytest
-from promptview.block.block10 import Block, BlockChunk, BlockText, Span
-from promptview.block.block10.block import BlockSchema
-from promptview.model.block_models.block_log import (
+from chatboard.block.block10 import Block, BlockChunk, BlockText, Span
+from chatboard.block.block10.block import BlockSchema
+from chatboard.model.block_models.block_log import (
     dump_block,
     load_block_dump,
     dump_block_content,

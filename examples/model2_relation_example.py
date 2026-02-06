@@ -1,8 +1,8 @@
 import asyncio
 from typing import Optional
-from promptview.model.model import Model, Relation
-from promptview.model.fields import ModelField, KeyField, RelationField
-from promptview.model.namespace_manager import NamespaceManager
+from chatboard.model.model import Model, Relation
+from chatboard.model.fields import ModelField, KeyField, RelationField
+from chatboard.model.namespace_manager import NamespaceManager
 
 
 class User(Model):

@@ -1,6 +1,6 @@
 """Tests for Block operators."""
 import pytest
-from promptview.block.block12 import Block
+from chatboard.block.block12 import Block
 
 
 class TestBlockEqualityOperators:

@@ -1,15 +1,15 @@
 from enum import StrEnum
 import os
-# os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/promptview_test"
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+# os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/chatboard_test"
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
 import pytest
 import pytest_asyncio
 import datetime as dt
-# from promptview.model.fields import ModelField, IndexType, ModelRelation
-# from promptview.model.model import Model, Relation
-# from promptview.model.resource_manager import connection_manager
+# from chatboard.model.fields import ModelField, IndexType, ModelRelation
+# from chatboard.model.model import Model, Relation
+# from chatboard.model.resource_manager import connection_manager
 
-from promptview.model import Model, Relation, ModelField, RelationField, connection_manager
+from chatboard.model import Model, Relation, ModelField, RelationField, connection_manager
 
 
 

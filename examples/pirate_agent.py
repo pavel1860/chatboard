@@ -1,14 +1,14 @@
 from typing import AsyncGenerator, List
-from promptview.block.util import StreamEvent
-from promptview.prompt import component, Depends
-from promptview.block import Block
-from promptview.llms import LLMRegistry
-from promptview.context.execution_context import ExecutionContext
+from chatboard.block.util import StreamEvent
+from chatboard.prompt import component, Depends
+from chatboard.block import Block
+from chatboard.llms import LLMRegistry
+from chatboard.context.execution_context import ExecutionContext
 import datetime as dt
 from uuid import UUID, uuid4
-from promptview.model import ModelField, KeyField, RelationField
-from promptview.versioning import BlockLog, ArtifactModel
-from promptview import AuthModel
+from chatboard.model import ModelField, KeyField, RelationField
+from chatboard.versioning import BlockLog, ArtifactModel
+from chatboard import AuthModel
 
 from pydantic import BaseModel, Field
 

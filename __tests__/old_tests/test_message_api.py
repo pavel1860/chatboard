@@ -5,9 +5,9 @@ import datetime as dt
 from unittest.mock import AsyncMock, patch, MagicMock
 import json
 
-from promptview.conversation.message_api import router, MessageCreate, MessageUpdate
-from promptview.conversation.models import Message, Turn, Branch
-from promptview.conversation.message_log import MessageLog, MessageLogError
+from chatboard.conversation.message_api import router, MessageCreate, MessageUpdate
+from chatboard.conversation.models import Message, Turn, Branch
+from chatboard.conversation.message_log import MessageLog, MessageLogError
 
 pytestmark = pytest.mark.asyncio
 
@@ -66,7 +66,7 @@ def mock_message_log():
 def override_get_message_log(mock_message_log):
     async def mock_get_message_log():
         return mock_message_log
-    with patch("promptview.conversation.message_api.get_message_log", mock_get_message_log):
+    with patch("chatboard.conversation.message_api.get_message_log", mock_get_message_log):
         yield mock_message_log
 
 # Tests

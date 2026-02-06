@@ -1,7 +1,7 @@
 import pytest
 from typing import AsyncGenerator, Callable, Union, Optional, Any
 
-from promptview.prompt import component, stream
+from chatboard.prompt import component, stream
 
 class TestException(Exception):
     pass

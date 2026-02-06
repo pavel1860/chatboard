@@ -1,9 +1,9 @@
 import datetime as dt
 from typing import List
-from promptview.model import Model, ModelField, KeyField, RelationField,Relation
-from promptview.model import NamespaceManager
-from promptview.model import Turn
-from promptview.model import ArtifactModel
+from chatboard.model import Model, ModelField, KeyField, RelationField,Relation
+from chatboard.model import NamespaceManager
+from chatboard.model import Turn
+from chatboard.model import ArtifactModel
 
 
 class Like(ArtifactModel):

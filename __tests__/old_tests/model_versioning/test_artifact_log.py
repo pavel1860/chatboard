@@ -1,5 +1,5 @@
 import os
-os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/promptview_test"
+os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/chatboard_test"
 import pytest
 import asyncio
 import pytest_asyncio
@@ -8,9 +8,9 @@ from typing import AsyncGenerator, Generator, Any, Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
 import asyncpg
-from promptview.artifact_log.artifact_log3 import ArtifactLog, TurnStatus
-from promptview.model.fields import ModelField, RelationField
-from promptview.model.model import Model
+from chatboard.artifact_log.artifact_log3 import ArtifactLog, TurnStatus
+from chatboard.model.fields import ModelField, RelationField
+from chatboard.model.model import Model
 
 
 

@@ -1,6 +1,6 @@
 """Tests for Block class basic operations."""
 import pytest
-from promptview.block.block12 import Block, BlockChunk
+from chatboard.block.block12 import Block, BlockChunk
 
 
 class TestBlockCreation:

@@ -1,10 +1,10 @@
 import pytest
 import pytest_asyncio
-from promptview.model import NamespaceManager
-from promptview.utils.db_connections import PGConnectionManager
+from chatboard.model import NamespaceManager
+from chatboard.utils.db_connections import PGConnectionManager
 import textwrap
 import random
-from promptview.block.block12.block import BlockChunk
+from chatboard.block.block12.block import BlockChunk
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -16,7 +16,7 @@ async def test_db_pool():
     
     # Create a unique pool for this test
     await PGConnectionManager.initialize(
-        url=f"postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+        url=f"postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
     )
     
     yield

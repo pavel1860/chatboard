@@ -1,15 +1,15 @@
 from enum import StrEnum
 import os
-# os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/promptview_test"
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+# os.environ["POSTGRES_URL"] = "postgresql://snack:Aa123456@localhost:5432/chatboard_test"
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
 import pytest
 import pytest_asyncio
 import datetime as dt
-# from promptview.model.fields import ModelField, IndexType, ModelRelation
-# from promptview.model.model import Model, Relation
-# from promptview.model.resource_manager import connection_manager
+# from chatboard.model.fields import ModelField, IndexType, ModelRelation
+# from chatboard.model.model import Model, Relation
+# from chatboard.model.resource_manager import connection_manager
 
-from promptview.model import Model, Relation, ModelField, RelationField, connection_manager
+from chatboard.model import Model, Relation, ModelField, RelationField, connection_manager
 
 
 
@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING, List, Literal, Type
 from uuid import UUID
 
 from pydantic import BaseModel, Field
-from promptview.auth.user_manager import AuthModel
-from promptview.model import Model, ArtifactModel, RepoModel, ModelField, Relation, RelationField, ManyRelation, ArtifactModel
+from chatboard.auth.user_manager import AuthModel
+from chatboard.model import Model, ArtifactModel, RepoModel, ModelField, Relation, RelationField, ManyRelation, ArtifactModel
 import datetime as dt
-from promptview.model.fields import KeyField, RelationField, ModelField
-from promptview.model.model import ContextModel
-from promptview.model.context import Context as BaseContext
-from promptview.model.namespace_manager import NamespaceManager
-from promptview.prompt import Block, ToolCall
+from chatboard.model.fields import KeyField, RelationField, ModelField
+from chatboard.model.model import ContextModel
+from chatboard.model.context import Context as BaseContext
+from chatboard.model.namespace_manager import NamespaceManager
+from chatboard.prompt import Block, ToolCall
 
 
 

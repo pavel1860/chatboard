@@ -5,19 +5,19 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Form, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from promptview.api.auth_router import router as auth_router
-from promptview.api.model_router2 import create_crud_router
-from promptview.api.head_model_router import create_head_crud_router
-from promptview.api.artifact_log_api import router as artifact_log_router
-from promptview.api.testing_router import connect_testing_routers
-from promptview.api.user_router import connect_user_model_routers
-from promptview.artifact_log.artifact_log3 import ArtifactLog
+from chatboard.api.auth_router import router as auth_router
+from chatboard.api.model_router2 import create_crud_router
+from chatboard.api.head_model_router import create_head_crud_router
+from chatboard.api.artifact_log_api import router as artifact_log_router
+from chatboard.api.testing_router import connect_testing_routers
+from chatboard.api.user_router import connect_user_model_routers
+from chatboard.artifact_log.artifact_log3 import ArtifactLog
 from app.test_models import TestContext, Manager, Message
 from app.test_agent import chat_prompt, run_agent
-from promptview.auth.user_manager import UserManager
-from promptview.model.resource_manager import connection_manager
-from promptview import testing
-from promptview.prompt.base_prompt import prompt
+from chatboard.auth.user_manager import UserManager
+from chatboard.model.resource_manager import connection_manager
+from chatboard import testing
+from chatboard.prompt.base_prompt import prompt
 
 
 @asynccontextmanager
@@ -41,8 +41,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="PromptView API",
-    description="API for interacting with the PromptView message system",
+    title="chatboard API",
+    description="API for interacting with the chatboard message system",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -107,7 +107,7 @@ def unpack_int_env_header(request: Request, field: str):
 #     form_data = await request.form()
 #     message = json.loads(form_data.get("message"))
 #     print(message)
-#     return [message, {"message": "Welcome to PromptView API", "role": "assistant"}]
+#     return [message, {"message": "Welcome to chatboard API", "role": "assistant"}]
 
 
 
@@ -133,7 +133,7 @@ async def chat(
 # Root endpoint
 @app.get("/")
 async def root():
-    return {"message": "Welcome to PromptView API"}
+    return {"message": "Welcome to chatboard API"}
 
 # Health check endpoint
 @app.get("/health")

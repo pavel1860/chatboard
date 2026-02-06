@@ -1,7 +1,7 @@
 """Tests for Block tree traversal."""
 import pytest
-from promptview.block.block12 import Block, BlockSchema
-from promptview.block.block12.schema import BlockList
+from chatboard.block.block12 import Block, BlockSchema
+from chatboard.block.block12.schema import BlockList
 
 
 class TestBlockDepthFirstTraversal:

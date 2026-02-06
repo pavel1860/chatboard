@@ -1,18 +1,18 @@
 import os
 from typing import Literal
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
-from promptview.model.versioning import ArtifactLog, TurnStatus
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
+from chatboard.model.versioning import ArtifactLog, TurnStatus
 import pytest
 import pytest_asyncio
 from enum import StrEnum
 from uuid import UUID
-from promptview.auth.user_manager import AuthModel
-from promptview.model import Model, ArtifactModel, RepoModel, ModelField, Relation, RelationField, ManyRelation, ArtifactModel
+from chatboard.auth.user_manager import AuthModel
+from chatboard.model import Model, ArtifactModel, RepoModel, ModelField, Relation, RelationField, ManyRelation, ArtifactModel
 import datetime as dt
-from promptview.model.fields import KeyField, RelationField, ModelField
-from promptview.model.namespace_manager import NamespaceManager
-from promptview.prompt.context import Context
-from promptview.model.postgres.builder import SQLBuilder
+from chatboard.model.fields import KeyField, RelationField, ModelField
+from chatboard.model.namespace_manager import NamespaceManager
+from chatboard.prompt.context import Context
+from chatboard.model.postgres.builder import SQLBuilder
 
 
 

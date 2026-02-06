@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 import pytest
-from promptview.llms.messages import AIMessage, HumanMessage, ActionMessage, ActionCall, filter_action_calls, remove_action_calls, remove_actions, validate_msgs
+from chatboard.llms.messages import AIMessage, HumanMessage, ActionMessage, ActionCall, filter_action_calls, remove_action_calls, remove_actions, validate_msgs
 
 class TestAction(BaseModel):
     test: str = Field(..., title="Test", description="The test value")

@@ -1,6 +1,6 @@
 import pytest
 import textwrap
-from promptview.prompt.legacy.block3 import Block, TitleBlock, ListBlock, block
+from chatboard.prompt.legacy.block3 import Block, TitleBlock, ListBlock, block
 
 class TestBlockBasics:
     """Test basic functionality of the Block class."""

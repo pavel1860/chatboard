@@ -1,6 +1,6 @@
 import json
 import pytest
-from promptview.utils.string_utils import SafeJinjaFormatter
+from chatboard.utils.string_utils import SafeJinjaFormatter
 
 
 

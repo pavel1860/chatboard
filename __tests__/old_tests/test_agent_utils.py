@@ -1,4 +1,4 @@
-from promptview import view, prompt
+from chatboard import view, prompt
 from pydantic import BaseModel, Field  
 
 
@@ -88,9 +88,9 @@ def pirate_view(pirate_stats: PirateStats, user_stats: UserStats):
 
 
 
-from promptview import AgentRouter
-from promptview.agent.action_agent import ActionAgent
-from promptview import ChatPrompt
+from chatboard import AgentRouter
+from chatboard.agent.action_agent import ActionAgent
+from chatboard import ChatPrompt
 
 # pirate_agent = AgentRouter(
 #         name="pirate_agent", 

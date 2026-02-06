@@ -1,5 +1,5 @@
-from promptview.block import Block
-from promptview.block.block9.block_schema import BlockBuilderContext
+from chatboard.block import Block
+from chatboard.block.block9.block_schema import BlockBuilderContext
 
 
 

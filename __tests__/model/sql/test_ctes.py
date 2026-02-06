@@ -3,12 +3,12 @@ Tests for SQL2 CTE (Common Table Expression) operations
 """
 import pytest
 import pytest_asyncio
-from promptview.model import KeyField, ModelField, VersionedModel, RelationField
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.sql2.relations import NsRelation
-from promptview.model.sql2.relational_queries import SelectQuerySet
-from promptview.model.sql2.compiler import Compiler
-from promptview.model.sql2.expressions import JsonBuildObject, JsonAgg
+from chatboard.model import KeyField, ModelField, VersionedModel, RelationField
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.sql2.relations import NsRelation
+from chatboard.model.sql2.relational_queries import SelectQuerySet
+from chatboard.model.sql2.compiler import Compiler
+from chatboard.model.sql2.expressions import JsonBuildObject, JsonAgg
 from typing import List
 
 
@@ -232,7 +232,7 @@ class TestCTEWithAggregations:
         # CTE with aggregation
         post_stats = SelectQuerySet(posts_rel)
         post_stats.select("posts.user_id")
-        from promptview.model.sql2.expressions import Count
+        from chatboard.model.sql2.expressions import Count
         post_stats.select_expr(Count(), alias="post_count")
         post_stats.group_by("posts.user_id")
 

@@ -13,8 +13,8 @@ Tests cover:
 """
 
 import pytest
-from promptview.block.block10 import Block, BlockChunk, BlockText, Span, SpanAnchor
-from promptview.block.block10.block import BlockSchema, BlockListSchema
+from chatboard.block.block10 import Block, BlockChunk, BlockText, Span, SpanAnchor
+from chatboard.block.block10.block import BlockSchema, BlockListSchema
 
 
 # =============================================================================

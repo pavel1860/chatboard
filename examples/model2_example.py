@@ -6,9 +6,9 @@ import os
 # Add the parent directory to the Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from promptview.model.model import Model
-from promptview.model.fields import ModelField, KeyField
-from promptview.model.postgres.operations import PostgresOperations
+from chatboard.model.model import Model
+from chatboard.model.fields import ModelField, KeyField
+from chatboard.model.postgres.operations import PostgresOperations
 import asyncio
 
 
@@ -44,7 +44,7 @@ async def main():
     
     # Drop existing tables if they exist
     print("Dropping existing tables...")
-    from promptview.model.postgres.builder import SQLBuilder
+    from chatboard.model.postgres.builder import SQLBuilder
     await SQLBuilder.drop_many_tables(["users", "posts"])
     
     # Initialize the models (create tables)

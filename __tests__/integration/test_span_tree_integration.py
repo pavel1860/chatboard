@@ -1,9 +1,9 @@
 """Integration tests for SpanTree with database operations."""
 import pytest
-from promptview.model import NamespaceManager, VersionedModel, KeyField, ModelField
-from promptview.prompt import Context, component, stream
-from promptview.prompt.span_tree import SpanTree
-from promptview.block import Block
+from chatboard.model import NamespaceManager, VersionedModel, KeyField, ModelField
+from chatboard.prompt import Context, component, stream
+from chatboard.prompt.span_tree import SpanTree
+from chatboard.block import Block
 import pytest_asyncio
 
 # Test model

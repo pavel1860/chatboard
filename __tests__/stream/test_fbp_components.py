@@ -3,9 +3,9 @@ import asyncio
 import json
 from pydantic import BaseModel
 
-from promptview.block import BlockChunk, BlockList
-from promptview.prompt.flow_components import StreamController, PipeController, Stream, Parser, Accumulator
-from promptview.prompt.parser import StreamEvent
+from chatboard.block import BlockChunk, BlockList
+from chatboard.prompt.flow_components import StreamController, PipeController, Stream, Parser, Accumulator
+from chatboard.prompt.parser import StreamEvent
 
 
 class Response(BaseModel):

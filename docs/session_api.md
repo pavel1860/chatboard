@@ -1,6 +1,6 @@
 # Session API Documentation
 
-The Session API provides endpoints to manage user sessions in the PromptView system. All endpoints are prefixed with `/sessions`.
+The Session API provides endpoints to manage user sessions in the chatboard system. All endpoints are prefixed with `/sessions`.
 
 ## Endpoints
 

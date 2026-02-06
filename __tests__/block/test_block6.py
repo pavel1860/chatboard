@@ -1,6 +1,6 @@
 import pytest
-from promptview.block.block import Block as Block
-from promptview.block.style import style_manager
+from chatboard.block.block import Block as Block
+from chatboard.block.style import style_manager
 
 
 @pytest.fixture

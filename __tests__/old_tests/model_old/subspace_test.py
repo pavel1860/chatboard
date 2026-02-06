@@ -1,11 +1,11 @@
 import pytest
 import pytest_asyncio
 import datetime as dt
-from promptview.model.fields import ModelField, IndexType
-from promptview.model.model import Model
-from promptview.model.resource_manager import connection_manager
-from promptview.model.vectors.bm25_vectorizer import BM25Vectorizer
-from promptview.model.vectors.openai_vectorizer import OpenAISmallVectorizer, OpenAILargeVectorizer
+from chatboard.model.fields import ModelField, IndexType
+from chatboard.model.model import Model
+from chatboard.model.resource_manager import connection_manager
+from chatboard.model.vectors.bm25_vectorizer import BM25Vectorizer
+from chatboard.model.vectors.openai_vectorizer import OpenAISmallVectorizer, OpenAILargeVectorizer
 
 
 class BasicModel(Model):

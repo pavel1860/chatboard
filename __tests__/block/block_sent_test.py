@@ -1,4 +1,4 @@
-from promptview.block import Block, BlockSent, BlockChunk
+from chatboard.block import Block, BlockSent, BlockChunk
 
 
 

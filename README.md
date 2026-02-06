@@ -1,8 +1,8 @@
-# promptview Documentation
+# chatboard Documentation
 
 ## 1. Introduction
 
-**promptview** is a modular, extensible framework for building, managing, and interacting with prompt-based AI systems. It is designed to help developers create, test, and deploy complex prompt workflows, manage conversational agents, and integrate with various language models and vector stores.
+**chatboard** is a modular, extensible framework for building, managing, and interacting with prompt-based AI systems. It is designed to help developers create, test, and deploy complex prompt workflows, manage conversational agents, and integrate with various language models and vector stores.
 
 Key features include:
 - A flexible Block system for composing and rendering prompt components.
@@ -13,7 +13,7 @@ Key features include:
 - Extensible API layer for building custom endpoints and integrations.
 - Comprehensive testing and evaluation tools for prompt and agent workflows.
 
-promptview aims to accelerate the development of robust, production-ready AI applications by providing reusable abstractions, clear architectural patterns, and developer-friendly tooling.
+chatboard aims to accelerate the development of robust, production-ready AI applications by providing reusable abstractions, clear architectural patterns, and developer-friendly tooling.
 
 ---
 
@@ -29,8 +29,8 @@ promptview aims to accelerate the development of robust, production-ready AI app
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/your-org/promptview.git
-   cd promptview
+   git clone https://github.com/your-org/chatboard.git
+   cd chatboard
    ```
 
 2. **Install dependencies using Poetry:**
@@ -49,11 +49,11 @@ promptview aims to accelerate the development of robust, production-ready AI app
 
 To run the main application:
 ```bash
-poetry run python -m promptview.app.main
+poetry run python -m chatboard.app.main
 ```
 Or, if using pip:
 ```bash
-python -m promptview.app.main
+python -m chatboard.app.main
 ```
 
 To run tests:
@@ -69,7 +69,7 @@ pytest
 
 ## 3. Architecture Overview
 
-promptview is organized as a modular Python application, designed for extensibility and clarity. The architecture is centered around several core components:
+chatboard is organized as a modular Python application, designed for extensibility and clarity. The architecture is centered around several core components:
 
 - **Block System:** Provides composable building blocks for prompt construction, rendering, and serialization.
 - **Agent System:** Manages conversational agents, orchestrates actions, and routes messages.
@@ -91,16 +91,16 @@ promptview is organized as a modular Python application, designed for extensibil
 
 ### Block
 
-Blocks are the fundamental building units in promptview. They represent discrete components of a prompt or workflow, such as text, variables, or logic. Blocks can be composed, rendered, and serialized, enabling flexible construction of complex prompts and workflows.
+Blocks are the fundamental building units in chatboard. They represent discrete components of a prompt or workflow, such as text, variables, or logic. Blocks can be composed, rendered, and serialized, enabling flexible construction of complex prompts and workflows.
 
 - **Purpose:** Encapsulate logic, content, or formatting for a part of a prompt.
 - **Usage:** Combine multiple blocks to build dynamic prompts or conversational flows.
-- **Key files:** `promptview/block/block.py`, `promptview/block/block_renderer.py`
+- **Key files:** `chatboard/block/block.py`, `chatboard/block/block_renderer.py`
 
 **Example:** Creating and rendering a nested block structure.
 
 ```python
-from promptview.block.block import Block
+from chatboard.block.block import Block
 
 
 with Block(tags=["system"]) as b:
@@ -116,7 +116,7 @@ assert b.render() == "you are a helpful assistant\n# Task\nthis is task you need
 The `block` decorator allows you to encapsulate block-building logic in reusable functions, and enables context management for nested blocks. This is especially useful for building extendable complex, structured prompts.
 
 ```python
-from promptview.block.block import block, Block
+from chatboard.block.block import block, Block
 
 @block()
 def create_table_block(blk: Block, name: str, *fields):
@@ -164,9 +164,9 @@ This pattern ensures that nested blocks and content are appended to the correct 
 The `prompt` decorator allows you to build extendable, structured prompts with dependencies injection.
 
 ```python
-from promptview.block.block import block, Block
-from promptview.llms import LLM, OpenAiLLM
-from promptview.prompt import prompt, agent, Depends
+from chatboard.block.block import block, Block
+from chatboard.llms import LLM, OpenAiLLM
+from chatboard.prompt import prompt, agent, Depends
 from pydantic import BaseModel, Field
 
 
@@ -208,7 +208,7 @@ Agents are responsible for managing conversations, orchestrating actions, and in
 
 - **Purpose:** Manage the lifecycle of a conversation or task, including prompt generation and response handling.
 - **Usage:** Implement custom agents to define specific behaviors or workflows.
-- **Key files:** `promptview/agent/action_agent.py`, `promptview/agent/function_agent.py`
+- **Key files:** `chatboard/agent/action_agent.py`, `chatboard/agent/function_agent.py`
 
 
 ### Model
@@ -217,12 +217,12 @@ The model layer provides abstractions for data storage, retrieval, and manipulat
 
 - **Purpose:** Store and retrieve data required for prompt workflows and agent operations.
 - **Usage:** Define and interact with models for artifacts, sessions, users, etc.
-- **Key files:** `promptview/model/`, `promptview/model/neo4j/`, `promptview/model/postgres/`, `promptview/model/qdrant/`
+- **Key files:** `chatboard/model/`, `chatboard/model/neo4j/`, `chatboard/model/postgres/`, `chatboard/model/qdrant/`
 
 **Example:** Defining and using a model with relations.
 
 ```python
-from promptview.model import Model, ModelField, KeyField, RelationField, Relation
+from chatboard.model import Model, ModelField, KeyField, RelationField, Relation
 
 class User(Model):
     id: int = KeyField(primary_key=True)

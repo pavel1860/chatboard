@@ -1,7 +1,7 @@
 import pytest
 
 # Assuming your classes are imported like this:
-from promptview.model.neo4j.cypher import (
+from chatboard.model.neo4j.cypher import (
     MatchQuery, MergeQuery, NodePattern, RelPattern, PatternChain, CyParam, CyProperty, CyEq
 )
 

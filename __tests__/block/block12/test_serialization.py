@@ -1,7 +1,7 @@
 """Tests for Block serialization."""
 import pytest
 import json
-from promptview.block.block12 import Block
+from chatboard.block.block12 import Block
 
 
 class TestBlockSerialization:

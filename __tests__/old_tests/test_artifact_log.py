@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, text, Column, Integer, String, Text
 from sqlalchemy.orm import sessionmaker
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from promptview.artifact_log.artifact_log import (
+from chatboard.artifact_log.artifact_log import (
     Base,
     VersionedMixin,
     Branch,

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from promptview.conversation.message_log import UserManager
-from promptview.conversation.models import User, Session, Message, UserBackend
+from chatboard.conversation.message_log import UserManager
+from chatboard.conversation.models import User, Session, Message, UserBackend
 import datetime as dt
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 """Tests for BlockText (block10) - linked list chunk storage."""
 
 import pytest
-from promptview.block.block10.chunk import BlockChunk, BlockText
+from chatboard.block.block10.chunk import BlockChunk, BlockText
 
 
 class TestChunk:

@@ -1,8 +1,8 @@
 """Tests for Block11 Merkle tree storage."""
 
 import pytest
-from promptview.block.block11 import Block, BlockSchema, BlockChunk, Span
-from promptview.model.block_models.block11_storage import (
+from chatboard.block.block11 import Block, BlockSchema, BlockChunk, Span
+from chatboard.model.block_models.block11_storage import (
     compute_span_hash,
     compute_block_hash,
     dump_span,

@@ -1,5 +1,5 @@
 import pytest
-from promptview.prompt.legacy.block2 import Block
+from chatboard.prompt.legacy.block2 import Block
 from pydantic import BaseModel, Field
 
 

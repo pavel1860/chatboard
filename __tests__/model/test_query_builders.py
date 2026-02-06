@@ -1,11 +1,11 @@
 import pytest
 
-from promptview.model.fields import ModelField
-from promptview.model.model3 import Model
-from promptview.model.postgres2.pg_query_set import PgSelectQuerySet
-from promptview.model.sql.compiler import Compiler
-from promptview.model.sql.expressions import And, Like, In, Between, Eq, Gt, Value, Or, Not, Function, Coalesce, IsNull
-from promptview.model.sql.queries import Column, DeleteQuery, InsertQuery, SelectQuery, Subquery, Table, UpdateQuery
+from chatboard.model.fields import ModelField
+from chatboard.model.model3 import Model
+from chatboard.model.postgres2.pg_query_set import PgSelectQuerySet
+from chatboard.model.sql.compiler import Compiler
+from chatboard.model.sql.expressions import And, Like, In, Between, Eq, Gt, Value, Or, Not, Function, Coalesce, IsNull
+from chatboard.model.sql.queries import Column, DeleteQuery, InsertQuery, SelectQuery, Subquery, Table, UpdateQuery
 from __tests__.model.utils import assert_sql
 import datetime as dt
 

@@ -1,6 +1,6 @@
 """Tests for Chunk and Span classes."""
 import pytest
-from promptview.block.block11 import BlockChunk, Span
+from chatboard.block.block11 import BlockChunk, Span
 
 
 class TestChunk:

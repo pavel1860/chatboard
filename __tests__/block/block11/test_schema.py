@@ -1,6 +1,6 @@
 """Tests for BlockSchema, BlockList, and BlockListSchema classes."""
 import pytest
-from promptview.block.block11 import (
+from chatboard.block.block11 import (
     Block,
     BlockSchema,
     BlockList,

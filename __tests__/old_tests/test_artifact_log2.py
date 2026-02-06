@@ -8,7 +8,7 @@ from typing import AsyncGenerator, Generator, Any, Optional
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text
 import asyncpg
-from promptview.artifact_log.artifact_log2 import (
+from chatboard.artifact_log.artifact_log2 import (
     Base,
     Head,
     Branch,
@@ -20,8 +20,8 @@ from promptview.artifact_log.artifact_log2 import (
     create_artifact_table_for_model,
     SessionManager,
 )
-from promptview.model.model import Model
-from promptview.model.fields import ModelField
+from chatboard.model.model import Model
+from chatboard.model.fields import ModelField
 from pydantic import BaseModel, ConfigDict
 
 # Test model for versioning

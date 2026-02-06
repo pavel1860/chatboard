@@ -2,8 +2,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from promptview.conversation.models import Base, Message, Turn, Branch
-from promptview.conversation.history import History
+from chatboard.conversation.models import Base, Message, Turn, Branch
+from chatboard.conversation.history import History
 
 @pytest.fixture(scope="function")
 def db_url():

@@ -4,11 +4,11 @@ Tests for SQL2 JOIN operations
 from typing import List
 import pytest
 import pytest_asyncio
-from promptview.model import KeyField, ModelField, VersionedModel, RelationField
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.sql2.relations import NsRelation
-from promptview.model.sql2.relational_queries import SelectQuerySet
-from promptview.model.sql2.compiler import Compiler
+from chatboard.model import KeyField, ModelField, VersionedModel, RelationField
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.sql2.relations import NsRelation
+from chatboard.model.sql2.relational_queries import SelectQuerySet
+from chatboard.model.sql2.compiler import Compiler
 
 
 

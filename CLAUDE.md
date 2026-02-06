@@ -14,7 +14,7 @@ it give basic building blocks for developers to build reliable agents.
 # Components
 
 ## Model ORM
-@promptview/model - ORM system for the agent framework.
+@chatboard/model - ORM system for the agent framework.
 it should support Postgres, Qdrant and Neo4j with a single API. 
 
 the base components of the ORM are 3 types of Models:
@@ -23,14 +23,14 @@ the base components of the ORM are 3 types of Models:
 3. ArtifactModel - event sourced model that saves every change so it could be revertable.
 
 ## Blocks
-@promptview/block 
+@chatboard/block 
 blocks help build reusable components for prompt building.
 they separate the style from the content
 
 
 
 ## FBP flow components
-@promptview/prompt
+@chatboard/prompt
 give ability to create application logic in an imerative way but support streaming natively with Flow Based Programming Pronciples
 
 

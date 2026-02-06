@@ -1,12 +1,12 @@
 import pytest
 from typing import AsyncGenerator, Callable, Union, Optional, Any
 
-from promptview.prompt.stream2 import StreamController, stream  # Adjust the import
-from promptview.prompt import component, Depends
-from promptview.llms import LLMRegistry
-from promptview.block import Block, BlockList, BlockSent, BlockChunk
-from promptview.model3.versioning.models import Branch
-from promptview.model3 import NamespaceManager
+from chatboard.prompt.stream2 import StreamController, stream  # Adjust the import
+from chatboard.prompt import component, Depends
+from chatboard.llms import LLMRegistry
+from chatboard.block import Block, BlockList, BlockSent, BlockChunk
+from chatboard.model3.versioning.models import Branch
+from chatboard.model3 import NamespaceManager
 
 @pytest.mark.asyncio
 async def test_basic_stream():

@@ -12,8 +12,8 @@ Tests cover:
 import pytest
 from pydantic import BaseModel, Field
 
-from promptview.block.block9.block import Block, BlockSchema, BlockListSchema
-from promptview.block.block9.block_builder import (
+from chatboard.block.block9.block import Block, BlockSchema, BlockListSchema
+from chatboard.block.block9.block_builder import (
     BlockBuilder,
     StreamingBlockBuilder,
     traverse_dict,
@@ -517,7 +517,7 @@ def test_inst_dict_preserves_schema_tags(simple_schema):
 @pytest.mark.asyncio
 async def test_parser_simple_xml():
     """Test parsing simple XML chunks."""
-    from promptview.prompt.fbp_process import Stream, Parser
+    from chatboard.prompt.fbp_process import Stream, Parser
 
     chunks = ['<', 'item', ' id=', '"1"', '>', 'hello', '</', 'item', '>']
 
@@ -540,7 +540,7 @@ async def test_parser_simple_xml():
 @pytest.mark.asyncio
 async def test_parser_nested_xml():
     """Test parsing nested XML chunks."""
-    from promptview.prompt.fbp_process import Stream, Parser
+    from chatboard.prompt.fbp_process import Stream, Parser
 
     chunks = [
         '<', 'root', '>',
@@ -639,7 +639,7 @@ def test_build_from_dict_multiple_same_type_pydantic(list_schema):
 
 def test_schema_build_context_alias(simple_schema):
     """Test that SchemaBuildContext alias works."""
-    from promptview.block.block9.block_builder import SchemaBuildContext
+    from chatboard.block.block9.block_builder import SchemaBuildContext
 
     builder = SchemaBuildContext(simple_schema)
 
@@ -648,7 +648,7 @@ def test_schema_build_context_alias(simple_schema):
 
 def test_block_build_context_alias(simple_schema):
     """Test that BlockBuildContext alias works."""
-    from promptview.block.block9.block_builder import BlockBuildContext
+    from chatboard.block.block9.block_builder import BlockBuildContext
 
     child_schema = simple_schema.get_one('thought')
     builder = BlockBuildContext(child_schema)

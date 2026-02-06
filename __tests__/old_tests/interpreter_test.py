@@ -2,10 +2,10 @@ from anthropic import BaseModel
 from pydantic import Field
 import pytest
 import pytest_asyncio
-from promptview import view, prompt
-from promptview.llms.legacy.interpreter import LlmInterpreter
-from promptview.llms.utils.action_manager import Actions
-from promptview.prompt.legacy.mvc import create_view_block, render_block
+from chatboard import view, prompt
+from chatboard.llms.legacy.interpreter import LlmInterpreter
+from chatboard.llms.utils.action_manager import Actions
+from chatboard.prompt.legacy.mvc import create_view_block, render_block
 
 class TestAction(BaseModel):
         """use this if the user asks"""

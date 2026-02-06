@@ -11,11 +11,11 @@ Tests the vector search API including:
 import pytest
 import pytest_asyncio
 import numpy as np
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model import Model, KeyField, ModelField, VectorField
-from promptview.model.vectors import Vector
-from promptview.algebra.vectors.empty_vectorizer import EmptyVectorizer
-from promptview.model.sql2.pg_query_builder import select
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model import Model, KeyField, ModelField, VectorField
+from chatboard.model.vectors import Vector
+from chatboard.algebra.vectors.empty_vectorizer import EmptyVectorizer
+from chatboard.model.sql2.pg_query_builder import select
 
 
 class Document(Model):

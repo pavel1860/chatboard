@@ -1,6 +1,6 @@
 # User API Documentation
 
-The User API provides endpoints to manage users and their associated sessions and messages in the PromptView system. All endpoints are prefixed with `/api/users`.
+The User API provides endpoints to manage users and their associated sessions and messages in the chatboard system. All endpoints are prefixed with `/api/users`.
 
 ## Models
 

@@ -3,11 +3,11 @@ from typing import List, Literal
 
 import pytest_asyncio
 
-from promptview.model3.fields import ModelField, KeyField, RelationField
-from promptview.model3.model3 import Model
-from promptview.model3.namespace_manager2 import NamespaceManager
-from promptview.model3.relation_model import RelationModel
-from promptview.model3.postgres2.pg_query_set import select
+from chatboard.model import ModelField, KeyField, RelationField
+from chatboard.model import Model
+from chatboard.model import NamespaceManager
+from chatboard.model import RelationModel
+# from chatboard.model import select
 
 
 # -------------------------
@@ -99,8 +99,8 @@ async def test_conversation_relations(setup_db):
     # -------------------------
     # 1) Conversation -> Turn -> Message
     # -------------------------
-    convs = await select(Conversation).include(
-        select(TestTurn).include(Message)
+    convs = await Conversation.query().include(
+        TestTurn.query().include(Message)
     ).execute()
 
     assert len(convs) == 1
@@ -111,8 +111,8 @@ async def test_conversation_relations(setup_db):
     # -------------------------
     # 2) User -> Conversation -> Turn (no messages)
     # -------------------------
-    users = await select(User).include(
-        select(Conversation).include(TestTurn)
+    users = await User.query().include(
+        Conversation.query().include(TestTurn)
     ).execute()
 
     assert len(users) == 1
@@ -124,9 +124,9 @@ async def test_conversation_relations(setup_db):
     # -------------------------
     # 3) User -> Conversation -> Turn -> Message
     # -------------------------
-    users = await select(User).include(
-        select(Conversation).include(
-            select(TestTurn).include(Message)
+    users = await User.query().include(
+        Conversation.query().include(
+            TestTurn.query().include(Message)
         )
     ).execute()
 

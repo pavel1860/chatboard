@@ -6,17 +6,17 @@ from typing import Literal, List
 from uuid import UUID
 
 # Set test database URL
-os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/promptview_test"
+os.environ["POSTGRES_URL"] = "postgresql://ziggi:Aa123456@localhost:5432/chatboard_test"
 
-from promptview.auth.user_manager2 import AuthModel
-from promptview.model.fields import ModelField, KeyField, RelationField
-from promptview.model import Model
-from promptview.versioning import VersionedModel, ArtifactModel
-from promptview.model.namespace_manager2 import NamespaceManager
-from promptview.model.relation_model import RelationModel
-from promptview.model.postgres2.pg_query_set import select
-from promptview.prompt.context import Context
-from promptview.versioning import Branch, Turn, TurnStatus
+from chatboard.auth.user_manager2 import AuthModel
+from chatboard.model.fields import ModelField, KeyField, RelationField
+from chatboard.model import Model
+from chatboard.versioning import VersionedModel, ArtifactModel
+from chatboard.model.namespace_manager2 import NamespaceManager
+from chatboard.model.relation_model import RelationModel
+from chatboard.model.postgres2.pg_query_set import select
+from chatboard.prompt.context import Context
+from chatboard.versioning import Branch, Turn, TurnStatus
 import datetime as dt
 
 # -------------------------

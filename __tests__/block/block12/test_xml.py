@@ -1,6 +1,6 @@
 """Tests for XML rendering."""
 import pytest
-from promptview.block.block12 import Block, BlockSchema
+from chatboard.block.block12 import Block, BlockSchema
 
 
 class TestXmlRendering:
