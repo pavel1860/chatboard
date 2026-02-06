@@ -1,7 +1,8 @@
 from typing import AsyncGenerator, Generic, Literal, ParamSpec, Set, Callable, TYPE_CHECKING, Type
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from ..prompt import PipeController
+from ..prompt import PipeController, component, stream
+from ..prompt.fbp_process import TurnController
 from ..prompt.context import Context, VerbosityLevel
 from ..prompt.flow_components import EventLogLevel, FlowRunner
 from ..block.util import StreamEvent
@@ -94,13 +95,28 @@ class Agent(Generic[P]):
             auth: AuthModel = Depends(get_auth),
             # ctx: tuple[User, Branch, Partition, Message, ExecutionContext] = Depends(get_ctx),
         ):  
+            from ..versioning import Artifact
             # context = await Context.from_request(request)
             content, options, state, files = payload
             message = self._block_from_content(content, options['role'])
             # state = process_state(state)
+            artifact_view = None
+            if artifact_view_id := state.get("artifact_view"):
+                artifact = await Artifact.get(artifact_view_id)
+                artifact_view = await artifact.load_target()
             if self.state_model is not None:
                 state = self.state_model.model_validate(state)
-            context = await Context.from_kwargs(**ctx, auth=auth, message=message, state=state)            
+            
+            context = await Context.from_kwargs(
+                **ctx, 
+                auth=auth, 
+                message=message, 
+                state=state,
+                artifact_view=artifact_view,
+                load_llm_calls={
+                    "writer_reasoning_openai_llm": 1
+                }
+            )            
             context = context.start_turn()
             agent_gen = self.stream_agent_with_context(context, message, state=state)
             return StreamingResponse(agent_gen, media_type="text/plain")
@@ -256,9 +272,8 @@ class Agent(Generic[P]):
                 async for event in self.agent_component(*args).stream():
                     yield event
                 await eval_ctx.commit_test_turn()
-            
-
-    async def run_debug(
+                
+    def run_debug(
         self,
         message: Block | str,  
         state: BaseModel | None = None,
@@ -269,38 +284,15 @@ class Agent(Generic[P]):
         level: Literal["chunk", "span", "turn"] = "chunk",      
         verbose: set[VerbosityLevel] | None = None,
         load_cache: dict[str, str] | None = None,
+        load_llm_calls: dict[str, int] | None = None,
         **kwargs: dict,
     ):
-        ctx = await Context.from_kwargs(**kwargs, auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose)
+
+        ctx = Context(auth=auth, branch=branch, branch_id=branch_id, load_cache=load_cache, verbose=verbose, load_llm_calls=load_llm_calls)
         if state is not None:
             ctx.state = state
         print_events = verbose and "events" in verbose
-        async with ctx.start_turn(auto_commit=auto_commit) as turn:            
-            async for event in self.agent_component(message).stream(event_level=EventLogLevel[level]):
-                if print_events:
-                    print("--------------------------------")
-                    if isinstance(event, Block):
-                        event.print()
-                    else:
-                        print(event)
-                yield event
-
-    async def run_debug2(
-        self,
-        message: str | Block,                
-        auth: AuthModel | None = None,
-        branch_id: int | None = None,         
-        auto_commit: bool = True,
-        level: Literal["chunk", "span", "turn"] = "chunk",      
-        **kwargs: dict,
-    ):
-        context = await Context.from_kwargs(**kwargs, auth=auth)
-        message = Block(message, role="user") if isinstance(message, str) else message        
-        agent_gen = self.stream_agent_with_context(context, message, serialize=True)
-        async for event in agent_gen:
-            print("--------------------------------")
-            if isinstance(event, Block):
-                event.print()
-            else:
-                print(event)
-            yield event
+        ctx.start_turn(auto_commit=auto_commit)
+        if isinstance(message, str):
+            message = Block(message, role="user")
+        return self.agent_component(message).stream(event_level=EventLogLevel[level], ctx=ctx)

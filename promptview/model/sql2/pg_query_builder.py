@@ -154,7 +154,7 @@ class PgQueryBuilder(Generic[Ts]):
             .where(id=1, status="active")     # Multiple keyword arguments
             .where(posts_rel.get("id") > 5, status="active")  # Both combined
         """
-        from .expressions import Eq, And
+        from .expressions import Eq, And, In
 
         if kwargs:
             # Need to resolve field names to RelField objects
@@ -164,12 +164,17 @@ class PgQueryBuilder(Generic[Ts]):
             for field_name, value in kwargs.items():
                 # Get the RelField object from the query
                 field = self.query.get(field_name)
+                
+                if isinstance(value, list):
+                    clouse = In(field, value)
+                else:
+                    clouse = Eq(field, value)
 
                 # Create equality expression with the RelField
                 if condition is None:
-                    condition = Eq(field, value)
+                    condition = clouse
                 else:
-                    condition = condition & Eq(field, value)
+                    condition = condition & clouse
 
         if condition is None:
             raise ValueError("Condition is not set")

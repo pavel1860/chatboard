@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from .sql2.pg_query_builder import PgQueryBuilder
     from .base.base_namespace import BaseNamespace
     from .relation_info import RelationInfo
+    from ..block import Block
 
 MODEL = TypeVar("MODEL", bound="Model")
 JUNCTION_MODEL = TypeVar("JUNCTION_MODEL", bound="Model")
@@ -102,21 +103,30 @@ class Model(BaseModel, metaclass=ModelMeta):
         if res is None:
             raise ValueError(f"Could not resolve id for target for {cls.__name__}: {target}")
         return res
-
+    
     @classmethod
     async def get(cls: Type[Self], id: Any) -> Self:
-        data = await cls.get_namespace().get(id)
-        if not data:
+        res = await cls.query().where(id=id).one()
+        if res is None:
             raise ValueError(f"{cls.__name__} with ID '{id}' not found")
-        return cls(**data)
-    
+        return res
+    # @classmethod
+    # async def get(cls: Type[Self], id: Any) -> Self:
+    #     data = await cls.get_namespace().get(id)
+    #     if not data:
+    #         raise ValueError(f"{cls.__name__} with ID '{id}' not found")
+    #     return cls(**data)
     
     @classmethod
     async def get_or_none(cls: Type[Self], id: Any) -> Self | None:
-        data = await cls.get_namespace().get(id)
-        if not data:
-            return None
-        return cls(**data)
+        return await cls.query().where(id=id).one()
+    
+    # @classmethod
+    # async def get_or_none(cls: Type[Self], id: Any) -> Self | None:
+    #     data = await cls.get_namespace().get(id)
+    #     if not data:
+    #         return None
+    #     return cls(**data)
 
 
     # async def save(self, *args, **kwargs) -> Self:
@@ -151,9 +161,15 @@ class Model(BaseModel, metaclass=ModelMeta):
         ns = self.get_namespace()
         return ns.insert(self.model_dump()).select("*")
     
-    def update(self):
+    def update(self) -> Self:
         ns = self.get_namespace()
-        return ns.update(self.primary_id, self.model_dump()).select("*")
+        return ns.update(self.primary_id, self.model_dump()).select("*").one()
+    
+    @classmethod
+    async def update_query(cls, id: Any, data: dict[str, Any]) -> Self:
+        """Update the model instance"""
+        ns = cls.get_namespace()
+        return await ns.update(id, data).select("*").one()
     
     def _load_context_vars(self):
         ns = self.get_namespace()
@@ -324,3 +340,27 @@ class Model(BaseModel, metaclass=ModelMeta):
     @classmethod
     def q(cls) -> "PgQueryBuilder[Self]":
         return cls.query()
+    
+    
+    
+    def to_block(self, exclude: set[str] | None = None, include_artifact: bool = False) -> "Block":
+        from ..block import Block
+        from ..block.block12.object_helpers import pydantic_to_schema        
+        artifact_fields = {"artifact_id", "artifact"} if not include_artifact else set()
+        exclude = exclude or set()
+        with Block(self.__class__.__name__, style="md") as blk:
+            for name, field in self.__class__.model_fields.items():
+                if name in artifact_fields or name in exclude:
+                    continue
+                with blk.view(name, type=field.annotation, style="def") as view:
+                    view /= getattr(self, name)                    
+        return blk
+    
+    
+    def print(self):
+        block = self.to_block()
+        block.print()
+        
+        
+    def render(self) -> str:
+        return self.to_block().render()

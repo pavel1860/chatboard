@@ -114,7 +114,11 @@ import hashlib
 import os
 
 
-from ..versioning import DataFlowNode, ExecutionSpan, SpanType
+# from ..versioning import DataFlowNode, ExecutionSpan, SpanType
+
+if TYPE_CHECKING:
+    from ..block import Block, BlockChunk
+    from ..versioning import DataFlowNode, ExecutionSpan, SpanType, LlmCall
 
 
 def _serialize_for_hash(value: Any) -> Any:
@@ -163,7 +167,7 @@ def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
     """
     # Filter out non-serializable types (Context, LLM instances, etc.)
     from .context import Context
-    from ..llms import LLM, LlmConfig
+    from ..llms import LLMRegistry, LlmConfig
     from ..evaluation.decorators import EvalCtx
 
     filtered_args = {}
@@ -173,7 +177,7 @@ def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
         # Skip 'self' argument (method bound to instance)
         if key == 'self':
             continue
-        if isinstance(value, (Context, LLM, LlmConfig, EvalCtx)):
+        if isinstance(value, (Context, LLMRegistry, LlmConfig, EvalCtx)):
             continue
         # Skip private arguments
         if key.startswith('_'):
@@ -525,12 +529,20 @@ class Stream(Process):
 
         return cls(load_stream(), name=f"stream_from_{filepath}")
 
+
     @classmethod
     def from_list(cls, chunks: list[str], name: str = "stream_from_list"):
         async def gen():
             from ..block import BlockChunk
             for chunk in chunks:
                 yield BlockChunk(content=chunk, logprob=1.0)
+        return cls(gen(), name=name)
+    
+    @classmethod
+    def from_chunks(cls, chunks: list["BlockChunk"], name: str = "chunk_stream"):
+        async def gen():
+            for chunk in chunks:
+                yield chunk
         return cls(gen(), name=name)
 
     async def __anext__(self):
@@ -653,7 +665,7 @@ class ObservableProcess(Process):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "component",
+        span_type: "SpanType" = "component",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -697,6 +709,7 @@ class ObservableProcess(Process):
         self._ctx: "Context | None" = None
         self._load_eval_args: bool = False
         self._input_data_flows: dict[str, "DataFlowNode"] = {}
+        self.dry_run: bool = False
         
         
     @property
@@ -709,6 +722,17 @@ class ObservableProcess(Process):
         if ctx is None:
             raise ValueError("StreamController requires Context. Use 'async with Context():'")
         return ctx
+    
+    @property
+    def name(self):
+        """Get the name."""
+        return self._name
+    
+    
+    @property
+    def inputs(self) -> list[Any]:
+        """Get the inputs."""
+        return list(self._args) + list(self._kwargs.values())
 
     @property
     def span(self):
@@ -749,8 +773,18 @@ class ObservableProcess(Process):
             Tuple of (bound_arguments, resolved_kwargs)
         """
         from .injector import resolve_dependencies_kwargs
-        from ..llms import LLM, LlmConfig
+        from ..llms import LLMRegistry, LlmConfig, LLM
         from ..evaluation.decorators import EvalCtx
+        
+        
+        if self.dry_run:
+            bound, kwargs = await resolve_dependencies_kwargs(
+                    self._gen_func,
+                    args=self._args,
+                    kwargs=self._kwargs
+                )
+            self.resolved_kwargs = kwargs
+            return bound, kwargs
         
         
         self._data_flow = await self.ctx.start_span(
@@ -786,7 +820,7 @@ class ObservableProcess(Process):
             # Log resolved kwargs as inputs
             if self.span and self._should_log_inputs:
                 for key, value in kwargs.items():
-                    if value is not None and type(value) not in [LLM, LlmConfig, EvalCtx]:
+                    if value is not None and type(value) not in [LLMRegistry, LlmConfig, EvalCtx] and not isinstance(value, LLM):
                         data_flow = await self.span.log_value(value, io_kind="input", name=key)
                         self._input_data_flows[data_flow.path] = data_flow                    
         if self.span.outputs and not self.span.need_to_replay:
@@ -991,7 +1025,19 @@ class ObservableProcess(Process):
             return self._last_ip.get_response()
         return self._last_ip
     
+    async def print_prompt(self, ctx: "Context | None" = None):        
+        async for event in FlowPrintRunner(self, ctx=ctx):
+            print(event)
     
+    def print(self):
+        
+        for arg in self._args:
+            print(arg)
+        for key, value in self._kwargs.items():
+            print(key, value)
+        print("--------------------------------")
+        out = self.get_output()
+        print(out)
 
     
 
@@ -1035,7 +1081,7 @@ class StreamController(ObservableProcess):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "stream",
+        span_type: "SpanType" = "stream",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1064,7 +1110,7 @@ class StreamController(ObservableProcess):
         self._stream_value: DataFlow | None = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
-        self._temp_data_flow: DataFlowNode | None = None        
+        self._temp_data_flow: "DataFlowNode | None" = None        
 
 
     def get_output(self, idx: int | None = None, include_fence: bool = False) -> Any:
@@ -1090,6 +1136,39 @@ class StreamController(ObservableProcess):
         stream = Stream(gen_instance, name=f"{self._name}_stream")
         return stream
     
+    
+    def _load_cache(self, bound):
+        load_filepath = self._load_filepath
+        if self.dry_run:
+            return None
+        if self.ctx is not None:
+            if load_filepath is None:
+                load_filepath = self.ctx.load_cache.get(self._name)
+        if load_filepath is None and self._save_filepath is None:
+            cache_dir = self.ctx.cache_dir
+            if cache_dir is not None:
+                # Compute cache key from bound arguments
+                cache_filename = compute_stream_cache_key(self._name, dict(bound.arguments))
+                cache_path = os.path.join(cache_dir, cache_filename)
+
+                # Check if cache exists
+                if os.path.exists(cache_path):
+                    # Load from cache
+                    load_filepath = cache_path
+                else:
+                    # Save to cache
+                    self._save_filepath = cache_path
+        return load_filepath
+    
+    def _handle_save_cache(self, stream: Stream):
+        if self._save_filepath is not None:
+            os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
+            if os.path.exists(self._save_filepath):
+                os.remove(self._save_filepath)
+            stream.save_stream(self._save_filepath)
+        
+
+    
     async def on_start(self):
         """
         Build subnetwork and register with context.
@@ -1109,43 +1188,14 @@ class StreamController(ObservableProcess):
         from ..block import Block
         bound, kwargs = await self._resolve_dependencies()
         
-        
-        
-        load_filepath = self._load_filepath
-        if self.ctx is not None:
-            if load_filepath is None:
-                load_filepath = self.ctx.load_cache.get(self._name)
-
-        # Auto-cache: determine cache path from context if not explicitly set
-        cache_path = None
-        if load_filepath is None and self._save_filepath is None:
-            cache_dir = self.ctx.cache_dir
-            if cache_dir is not None:
-                # Compute cache key from bound arguments
-                cache_filename = compute_stream_cache_key(self._name, dict(bound.arguments))
-                cache_path = os.path.join(cache_dir, cache_filename)
-
-                # Check if cache exists
-                if os.path.exists(cache_path):
-                    # Load from cache
-                    load_filepath = cache_path
-                else:
-                    # Save to cache
-                    self._save_filepath = cache_path
-
-        # Wrap in Stream process and pipe through Accumulator
+        load_filepath = self._load_cache(bound)
         if load_filepath is not None:
             stream = Stream.load(load_filepath, delay=self._load_delay or 0.05)
         else:
-            stream = self._init_stream(bound.args, bound.kwargs)
-            # gen_instance = self._gen_func(*bound.args, **bound.kwargs)
-            # stream = Stream(gen_instance, name=f"{self._name}_stream")
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            stream = Stream(gen_instance, name=f"{self._name}_stream")
 
-        if self._save_filepath is not None:
-            os.makedirs(os.path.dirname(self._save_filepath), exist_ok=True)
-            if os.path.exists(self._save_filepath):
-                os.remove(self._save_filepath)
-            stream.save_stream(self._save_filepath)
+        self._handle_save_cache(stream)
 
         self._stream = stream
         self._gen = stream
@@ -1167,8 +1217,9 @@ class StreamController(ObservableProcess):
         from ..versioning.artifact_log import ArtifactLog
         from ..block.block12.parsers import ParserEvent
 
-         
-        if type(payload) == ParserEvent:     
+        
+        if type(payload) == ParserEvent: 
+            print(payload.type, payload.path)    
             # if payload.type == "block_stream":
             # if payload.type == "block_init":
             #     print(payload.type, payload.value.path)
@@ -1227,8 +1278,8 @@ class StreamController(ObservableProcess):
         from .context import Context
         if self._parser is not None:
             raise FlowException("Parser already initialized")
-        if self._gen_func is None:
-            raise FlowException("StreamController is not initialized")
+        # if self._gen_func is None:
+            # raise FlowException("StreamController is not initialized")
         ctx = Context.current_or_none()
         verbose = False
         if ctx is not None:
@@ -1236,9 +1287,9 @@ class StreamController(ObservableProcess):
         self._parser = XmlParser(block_schema, verbose=verbose)      
         return self
     
-    def name(self, name: str):
-        self._name = name
-        return self
+    # def name(self, name: str):
+    #     self._name = name
+    #     return self
 
 
     async def __anext__(self):
@@ -1397,11 +1448,12 @@ class PipeController(ObservableProcess):
         self,
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "component",
+        span_type: "SpanType" = "component",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
-        upstream: Process | None = None
+        upstream: Process | None = None,
+        need_ctx: bool = True
     ):
         """
         Initialize PipeController.
@@ -1469,6 +1521,7 @@ class PipeController(ObservableProcess):
         Returns:
             Next child process from the generator or replay buffer
         """
+        from ..versioning import ExecutionSpan
         if not self._did_start:
             await self.on_start()
             self._did_start = True
@@ -1515,20 +1568,22 @@ class PipeController(ObservableProcess):
                     self._last_value = value
 
                 # Log child as output
-                if self.span and isinstance(child, (StreamController, PipeController)):
-                    # Log the child's span tree once it's created
-                    # Note: child span is created when child.on_start() is called by FlowRunner
-                    pass
+                # if self.span and isinstance(child, (StreamController, PipeController)):
+                #     # Log the child's span tree once it's created
+                #     # Note: child span is created when child.on_start() is called by FlowRunner
+                #     pass
 
                 if not self._did_yield:
                     self._did_yield = True
 
                 return child
         except StopAsyncIteration:
-            await self.on_stop()
+            if not self.dry_run:
+                await self.on_stop()
             raise StopAsyncIteration
         except Exception as e:
-            await self.on_error(e)
+            if not self.dry_run:
+                await self.on_error(e)
             raise e
 
     async def __anext__(self):
@@ -1551,8 +1606,7 @@ class PipeController(ObservableProcess):
         if self._gen is None:
             raise FlowException("Process is not initialized")
         return await self._gen.aclose()
-
-
+        
 
 
 
@@ -1565,7 +1619,7 @@ class EvaluatorController(ObservableProcess):
         self, 
         gen_func: Callable[..., AsyncGenerator],
         name: str,
-        span_type: SpanType = "evaluator",
+        span_type: "SpanType" = "evaluator",
         tags: list[str] | None = None,
         args: tuple = (),
         kwargs: dict[str, Any] | None = None,
@@ -1598,7 +1652,64 @@ class EvaluatorController(ObservableProcess):
     
     async def __anext__(self):
         return await self._gen_func(**self.resolved_kwargs)
+    
+    
+    
 
+class TurnController(Process):
+    
+    
+    def __init__(self, agent_component: Callable[..., AsyncGenerator], ctx: "Context", message: "Block", name: str):
+        async def gen():
+            async with ctx:
+                yield agent_component(message)
+            
+        super().__init__(upstream=agent_component(message))
+        self.name = name
+        self._ctx = ctx
+        
+    
+    
+
+    # async def on_start(self, value: Any = None):
+    #     await self._ctx.__aenter__()
+    #     return None
+
+
+    # async def on_stop(self):
+    #     await self._ctx.__aexit__(None, None, None)
+    #     # return None
+
+    # async def on_error(self, error: Exception):
+    #     await self._ctx.__aexit__(type(error), error, None)
+    #     return None
+    
+    def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False) -> "FlowRunner":
+        """
+        Return a FlowRunner that streams events from this process.
+
+        This enables event streaming directly from decorated functions:
+            @stream()
+            async def my_stream():
+                yield "hello"
+
+            async for event in my_stream().stream():
+                print(event)
+
+        Args:
+            event_level: EventLogLevel.chunk, .span, or .turn
+
+        Returns:
+            FlowRunner configured to emit events
+        """
+        from .flow_components import EventLogLevel
+        if event_level is None:
+            event_level = EventLogLevel.chunk
+        if ctx is not None:
+            self._ctx = ctx
+        # self._load_eval_args = load_eval_args
+        return FlowRunner(self, ctx=self._ctx, event_level=event_level).stream_events()
+        # return FlowRunner(self, event_level=event_level, need_ctx=False).stream_events()
 
 # ============================================================================
 # FlowRunner - Orchestrates nested process execution
@@ -1623,7 +1734,7 @@ class FlowRunner:
         ...     print(f"Event: {event.type} - {event.name}")
     """
 
-    def __init__(self, root_process: Process, ctx: "Context | None" = None, event_level=None):
+    def __init__(self, root_process: Process, ctx: "Context | None" = None, event_level=None, need_ctx: bool = True):
         """
         Initialize FlowRunner.
 
@@ -1633,6 +1744,7 @@ class FlowRunner:
         """
         from .context import Context
         self.stack: list[Process] = [root_process]
+        self.ctx = ctx or Context.current_or_none()
         self.last_value: Any = None
         self._output_events = False
         self._error_to_raise: Exception | None = None
@@ -1641,7 +1753,8 @@ class FlowRunner:
         self._pending_child: Process | None = None  # Child process waiting to be pushed
         self._response_to_send: Any = None  # Response from child to send to parent
         self._exited_processes: list[ObservableProcess] = []
-        self.ctx = ctx or Context.current_or_none()
+        
+        self._need_ctx = need_ctx
 
     @property
     def current(self) -> Process:
@@ -1671,6 +1784,13 @@ class FlowRunner:
         self._exited_processes.append(process)
         return process
     
+    async def revert(self, reason: str | None = None):
+        """Revert the stack to the last process."""
+        if not self.ctx.turn:
+            raise ValueError("Context turn is not set")
+        await self.ctx.turn.revert(reason)
+    
+    
     def get_output(self, name: str | None = None) -> Any:
         if name is None:
             return self._exited_processes[-1].get_response()
@@ -1692,8 +1812,30 @@ class FlowRunner:
             self._response_to_send = None
             return response
         return None
+    
+    
+    def get(self, name: str) -> "Process":
+        for process in self._exited_processes:
+            if process.name == name:
+                return process
+        raise ValueError(f"Process {name} not found")
+    
+    def get_span(self, name: str) -> "ExecutionSpan":
+        for process in self._exited_processes:
+            if process.name == name:
+                return process.span
+        raise ValueError(f"ExecutionSpan {name} not found")
 
-        
+    def get_llm_call(self, name: str, index: int | None = None) -> "LlmCall":
+        span = self.get_span(name)
+        index = index or -1
+        if span is None:
+            raise ValueError(f"Span {name} not found")
+        if span.span_type != "llm":
+            raise ValueError(f"Span {name} is not an llm")
+        if index >= 0 and index >= len(span.llm_calls):
+            raise ValueError(f"Index {index} out of range for span {name}")
+        return span.llm_calls[index]
 
     def __aiter__(self):
         """Make FlowRunner async iterable."""
@@ -1708,13 +1850,50 @@ class FlowRunner:
         await self.ctx.__aenter__()
         return self
 
-    async def exit_context(self):
+    async def exit_context(self, error: Exception | None = None):
         if not self.ctx:
             raise ValueError("Context is not set")
         if not self.ctx.is_set():
             return self
-        await self.ctx.__aexit__(None, None, None)
+        if error:
+            await self.ctx.__aexit__(type(error), error, None)
+        else:
+            await self.ctx.__aexit__(None, None, None)
         return self
+    
+    async def _handle_init(self, process: Process):
+        await process.on_start()
+        process._did_start = True
+        return process
+    
+    
+    async def _handle_step(self, process: Process):
+        response = self._get_response()
+        value = await process.asend(response)
+        return value
+            
+    async def _handle_process_value(self, process: Process, value: Any):
+        from ..llms import LLMStreamController
+        if isinstance(value, StreamController):
+            value._name = process._name + "_" + value._name
+            if isinstance(value, LLMStreamController):
+                value.set_stream()
+        return value
+     
+    async def _handle_value(self, process: Process, value: Any):
+        return value
+    
+    
+    async def _handle_process_stop(self, process: Process):
+        if hasattr(process, 'get_response'):
+            response = process.get_response()
+        else:
+            response = self.last_value
+            
+        await self._try_evaluate_value(process)
+        return response
+
+    
 
     async def __anext__(self):
         """
@@ -1723,6 +1902,7 @@ class FlowRunner:
         Returns:
             StreamEvent if emitting events, otherwise the value from current process
         """
+        
         await self.enter_context()
         while self.stack:
             try:
@@ -1745,26 +1925,27 @@ class FlowRunner:
                 # Check if process is starting - emit start event before first value
                 if not process._did_start:
                     # Start the process and get first value
-                    await process.on_start()
-                    process._did_start = True
+                    process = await self._handle_init(process)
+                    # await process.on_start()
+                    # process._did_start = True
 
-                    # Now emit start event if needed (before getting first value)
+                    # # Now emit start event if needed (before getting first value)
                     if self.should_output_events:
                         if event := await self.try_build_start_event(process, None):
                             return event
 
                 # Get next value using asend (to support yield-based communication)
-                response = self._get_response()
-                value = await process.asend(response)
+                # response = self._get_response()
+                # value = await process.asend(response)
+                value = await self._handle_step(process)
                 self.last_value = value
 
                 # Trigger evaluation if context has evaluation enabled
                 
 
                 # If value is a Process (from PipeController), push to stack
-                if isinstance(value, (StreamController, PipeController)):
-                    if isinstance(value, StreamController):
-                        value._name = process._name + "_" + value._name
+                if isinstance(value, ObservableProcess):
+                    value = await self._handle_process_value(process, value)
                     self.push(value)
                     # Emit event for child process if needed
                     if self.should_output_events:
@@ -1774,7 +1955,7 @@ class FlowRunner:
                 
                 # if not isinstance(process, EvaluatorController):
                 #     await self._try_evaluate_value(process)
-
+                value = await self._handle_value(process, value)
                 # Emit value event if needed
                 if self.should_output_events:
                     if event := await self.try_build_value_event(process, value):
@@ -1787,16 +1968,14 @@ class FlowRunner:
             except StopAsyncIteration:
                 # Process exhausted, pop from stack
                 process = self.pop()
-                                
-                
-
                 # Get the response from the completed process
-                if hasattr(process, 'get_response'):
-                    response = process.get_response()
-                else:
-                    response = self.last_value
+                response = await self._handle_process_stop(process)
+                # if hasattr(process, 'get_response'):
+                #     response = process.get_response()
+                # else:
+                #     response = self.last_value
                     
-                await self._try_evaluate_value(process)
+                # await self._try_evaluate_value(process)
 
                 # If there's a parent waiting, save the response to send
                 if self.stack:
@@ -1822,6 +2001,7 @@ class FlowRunner:
                 if self.should_output_events:
                     event = await self.try_build_error_event(process, e)
                     if not self.stack:
+                        await self.exit_context(e)
                         raise e
                     self._error_to_raise = e
                     return event
@@ -1831,6 +2011,7 @@ class FlowRunner:
                 
         # if not self.stack:
             # result = await self._commit_evaluation()
+        
         await self.exit_context()
         raise StopAsyncIteration
     
@@ -1941,6 +2122,57 @@ class FlowRunner:
             self._event_level = event_level
         self._output_events = True
         return self
+    
+    
+    
+    
+class FlowPrintRunner(FlowRunner):
+    
+    
+    
+    async def enter_context(self):
+        return self
+    
+    async def exit_context(self, error: Exception | None = None):
+        return self
+    
+    async def _handle_init(self, process: Process):
+        process.dry_run = True
+        await process.on_start()
+        process._did_start = True        
+        return process
+
+    
+    async def _handle_step(self, process: Process):
+        from ..llms import LLMStreamController
+        response = self._get_response()
+        
+        if isinstance(process, LLMStreamController):
+            process.print_inputs()
+            raise StopAsyncIteration
+        else:
+            value = await process.asend(response)
+            return value
+        
+    async def _handle_process_stop(self, process: Process):
+        return None
+        from ..llms import LLMStreamController
+        if isinstance(process, LLMStreamController):
+            return None
+        else:
+            return await super()._handle_process_stop(process)
+            
+        # print("response", response)
+        # 
+        # 
+    
+    
+    # async def _handle_process_value(self, process: Process, value: Any):
+    #     if isinstance(value, StreamController):
+    #         value._name = process._name + "_" + value._name
+            
+    #     return value
+
 
     # def print(self):
 

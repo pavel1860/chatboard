@@ -1,53 +1,27 @@
 import copy
+import os
 from functools import wraps
-from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Type, TypedDict, Unpack
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Type, TypedDict, Unpack, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
-from ..block import BlockChunk, Block, BlockList
+from ..block import BlockChunk, Block, BlockList, BlockSchema
 # from ..prompt.flow_components import StreamController
 from ..prompt.fbp_process import StreamController, Stream, compute_stream_cache_key, Accumulator, Process
 from dataclasses import dataclass
-
-
-
-ToolChoice = Literal['auto', 'required', 'none']
-
-class LlmConfig(BaseModel):
-    model: str | None = Field(default=None, description="The model to use")
-    temperature: float = Field(default=0, ge=0, le=1, description="The temperature of the response")
-    max_tokens: int | None = Field(default=None, ge=0, description="The maximum number of tokens in the response")
-    stop_sequences: List[str] | None = Field(default=None, description="The stop sequences of the response")
-    stream: bool = Field(default=False, description="If the response should be streamed")
-    logit_bias: Dict[str, int] | None = Field(default=None, description="The logit bias of the response")
-    top_p: float = Field(default=1, ge=0, le=1, description="The top p of the response")
-    presence_penalty: float | None = Field(default=None, ge=-2, le=2, description="The presence penalty of the response")
-    logprobs: bool | None = Field(default=None, description="If the logprobs should be returned")
-    seed: int | None = Field(default=None, description="The seed of the response")
-    frequency_penalty: float | None = Field(default=None, ge=-2, le=2, description="The frequency penalty of the response")
-    tools: List[Type[BaseModel]] | None = Field(default=None, description="The tools of the response")
-    retries: int = Field(default=3, ge=1, description="The number of retries")
-    parallel_tool_calls: bool = Field(default=False, description="If the tool calls should be parallel")
-    tool_choice: ToolChoice | None = Field(default=None, description="The tool choice of the response")
-
-
-
-class LLMResponse(BaseModel):
-    id: str
-    item_id: str
-
-
-class LLMUsage(BaseModel):
-    input_tokens: int
-    output_tokens: int
-    total_tokens: int
-    cached_tokens: int | None = None
-    reasoning_tokens: int | None = None
+from .types import LlmConfig, LLMResponse, LLMUsage
+if TYPE_CHECKING:
+    from ..prompt import Context
 
 
 
 class LLMStream(Stream):
     response: LLMResponse | None = None
     usage: LLMUsage | None = None
+    
+    def __init__(self, gen: AsyncGenerator, name: str = "stream", response: LLMResponse | None = None, usage: LLMUsage | None = None):
+        super().__init__(gen, name=name)
+        self.response = response
+        self.usage = usage
     
     async def __anext__(self):
         """
@@ -79,9 +53,30 @@ class LLMStream(Stream):
         else:
             raise ValueError("more than 10 tries to get chunks")
         
+    @classmethod    
+    async def load_llm_call(cls, llm_call_id: int, delay: float = 0.05):
+        from ..versioning.dataflow_models import LlmCall
+        import asyncio
+        llm_call = await LlmCall.get_or_none(id=llm_call_id)
+        if llm_call is None:
+            raise ValueError(f"LLM call {llm_call_id} not found")
+        
+        response = LLMResponse(id=llm_call.request_id, item_id=llm_call.message_id)
+        usage = llm_call.usage
+        
+        async def load_llm_call_stream(llm_call: LlmCall):
+            from ..block import BlockChunk
+            for chunk in llm_call.chunks:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                yield chunk
+        # self.upstream = load_llm_call_stream(llm_call)
+        return cls(load_llm_call_stream(llm_call), name=f"{cls.__name__}_stream", response=response, usage=usage)
+        
     
 
 class LLMStreamController(StreamController):
+    llm: "LLM"
     blocks: BlockList
     llm_config: LlmConfig
     tools: List[Type[BaseModel]] | None = None
@@ -91,7 +86,8 @@ class LLMStreamController(StreamController):
     
     def __init__(
         self, 
-        gen_func: Callable[..., AsyncGenerator], 
+        # gen_func: Callable[..., AsyncGenerator], 
+        llm: "LLM",
         blocks: BlockList, 
         config: LlmConfig, 
         tools: List[Type[BaseModel]] | None = None, 
@@ -99,13 +95,17 @@ class LLMStreamController(StreamController):
         kwargs: dict = {}
     ):
         # super().__init__(self.stream, acc_factory=lambda : BlockList([], style="stream"), name="openai_llm", span_type="llm")
-        super().__init__(gen_func=gen_func, args=args, kwargs=kwargs, name="openai_llm", span_type="llm")
+        super().__init__(gen_func=None, args=args, kwargs=kwargs, name="openai_llm", span_type="llm")
         self.blocks = blocks
         self.llm_config = config
         self.tools = tools
         self.model = config.model
+        self.llm = llm
         
-        
+    @property
+    def inputs(self) -> list[Any]:
+        """Get the inputs."""
+        return self.blocks
 
     def _init_stream(self, args: tuple, kwargs: dict):
         gen_instance = self._gen_func(*args, **kwargs)
@@ -113,25 +113,170 @@ class LLMStreamController(StreamController):
         return stream
     
     
+    
+    # async def _load_llm_call(self):
+    #     from ..versioning.dataflow_models import LlmCall
+    #     if self.ctx is not None:
+    #         load_llm_calls = self.ctx.load_llm_calls.get(self._name)
+    #         if load_llm_calls is not None:
+    #             llm_call = await LlmCall.get_or_none(id=load_llm_calls)
+    #             if llm_call is not None:
+    #                 return llm_call
+    #             raise ValueError(f"LLM call {load_llm_calls} not found")
+    
+    
+    async def on_start(self):
+        """
+        Build subnetwork and register with context.
+
+        Called automatically on first __anext__() call.
+        Creates span, resolves dependencies, logs kwargs as inputs, and builds the internal stream.
+
+        In replay mode (when span has saved outputs), sets up replay buffer instead of
+        executing the generator function.
+
+        Auto-cache behavior:
+        - If ctx.cache_dir is set and no explicit load/save path is configured:
+          - Computes cache key from stream name + bound arguments
+          - If cache file exists: loads from cache (no re-execution)
+          - If cache file doesn't exist: executes and saves to cache
+        """
+        from ..block import Block
+        bound, kwargs = await self._resolve_dependencies()
+        
+        load_filepath = self._load_cache(bound)
+        llm_call_id = None
+        if not self.dry_run and self.ctx is not None:
+            llm_call_id = self.ctx.load_llm_calls.get(self._name)
+        # stream = self._init_stream(bound.args, bound.kwargs)
+        
+        if llm_call_id is not None:
+            stream = await LLMStream.load_llm_call(llm_call_id, delay=self._load_delay or 0.01)
+        elif load_filepath is not None:
+            stream = LLMStream.load(load_filepath, delay=self._load_delay or 0.05)
+        else:
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            stream = LLMStream(gen_instance, name=f"{self._name}_stream")
+
+        self._handle_save_cache(stream)
+
+        self._stream = stream
+        self._gen = stream
+        if self._parser is not None:
+            self._gen |= self._parser
+        else:
+            self._accumulator = Accumulator(Block())
+            self._gen |= self._accumulator  
+    
+    
+    async def _store_llm_call(self):
+        from ..versioning.dataflow_models import LlmCall
+        if self._parser:
+            chunks = self._parser.get_chunks()
+        else:
+            chunks = []
+        llm_call = await LlmCall(
+            config=self.llm_config,
+            usage=self._stream.usage,
+            chunks=chunks,
+            request_id=self._stream.response.id,
+            message_id=self._stream.response.item_id,
+            span_id=self.span.id
+        ).save()
+        await self.span.add(llm_call)
+
+    
+    
     async def on_stop(self):
         """
         Mark span as completed when process exhausts.
         """
+        
         if self.span:
             self.span.status = "completed"
             self.span.end_time = __import__('datetime').datetime.now()
-            if hasattr(self._stream, "usage"):
-                self.span.usage = self._stream.usage.model_dump()
-                self.span.request_id = self._stream.response.id
-                self.span.message_id = self._stream.response.item_id
             await self.span.save()
+            if hasattr(self._stream, "usage") and self._stream.response is not None:
+                await self._store_llm_call()
 
         # Pop from context execution stack
         if self.ctx:
             await self.ctx.end_span()
 
-        
     
+    async def on_error(self, error: Exception):
+        """
+        Mark span as failed on error.
+        """
+        if self.span:
+            self.span.status = "failed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+            if hasattr(self._stream, "usage") and self._stream.response is not None:
+                await self._store_llm_call()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+            
+    def set_stream(self):
+        self._gen_func = self.llm.stream
+    # def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False) -> "FlowRunner":
+    #     """
+    #     Return a FlowRunner that streams events from this process.
+
+    #     This enables event streaming directly from decorated functions:
+    #         @stream()
+    #         async def my_stream():
+    #             yield "hello"
+
+    #         async for event in my_stream().stream():
+    #             print(event)
+
+    #     Args:
+    #         event_level: EventLogLevel.chunk, .span, or .turn
+
+    #     Returns:
+    #         FlowRunner configured to emit events
+    #     """
+    #     from ..prompt.flow_components import EventLogLevel
+    #     from ..prompt.fbp_process import FlowRunner
+    #     if event_level is None:
+    #         event_level = EventLogLevel.chunk
+    #     self._ctx = ctx
+    #     self._load_eval_args = load_eval_args
+    #     return FlowRunner(self, ctx=ctx, event_level=event_level).stream_events()
+    
+    def print_inputs(self):
+        sep = "─" * 50
+        for i,block in enumerate(self.blocks):
+            print(sep)
+            print(f"{i}: {block.role.title()} Message")
+            print(sep)
+            block.print()
+            print(" ")
+        for key, value in self._kwargs.items():
+            print(sep)
+    
+    def print(self, inputs: bool = False):
+        sep = "─" * 50
+        
+        if inputs:            
+            self.print_inputs()
+            # for i,block in enumerate(self.blocks):
+            #     print(sep)
+            #     print(f"{i}: {block.role.title()} Message")
+            #     print(sep)
+            #     block.print()
+            #     print(" ")
+            # for key, value in self._kwargs.items():
+            #     print(sep)
+            #     print(key, value)
+            print("######################## Output ########################")
+        self.span.llm_calls[0].print()
+        # self.get_response().print()
+        
         
 
 
@@ -226,7 +371,7 @@ def llm_stream(
     return llm_stream_decorator
     
  
-class BaseLLM: 
+class LLM: 
     config: LlmConfig   
     default_model: str
     models: List[str]
@@ -234,21 +379,50 @@ class BaseLLM:
     
     def __init__(self, config: LlmConfig | None = None):        
         self.config = config or LlmConfig(model=self.default_model )
+        
+        
+        
+    def __call__(
+        self, 
+        *blocks: BlockChunk | Block | str, 
+        config: LlmConfig | None = None, 
+        tools: List[Type[BaseModel]] | None = None,
+        schema: BlockSchema | None = None
+    ) -> LLMStreamController:
+        if config is None:
+            config = LlmConfig(model=self.default_model)
+        llm_blocks, extra_args = pack_blocks(blocks)
+        llm = LLMStreamController(llm=self, blocks=llm_blocks, config=config, tools=tools, args=(llm_blocks, config, tools, *extra_args))
+        if schema is not None:
+            llm.parse(schema)
+        return llm
     
-
-    @llm_stream(name="llm_call")
+    
     async def stream(
         self,
-        *blocks: BlockChunk | Block | str,
+        blocks: BlockList,
         config: LlmConfig,
         tools: List[Type[BaseModel]] | None = None
     ) -> AsyncGenerator[Any, None]:
         """
         This method is used to stream the response from the LLM.
         After decoration, this will return a StreamController instance.
-        """
-        pass
+        """        
+        raise NotImplementedError("stream is not implemented")
         yield
+    
+    
+    async def complete(
+        self,
+        blocks: BlockList,
+        config: LlmConfig,
+        tools: List[Type[BaseModel]] | None = None
+    ) -> LLMResponse:
+        """
+        This method is used to complete the response from the LLM.
+        After decoration, this will return a LLMResponse instance.
+        """
+        raise NotImplementedError("complete is not implemented")
         
     
 
@@ -256,15 +430,15 @@ class BaseLLM:
 
     
     
-class LLM():
+class LLMRegistry():
     
-    _model_registry: Dict[str, Type[BaseLLM]] = {}
+    _model_registry: Dict[str, Type[LLM]] = {}
     _default_model: str | None = None
         
     
     
     @classmethod
-    def register(cls, model_cls: Type[BaseLLM], default_model: str | None = None) -> Type[BaseLLM]:
+    def register(cls, model_cls: Type[LLM], default_model: str | None = None) -> Type[LLM]:
         """Decorator to register a new LLM model implementation"""
         if model_cls.__name__ in cls._model_registry:
             raise ValueError(f"Model {model_cls.__name__} is already registered")
@@ -275,7 +449,7 @@ class LLM():
         return model_cls
     
     @classmethod
-    def _get_llm(cls, model: str | None = None) -> Type[BaseLLM]:
+    def get_llm(cls, model: str | None = None) -> Type[LLM]:
         """Get a registered model by name"""
         if model is None:
             if cls._default_model is None:
@@ -287,6 +461,12 @@ class LLM():
         return llm_cls
     
     
+    @classmethod
+    def build_llm(cls, model: str | None = None) -> LLM:
+        llm_cls = cls.get_llm(model)
+        return llm_cls()
+    
+    
     def stream(
         self,
         *blocks: BlockChunk | Block | str,
@@ -294,7 +474,7 @@ class LLM():
         tools: List[Type[BaseModel]] | None = None,
         config: LlmConfig | None = None,
     ) -> StreamController:
-        llm_cls = self._get_llm(model)
+        llm_cls = self.get_llm(model)
         llm = llm_cls(config=config)
         
         return llm.stream(*blocks, tools=tools, config=config)
@@ -310,7 +490,7 @@ class LLM():
         llm_blocks, extra_args = pack_blocks(blocks)
 
         
-        llm_ctx = self._get_llm(model)        
+        llm_ctx = self.get_llm(model)        
         return llm_ctx(llm_blocks, *extra_args, config=config)
     
     # def __call__(

@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
+from pydantic import BaseModel, GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 
 def _generate_id() -> str:
@@ -155,6 +157,10 @@ class BlockChunk:
     def style(self) -> str | None:
         """Style label (from meta)."""
         return self.meta.style
+    
+    @style.setter
+    def style(self, value: str | None):
+        self.meta.style = value
 
     @property
     def id(self) -> str:
@@ -349,6 +355,36 @@ class BlockChunk:
                 print("has content")
         """
         return len(self.content) > 0
+    
+    
+    
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type: Any, handler: GetCoreSchemaHandler) -> core_schema.CoreSchema:
+        return core_schema.no_info_plain_validator_function(
+            cls._validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                cls._serialize
+            )
+        )
+        
+    @staticmethod
+    def _validate(v: Any) -> Any:
+        if isinstance(v, BlockChunk):
+            return v
+        elif isinstance(v, dict):
+            # if "_type" in v and v["_type"] == "Block":
+            #     return Block.model_validate(v)
+            return BlockChunk.model_load(v)
+        else:
+            raise ValueError(f"Invalid block chunk: {v}")
+
+    @staticmethod
+    def _serialize(v: Any) -> Any:
+        if isinstance(v, BlockChunk):
+            return v.model_dump()
+        else:
+            raise ValueError(f"Invalid block: {v}")
+
 
 
 

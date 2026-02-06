@@ -41,8 +41,28 @@ _curr_turn = contextvars.ContextVar("curr_turn", default=None)
 
 
 
-SpanType = Literal["component", "stream", "llm", "evaluator"]
-ArtifactKindEnum = Literal["block", "span", "log", "model", "parameter", "list"]
+SpanType = Literal["component", "stream", "llm", "evaluator", "turn"]
+ArtifactKindEnum = str
+
+# Built-in kinds that map to specific tables
+_BUILTIN_KIND_MAP = {
+    "parameter": "parameters",
+    "block": "blocks",
+    "span": "execution_spans",
+    "log": "logs",
+    "list": None,  # Container, not a real table
+}
+
+
+def _kind_to_table(kind: str) -> str | None:
+    """
+    Convert a kind value to its table name.
+
+    Built-in kinds (block, span, log, parameter) map to specific tables.
+    User model kinds ARE the table name (e.g., "meals", "workouts").
+    """
+    return _BUILTIN_KIND_MAP.get(kind, kind)
+
 
 class TurnStatus(enum.StrEnum):
     """Status of a turn in the version history."""
@@ -285,12 +305,28 @@ class Turn(Model):
     _raise_on_error: bool = True
 
     forked_branches: List["Branch"] = RelationField( foreign_key="forked_from_turn_id")
-    
-    
+
+    def model_post_init(self, __context: Any) -> None:
+        super().model_post_init(__context)
+        if not isinstance(self.data, Tree):
+            ns = self.get_namespace()
+            relation = ns.get_relation('data')
+            object.__setattr__(self, 'data', Tree([], relation=relation))
+        if not isinstance(self.spans, Tree):
+            ns = self.get_namespace()
+            relation = ns.get_relation('spans')
+            object.__setattr__(self, 'spans', Tree([], relation=relation))
+
+
     @property
     def inputs(self) -> list["DataFlowNode"]:
         return self.data["1.0.*"]
     
+    def get_data(self, path: str) -> "DataFlowNode":
+        return self.data.get(path)
+    
+    def get_data_many(self, path: str) -> list["DataFlowNode"]:
+        return self.data.get_many(path)    
     
     def get_kwargs(self) -> dict[str, Any]:        
         kwargs = {}
@@ -344,6 +380,15 @@ class Turn(Model):
         if self._raise_on_error:
             return False
         return True
+    
+    
+    def iter_artifact_ids(self):
+        for value in self.data:
+            for da in value.artifact_data:
+                table = _kind_to_table(da.kind)
+                if table:
+                    yield table, da.artifact_id                
+        
     
     # @classmethod
     # async def _parse_executions(cls, turns: List["Turn"]):
@@ -401,6 +446,7 @@ class Turn(Model):
     ) -> "PgQueryBuilder[Self]":
         from ..model.sql2.pg_query_builder import PgQueryBuilder, select
         from ..versioning.artifact_log import ArtifactLog
+        from .dataflow_models import DataFlowNode, DataArtifact
         
         query = PgQueryBuilder().select(cls)       
         if fields:
@@ -569,10 +615,190 @@ class Artifact(Model):
                 turn_cte,
                 "turn_liniage",
                 # alias="tl",
-            )            
+            )
         return query
-                       
-        
+
+    # =========================================================================
+    # Polymorphic Loading Methods
+    # =========================================================================
+
+    @classmethod
+    async def load_targets(cls, artifacts: List["Artifact"] | List[int]) -> dict[int, Any]:
+        """
+        Load the actual model instances for a list of artifacts.
+
+        Groups artifacts by kind, batch-loads each type, returns a dict
+        mapping artifact.id -> loaded model instance.
+
+        Args:
+            artifacts: List of Artifact instances or artifact IDs to load targets for
+
+        Returns:
+            Dict mapping artifact.id to the loaded model instance
+
+        Example:
+            # With Artifact instances
+            artifacts = await Artifact.query().where(...)
+            targets = await Artifact.load_targets(artifacts)
+            for art in artifacts:
+                model = targets[art.id]  # The actual Meal, Workout, etc.
+
+            # With IDs
+            targets = await Artifact.load_targets([1, 2, 3])
+        """
+        from collections import defaultdict
+        from ..model import NamespaceManager
+        from .block_storage import BlockModel
+
+        # If IDs were passed, fetch the artifacts first
+        if artifacts and isinstance(artifacts[0], int):
+            artifacts = await cls.query(use_liniage=False).where(cls.id.isin(artifacts))
+
+        # Group artifact IDs by table name
+        # For built-in kinds (block, span, log, parameter): use _kind_to_table mapping
+        # For user models (kind == "model"): use model_name field
+        ids_by_table: dict[str, list[int]] = defaultdict(list)
+        for art in artifacts:
+            if not art.kind or art.kind == "list":
+                continue
+
+            if art.kind == "model":
+                # User-defined model - use model_name for table
+                if art.model_name:
+                    ids_by_table[art.model_name].append(art.id)
+            else:
+                # Built-in kind - use mapping
+                table = _kind_to_table(art.kind)
+                if table:
+                    ids_by_table[table].append(art.id)
+
+        # Load each table
+        result: dict[int, Any] = {}
+
+        for table, artifact_ids in ids_by_table.items():
+            if table == "blocks":
+                # Special handling for blocks - convert to Block objects
+                block_models = await BlockModel.query(use_liniage=True).where(
+                    BlockModel.artifact_id.isin(artifact_ids)
+                )
+                for bm in block_models:
+                    result[bm.artifact_id] = bm.to_block()
+            else:
+                # Regular model - use NamespaceManager
+                try:
+                    ns = NamespaceManager.get_namespace(table)
+                    models = await ns._model_cls.query(use_liniage=True).where(
+                        ns._model_cls.artifact_id.isin(artifact_ids)
+                    )
+                    for m in models:
+                        result[m.artifact_id] = m
+                except ValueError:
+                    # Namespace not found - skip
+                    continue
+                except Exception as e:
+                    # Log and skip on other errors (e.g., custom query() methods with issues)
+                    print(f"Warning: Failed to load artifacts from table '{table}': {e}")
+                    raise e
+
+        return result
+
+    @classmethod
+    async def load_targets_union(cls, artifacts: List["Artifact"] | List[int]) -> dict[int, dict]:
+        """
+        Load artifact targets using a single UNION ALL query.
+
+        More efficient than load_targets() when loading many different kinds,
+        as it uses a single database round-trip. Returns raw dict data rather
+        than model instances.
+
+        Args:
+            artifacts: List of Artifact instances or artifact IDs to load targets for
+
+        Returns:
+            Dict mapping artifact.id to the raw data dict from the target table
+
+        Example:
+            # With Artifact instances
+            artifacts = await Artifact.query().where(...)
+            targets = await Artifact.load_targets_union(artifacts)
+            for art in artifacts:
+                data = targets.get(art.id)  # Raw dict from the table
+
+            # With IDs
+            targets = await Artifact.load_targets_union([1, 2, 3])
+        """
+        from collections import defaultdict
+        from ..model import NamespaceManager
+
+        # If IDs were passed, fetch the artifacts first
+        if artifacts and isinstance(artifacts[0], int):
+            artifacts = await cls.query(use_liniage=False).where(cls.id.isin(artifacts))
+
+        # Group artifact IDs by table name
+        # For built-in kinds: use _kind_to_table mapping
+        # For user models (kind == "model"): use model_name field
+        ids_by_table: dict[str, list[int]] = defaultdict(list)
+        for art in artifacts:
+            if not art.kind or art.kind == "list":
+                continue
+
+            if art.kind == "model":
+                # User-defined model - use model_name for table
+                if art.model_name:
+                    ids_by_table[art.model_name].append(art.id)
+            else:
+                # Built-in kind - use mapping
+                table = _kind_to_table(art.kind)
+                if table:
+                    ids_by_table[table].append(art.id)
+
+        if not ids_by_table:
+            return {}
+
+        # Collect all artifact IDs for the query parameter
+        all_artifact_ids = [art.id for art in artifacts if art.kind and art.kind != "list"]
+
+        # Build UNION ALL query
+        union_parts = []
+        for table in ids_by_table.keys():
+            # Each part selects artifact_id, table name, and full row as JSONB
+            union_parts.append(f"""
+                SELECT
+                    artifact_id,
+                    '{table}' as table_name,
+                    to_jsonb({table}.*) as data
+                FROM {table}
+                WHERE artifact_id = ANY($1)
+            """)
+
+        if not union_parts:
+            return {}
+
+        sql = " UNION ALL ".join(union_parts)
+
+        rows = await PGConnectionManager.fetch(sql, all_artifact_ids)
+
+        # Build result dict
+        result: dict[int, dict] = {}
+        for row in rows:
+            result[row["artifact_id"]] = row["data"]
+
+        return result
+
+    async def load_target(self) -> Any:
+        """
+        Load the actual model instance for this artifact.
+
+        Returns:
+            The loaded model instance (e.g., Meal, Workout, Block, etc.)
+
+        Example:
+            artifact = await Artifact.get(123)
+            model = await artifact.load_target()
+        """
+        targets = await self.load_targets([self])
+        return targets.get(self.id)
+
 
 
 
@@ -697,6 +923,7 @@ class VersionedModel(Model):
             PgQueryBuilder()
             .select(cls)
             .join_cte(art_cte, "artifact_cte", alias="ac")
+            .include(Artifact)
         )
         
         
@@ -923,6 +1150,7 @@ class ArtifactModel(VersionedModel):
     _dirty_fields: dict[str, Any] = {}
     # es_id: int = KeyField(primary_key=True)
     artifact_id: int = KeyField(primary_key=True)
+    view_id: str | None = ModelField(default=None)
     # id: int = KeyField(primary_key=True)
     # artifact_id: uuid.UUID = KeyField(
     #         default_factory=uuid.uuid4, 
@@ -1085,7 +1313,7 @@ class ArtifactModel(VersionedModel):
     #     value = super().__getattribute__(name)
     
     def __setattr__(self, name, value):
-        print(f"Setting {name} = {value}")
+        # print(f"Setting {name} = {value}")
         if name != "_dirty_fields":
             curr_value = super().__getattribute__(name)
             if curr_value != value and name not in self._dirty_fields:

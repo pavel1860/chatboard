@@ -67,11 +67,32 @@ def type_to_str_or_none(value_type: type) -> str | None:
         return None
 
 
+def try_block_str_type(value_type: str) -> type | None:
+    from ..block import Block
+    if value_type == "Block":
+        return Block
+    return None
 
+def str_to_type(value_type: str, raise_on_unknown: bool = True) -> type:
+    # Handle Union types (including "X | None" syntax)
+    if val := try_block_str_type(value_type):
+        return val
+    if " | " in value_type:
+        parts = [p.strip() for p in value_type.split(" | ")]
+        types = []
+        for part in parts:
+            if part == "None":
+                types.append(NoneType)
+            else:
+                types.append(str_to_type(part))
+        # Create Union type from the parts
+        if len(types) == 1:
+            return types[0]
+        return Union[tuple(types)]
 
-def str_to_type(value_type: str) -> type:
+    # Check registry for simple types
     val = TYPE_REGISTRY.get(value_type, None)
-    if val is None:
+    if val is None and raise_on_unknown:
         raise UnknownType(f"Unknown type: {value_type}")
     return val
 

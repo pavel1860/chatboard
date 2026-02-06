@@ -59,6 +59,7 @@ class BlockSchema(Block):
         attrs: dict[str, Any] | None = None,
         is_root: bool = False,
         is_virtual: bool = False,
+        id: str | None = None,
     ):
         """
         Create a block schema.
@@ -71,6 +72,7 @@ class BlockSchema(Block):
             role: Role identifier
             is_required: Whether this field is required
             attrs: Additional attributes (e.g., for XML attributes)
+            id: Optional unique identifier (auto-generated if not provided)
         """
         # Prepare tags - name should be first tag
         tags = list(tags) if tags else []
@@ -86,6 +88,7 @@ class BlockSchema(Block):
             tags=tags,
             style=style,
             attrs=attrs,
+            id=id,
         )
 
         # Schema-specific attributes
@@ -122,11 +125,13 @@ class BlockSchema(Block):
     def init_partial(self, content: ContentType, use_mutator: bool = True, is_streaming: bool = False):
         from .mutator import MutatorMeta
         from .mutator import BlockMutator
-        content = content if use_mutator else self.name        
-        config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)        
-        # tran_block = config.mutator.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)
-        tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming)        
-        # tran_block = config.build_block(self, is_streaming=is_streaming)        
+        content = content if use_mutator else self.name
+        config = MutatorMeta.resolve(self.style if use_mutator else None, default=BlockMutator)
+        if isinstance(content, Block):
+            tran_block = config.build_block(content, is_streaming=is_streaming)
+        else:
+            tran_block = config.create_block(content, tags=self.tags, role=self._role, style=self.style, attrs=self.attrs, is_streaming=is_streaming, type=self._type)
+        
         return tran_block
 
 
@@ -210,6 +215,7 @@ class BlockSchema(Block):
             tags=tags if tags is not None else list(self.tags),
             style=style if style is not None else list(self.style),
             attrs=attrs if attrs is not None else dict(self.attrs),
+            type=self._type,
         )
 
         # Add content as a child block (not appended to same block's text)
@@ -218,8 +224,8 @@ class BlockSchema(Block):
             if isinstance(content, Block):
                 block._raw_append_child(content.copy())
             else:
-                content_str = str(content) if not isinstance(content, str) else content
-                block._raw_append_child(Block(content=content_str))
+                # Pass content with its actual type preserved
+                block._raw_append_child(Block(content=content))
 
         return block
 
@@ -295,12 +301,13 @@ class BlockSchema(Block):
     # Copy
     # -------------------------------------------------------------------------
 
-    def copy(self, deep: bool = True) -> BlockSchema:
+    def copy(self, deep: bool = True, copy_id: bool = False) -> BlockSchema:
         """
         Copy this schema.
 
         Args:
             deep: If True, recursively copy children
+            copy_id: If True, copy the id from this schema. If False, generate a new id.
         """
         new_schema = BlockSchema(
             name=self.name,
@@ -311,12 +318,13 @@ class BlockSchema(Block):
             is_required=self.is_required,
             attrs=dict(self.attrs),
             is_root=self.is_root,
+            id=self.id if copy_id else None,
         )
 
         if deep:
             # Deep copy children
             for child in self.children:
-                child_copy = child.copy(deep=True)
+                child_copy = child.copy(deep=True, copy_id=copy_id)
                 new_schema._raw_append_child(child_copy)
 
         return new_schema
@@ -331,13 +339,15 @@ class BlockSchema(Block):
 
         Includes schema-specific fields: name, type, is_required.
         """
+        from ...utils.type_utils import type_to_str
         # Get base block fields
         result = super().model_dump()
 
         # Add schema-specific fields
         result["name"] = self.name
         if self._type is not None:
-            result["type"] = self._type.__name__
+            # result["type"] = self._type.__name__
+            result["type"] = type_to_str(self._type)
         if not self.is_required:
             result["is_required"] = self.is_required
 
@@ -354,6 +364,7 @@ class BlockSchema(Block):
         Returns:
             Reconstructed BlockSchema
         """
+        from ...utils.type_utils import str_to_type
         # Extract schema-specific fields
         name = data.get("name")
         is_required = data.get("is_required", True)
@@ -361,7 +372,7 @@ class BlockSchema(Block):
         # Create BlockSchema
         schema = cls(
             name=name,
-            type=None,  # Type reconstruction would need a type registry
+            type=str_to_type(data.get("type"), False) if data.get("type") else None,  # Type reconstruction would need a type registry
             style=data.get("style", []),
             tags=data.get("tags", []),
             role=data.get("role"),
@@ -369,6 +380,8 @@ class BlockSchema(Block):
             attrs=data.get("attrs", {}),
             is_root=data.get("is_root", False),
         )
+        
+        schema = cls._load_mutator(schema, data)
 
         # Restore ID and text
         schema.id = data.get("id", schema.id)
@@ -386,15 +399,9 @@ class BlockSchema(Block):
             for c in data.get("chunks", [])
         ]
 
-        # Recursively load children
+        # Recursively load children - Block.model_load handles class dispatch
         for child_data in data.get("children", []):
-            # Check if child is a schema, list schema, or regular block
-            if "item_name" in child_data:
-                child = BlockListSchema.model_load(child_data)
-            elif child_data.get("name") is not None:
-                child = BlockSchema.model_load(child_data)
-            else:
-                child = Block.model_load(child_data)
+            child = Block.model_load(child_data)
             child.parent = schema
             schema.children.append(child)
 
@@ -436,6 +443,7 @@ class BlockList(Block):
         tags: list[str] | None = None,
         style: str | list[str] | None = None,
         attrs: dict[str, Any] | None = None,
+        id: str | None = None,
     ):
         """
         Create a block list.
@@ -446,6 +454,7 @@ class BlockList(Block):
             tags: Tags for categorization
             style: Style for rendering
             attrs: Additional attributes
+            id: Optional unique identifier (auto-generated if not provided)
         """
         super().__init__(
             content=None,  # List is a wrapper - no content
@@ -454,6 +463,7 @@ class BlockList(Block):
             tags=tags,
             style=style,
             attrs=attrs,
+            id=id,
         )
         self.item_schema = item_schema
 
@@ -503,22 +513,68 @@ class BlockList(Block):
     # Copy
     # -------------------------------------------------------------------------
 
-    def copy(self, deep: bool = True) -> BlockList:
-        """Copy this list."""
+    def copy(self, deep: bool = True, copy_id: bool = False) -> BlockList:
+        """Copy this list.
+
+        Args:
+            deep: If True, recursively copy children
+            copy_id: If True, copy the id from this list. If False, generate a new id.
+        """
         new_list = BlockList(
-            item_schema=self.item_schema.copy() if self.item_schema else None,
+            item_schema=self.item_schema.copy(copy_id=copy_id) if self.item_schema else None,
             role=self._role,
             tags=list(self.tags),
             style=list(self.style),
             attrs=dict(self.attrs),
+            id=self.id if copy_id else None,
         )
 
         if deep:
             for child in self.children:
-                child_copy = child.copy(deep=True)
+                child_copy = child.copy(deep=True, copy_id=copy_id)
                 new_list._raw_append_child(child_copy)
 
         return new_list
+
+    # -------------------------------------------------------------------------
+    # Serialization
+    # -------------------------------------------------------------------------
+
+    @classmethod
+    def model_load(cls, data: dict[str, Any]) -> BlockList:
+        """Deserialize dict to BlockList."""
+        block_list = cls(
+            role=data.get("role"),
+            tags=data.get("tags", []),
+            style=data.get("style", []),
+            attrs=data.get("attrs", {}),
+        )
+
+        block_list = cls._load_mutator(block_list, data)
+
+        # Restore ID and text
+        block_list.id = data.get("id", block_list.id)
+        block_list._text = data.get("text", "")
+
+        # Restore chunks
+        block_list.chunks = [
+            ChunkMeta(
+                id=c.get("id", _generate_id()),
+                start=c["start"],
+                end=c["end"],
+                logprob=c.get("logprob"),
+                style=c.get("style"),
+            )
+            for c in data.get("chunks", [])
+        ]
+
+        # Recursively load children - Block.model_load handles class dispatch
+        for child_data in data.get("children", []):
+            child = Block.model_load(child_data)
+            child.parent = block_list
+            block_list.children.append(child)
+
+        return block_list
 
     def __repr__(self) -> str:
         import textwrap
@@ -605,6 +661,7 @@ class BlockListSchema(BlockSchema):
         role: str | None = None,
         is_required: bool = True,
         attrs: dict[str, Any] | None = None,
+        id: str | None = None,
     ):
         """
         Create a list schema.
@@ -619,6 +676,7 @@ class BlockListSchema(BlockSchema):
             role: Role identifier
             is_required: Whether this list is required
             attrs: Additional attributes
+            id: Optional unique identifier (auto-generated if not provided)
         """
         # Use item_name + "_list" as container name if not specified
         list_name = name or f"{item_name}_list"
@@ -633,6 +691,7 @@ class BlockListSchema(BlockSchema):
             is_required=is_required,
             attrs=attrs,
             is_virtual=name is None,
+            id=id,
         )
 
         # List-specific attributes
@@ -703,8 +762,7 @@ class BlockListSchema(BlockSchema):
             for schema in self.list_schemas:
                 if schema.attrs.get(self.key) == key_value:
                     return schema
-
-        return self.list_schemas[0] if self.list_schemas else None
+        raise ValueError(f"Could not find item schema for model: {model_cls.__name__}")
 
     # -------------------------------------------------------------------------
     # Instantiation
@@ -886,8 +944,13 @@ class BlockListSchema(BlockSchema):
     # Copy
     # -------------------------------------------------------------------------
 
-    def copy(self, deep: bool = True) -> BlockListSchema:
-        """Copy this list schema."""
+    def copy(self, deep: bool = True, copy_id: bool = False) -> BlockListSchema:
+        """Copy this list schema.
+
+        Args:
+            deep: If True, recursively copy children
+            copy_id: If True, copy the id from this schema. If False, generate a new id.
+        """
         new_schema = BlockListSchema(
             item_name=self.item_name,
             name=self.name,
@@ -898,12 +961,13 @@ class BlockListSchema(BlockSchema):
             role=self._role,
             is_required=self.is_required,
             attrs=dict(self.attrs),
+            id=self.id if copy_id else None,
         )
 
         if deep:
             # Deep copy children - _raw_append_child auto-populates list_schemas
             for child in self.children:
-                child_copy = child.copy(deep=True)
+                child_copy = child.copy(deep=True, copy_id=copy_id)
                 new_schema._raw_append_child(child_copy)
 
         new_schema.list_models = self.list_models.copy()
@@ -936,6 +1000,8 @@ class BlockListSchema(BlockSchema):
             is_required=data.get("is_required", True),
             attrs=data.get("attrs", {}),
         )
+        
+        schema = cls._load_mutator(schema, data)
 
         # Restore ID and text
         schema.id = data.get("id", schema.id)
@@ -953,14 +1019,10 @@ class BlockListSchema(BlockSchema):
             for c in data.get("chunks", [])
         ]
 
-        # Recursively load children - _raw_append_child auto-populates list_schemas
+        # Recursively load children - Block.model_load handles class dispatch
+        # _raw_append_child auto-populates list_schemas
         for child_data in data.get("children", []):
-            if "item_name" in child_data:
-                child = BlockListSchema.model_load(child_data)
-            elif child_data.get("name") is not None:
-                child = BlockSchema.model_load(child_data)
-            else:
-                child = Block.model_load(child_data)
+            child = Block.model_load(child_data)
             schema._raw_append_child(child)
 
         return schema

@@ -55,13 +55,14 @@ class MutatorConfig:
                 yield (target, transformer)
                 
                 
-    def create_block(self, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
-        from .transform import transform_context   
+    def create_block(self, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False, type: Type | None = None) -> Block:
+        from .transform import transform_context
         with transform_context(True):
-            block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+            block = Block(content, tags=tags, role=role, style=style, attrs=attrs, type=type)
             block = self.mutator.init(block)
-            block = _apply_metadata(block, tags, role, style, attrs)
+            block = _apply_metadata(block, tags, role, style, attrs, type=type)
             block.mutator = self.mutator(block, is_streaming=is_streaming)
+            block.mutator._state = "init"
             block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
     
@@ -84,6 +85,7 @@ class MutatorConfig:
                 raise RenderError(f"You cannot reuse original blocks in a Mutator. Please use the block content instead.\n Reused blocks: {reused_blocks}")
             block = _apply_metadata(block, orig_block.tags, orig_block.role, orig_block.style, orig_block.attrs)
             block.mutator = self.mutator(block, is_streaming=is_streaming)
+            self.mutator._state = "init"
             block.stylizers = [stylizer() for stylizer in self.stylizers]
         return block
 
@@ -149,11 +151,19 @@ class MutatorMeta(type):
         return mutator_cfg
 
 
-def _apply_metadata(to_block: Block, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None):
+def _apply_metadata(
+    to_block: Block, 
+    tags: list[str] | None = None, 
+    role: str | None = None, 
+    style: str | list[str] | None = None, 
+    attrs: dict[str, Any] | None = None, 
+    type: Type | None = None
+    ) -> Block:
     to_block.tags = tags or to_block.tags
     to_block.role = role or to_block.role
     to_block.style = style or to_block.style
     to_block.attrs = attrs or to_block.attrs
+    to_block._type = type or to_block._type
     return to_block
 
 
@@ -169,7 +179,7 @@ def _transfer_metadata(from_block: Block, to_block: Block):
 class Stylizer(metaclass=MutatorMeta):
     styles = ()
     
-    def on_append(self, chunk):
+    def on_append(self, chunk: BlockChunk) -> Generator[Block | list[BlockChunk], Any, Any]:
         raise NotImplementedError("Stylizer.append is not implemented")
         
         
@@ -199,6 +209,7 @@ class Mutator(metaclass=MutatorMeta):
     target: str = "content"
     _initialized: bool = False
     _committed: bool = False
+    _state: str = "none"
 
 
     def __init__(self, block: Block, is_streaming: bool = False):
@@ -270,7 +281,7 @@ class Mutator(metaclass=MutatorMeta):
             return None
         return self.__class__.styles[0]
 
-    def content_chunks(self) -> list[BlockChunk]:
+    def content_chunks(self, extract_style: str | None = None) -> list[BlockChunk]:
         """
         Get content chunks only (chunks without a style).
 
@@ -284,19 +295,27 @@ class Mutator(metaclass=MutatorMeta):
             return []
 
         result = []
-        for chunk in block.chunks:
-            if chunk.style is None:
-                content = block._text[chunk.start:chunk.end]
-                if content:
-                    result.append(BlockChunk(content, logprob=chunk.logprob))
+        if extract_style is None:
+            for chunk in block.chunks:
+                if chunk.style is None:
+                    content = block._text[chunk.start:chunk.end]
+                    if content:
+                        result.append(BlockChunk(content, logprob=chunk.logprob))
+        else:
+            for chunk in block.chunks:
+                if chunk.style != extract_style:
+                    content = block._text[chunk.start:chunk.end]
+                    if content:
+                        result.append(BlockChunk(content, logprob=chunk.logprob))
         return result
 
     @classmethod
-    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False) -> Block:        
-        block = Block(content, tags=tags, role=role, style=style, attrs=attrs)
+    def create_block(cls, content: ContentType, tags: list[str] | None = None, role: str | None = None, style: str | list[str] | None = None, attrs: dict[str, Any] | None = None, is_streaming: bool = False, type: Type | None = None) -> Block:
+        block = Block(content, tags=tags, role=role, style=style, attrs=attrs, type=type)
         block = cls.init(block)
         block = _apply_metadata(block, tags, role, style, attrs)
         block.mutator = cls(block, is_streaming=is_streaming)
+        block.mutator._state = "init"
         return block
     
     @classmethod
@@ -304,11 +323,11 @@ class Mutator(metaclass=MutatorMeta):
         return block.copy_head()
     
     
-    def extract(self) -> Block:
-        return Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs)
+    def extract(self, style: str | None = None) -> Block:
+        return Block(self.block.mutator.content_chunks(style), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type, id=self.block.id)
     
     
-    def on_append(self, content: Block) -> Generator[Block | BlockChunk, Any, Any]:
+    def on_append(self, chunk: BlockChunk) -> Generator[Block | BlockChunk, Any, Any]:
         raise NotImplementedError("Mutator.on_append is not implemented")
     
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
@@ -319,6 +338,7 @@ class Mutator(metaclass=MutatorMeta):
         if self._committed:
             raise ValueError(f"Mutator {self.__class__.__name__} is already committed for block {self.block}")
         res = self.commit(self.block, postfix)
+        self._state = "committed"
         self._committed = True
         return res
     
@@ -350,7 +370,7 @@ class BlockMutator(Mutator):
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not prev.is_wrapper and not prev.has_newline():
-            yield child.prev().add_newline(style=self.styles[0])
+            yield prev.add_newline(style=self.styles[0])
         
         
         
@@ -376,6 +396,7 @@ class XmlMutator(Mutator):
         └── children[-1]: closing tag (tail)
     """
     styles = ("xml",)
+    _state = "none"
 
     # =========================================================================
     # Structure Access Properties
@@ -437,6 +458,14 @@ class XmlMutator(Mutator):
                 # with opening_tag() as body:
                 #     pass
         return blk
+
+    
+    
+    # def extract(self) -> Block:
+    #     blk = Block(self.block.content_chunks(), tags=self.block.tags, role=self.block.role, style=self.block.style, attrs=self.block.attrs, type=self.block._type)
+    #     if not self.block.body:
+    #         blk /= Block()
+    #     return blk
     
 
     def commit(self, block: Block, postfix: Block | None = None) -> Block:
@@ -454,14 +483,26 @@ class XmlMutator(Mutator):
     #     if not self.body and (self.head.has_newline() or content != "\n"):
     #         yield self.block.children[0].append_child("")
             
-        
-
+    
     def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
         prev = child.prev()
         if not self.is_streaming and not prev.has_newline():
             yield prev.add_newline(style="xml")
-        yield child.indent(style="xml")
+        if not self.is_streaming:
+            yield child.indent(style="xml")
+
         
+        
+    def on_append(self, chunk: BlockChunk) -> Generator[Block | list[BlockChunk], Any, Any]:
+        if chunk.is_newline():
+            chunk.style = "xml"
+        if self._state == "init":
+            if not chunk.is_newline():                
+                yield self.block._raw_append_child()            
+                self._state = "content"            
+        
+            
+            
         
         
         
@@ -470,22 +511,64 @@ class XmlMutator(Mutator):
 
 
 class MarkdownMutator(BlockMutator):
-    styles = ("md",)
+    styles = ("md", "h1", "h2", "h3", "h4", "h5", "h6")
     
     
     @classmethod
-    def init(cls, block: Block) -> Block:
+    def _get_heading_level(cls, block: Block) -> int | None:
+        if "h1" in block.style:
+            return 1
+        elif "h2" in block.style:
+            return 2
+        elif "h3" in block.style:
+            return 3
+        elif "h4" in block.style:
+            return 4
+        elif "h5" in block.style:
+            return 5
+        elif "h6" in block.style:
+            return 6
+        return None
+    
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:        
         prefix, content = block.split_prefix(r"#+\s+", regex=True)        
         if not prefix:
-            prefix = "#" * (block.path.depth + 1) + " "
+            # prefix = "#" * (block.path.depth + 1) + " "
+            level = cls._get_heading_level(block)
+            if level is not None:
+                prefix = "#" * level + " "
+            else:                
+                prefix = "#" * (len(block.iter_path(lambda x: "md" in x.style))) + " "
         
-        content.prepend(prefix, style="md")
+        content.prepend(prefix)
         return content
-        # if content:
-        #     content.prepend(prefix, style="md")
-        #     return content
-        # else:
-        #     return prefix.apply_style("md")            
+
+class DefinitionMutator(Mutator):
+    styles = ("def",)
+    
+    @classmethod
+    def init(cls, block: Block) -> Block:
+        block = block.copy_head()
+        block.prepend_content("**")
+        block.append_content("** - ")
+        return block
+        
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        prev = child.prev()
+        if not prev.is_wrapper and not prev.has_newline() and not prev is self.head:
+            yield prev.add_newline(style=self.styles[0])
+
+
+
+class ParagraphMutator(BlockMutator):
+    styles = ("p",)
+    
+    
+    def on_append_child(self, child: Block) -> Generator[Block | BlockChunk, Any, Any]:
+        if not child.endswith("."):
+            yield child.append_content(". ", style="p")
         
         
         
@@ -552,7 +635,9 @@ class MarkdownNumberListStylizer(Stylizer):
         yield child.prepend(f"{child.path[-1] + 1}. ", style="li")
         # yield child.prepend(child.path[-1], style="li-num")
         
-        
+
+
+    
         
 class XmlDefMutator(Mutator):
     styles = ("xml-def",)
@@ -578,8 +663,9 @@ class ToolDescriptionMutator(Mutator):
                 purpose /= description.body[0].content
             with blk("## Parameters") as params:
                 for i, param in enumerate(parameters.body):
-                    with params(f"{i + 1}.", tags=["param", param.content]) as param_blk: 
-                        param_blk /= "  name: " + param.content
+                    with params(f"{i + 1}. name: " + param.content, tags=["param", param.content]) as param_blk: 
+                    # with params(f"{i + 1}.", tags=["param", param.content]) as param_blk: 
+                        # param_blk /= "  name: " + param.content
                         if hasattr(param, 'type_str') and param.type_str is not None:
                             param_blk /= "  Type: ", param.type_str
                         if hasattr(param, 'is_required'):

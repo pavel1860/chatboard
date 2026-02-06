@@ -26,7 +26,7 @@ def transform(block: Block) -> Block:
 def _transform(block: Block, depth: int = 0) -> Block:
     if block.is_rendered:
         return block
-    config = MutatorMeta.resolve(block.style if not block.is_wrapper else [], default=BlockMutator)
+    config = MutatorMeta.resolve(block.style if not block.is_wrapper or len(block.style) > 0 else [], default=BlockMutator)
     # tran_block = config.mutator.create_block(block.text, tags=block.tags, role=block.role, style=block.style, attrs=block.attrs)
     # tran_block = config.create_block(block.text, tags=block.tags, role=block.role, style=block.style, attrs=block.attrs)
     tran_block = config.build_block(block)

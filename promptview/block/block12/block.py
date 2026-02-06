@@ -14,10 +14,12 @@ Usage:
 """
 
 from __future__ import annotations
-from typing import Any, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsIndex, overload
+import builtins
+from typing import Any, Callable, Iterator, TYPE_CHECKING, Self, Type, Union, SupportsIndex, overload
 from collections import UserList
 from pydantic import BaseModel, GetCoreSchemaHandler
 from pydantic_core import core_schema
+import inspect
 import re
 
 from promptview.utils.function_utils import is_overridden
@@ -28,12 +30,14 @@ if TYPE_CHECKING:
     from .mutator import Mutator
     from .schema import BlockSchema, BlockListSchema, BlockList
     from .path import IndexPath, TagPath
+    from .diff import BlockDiff
 
 
 def _generate_id() -> str:
     """Generate a short unique ID."""
     from uuid import uuid4
     return uuid4().hex[:8]
+
 
 
 # Type for content that can be passed to Block
@@ -253,7 +257,7 @@ class Block:
 
     __slots__ = [
         "parent", "children", "chunks",
-        "_role", "tags", "style", "attrs", "_text", "id", "mutator", "stylizers"
+        "_role", "tags", "style", "attrs", "_text", "_type", "id", "mutator", "stylizers"
     ]
 
     def __init__(
@@ -265,6 +269,8 @@ class Block:
         style: str | list[str] | None = None,
         attrs: dict[str, Any] | None = None,
         children: list[Block] | None = None,
+        type: Type | None = None,
+        id: str | None = None,
     ):
         """
         Create a block with optional initial content.
@@ -275,6 +281,9 @@ class Block:
             tags: List of tags for categorization
             style: Style string or list of styles
             attrs: Arbitrary attributes
+            children: List of child blocks
+            type: Type of the content value (auto-detected if not provided)
+            id: Optional unique identifier (auto-generated if not provided)
         """
         from .mutator import Mutator, Stylizer
         # Tree structure
@@ -293,14 +302,20 @@ class Block:
         # Local text for this block
         self._text: str = ""
 
+        # Type of the content value
+        self._type: Type | None = type
+
         # ID
-        self.id: str = _generate_id()
+        self.id: str = id if id is not None else _generate_id()
 
         # Mutator (lazy initialized)
         self.mutator: Mutator = Mutator(self)
         self.stylizers: list[Stylizer] = []
         # Handle initial content
         if content is not None:
+            # Auto-detect type if not provided
+            if self._type is None and not isinstance(content, (Block, list)):
+                self._type = builtins.type(content)
             chunks = self.promote_content(content)
             self._raw_append(chunks)
             
@@ -373,6 +388,16 @@ class Block:
     def is_leaf(self) -> bool:
         """True if block has no children."""
         return len(self.body) == 0
+    
+    def kind(self) -> str:
+        """Get the kind of the block."""
+        body_len = len(self.body)
+        if body_len == 0:
+            return "leaf"
+        elif body_len == 1:
+            return "record"        
+        else:
+            return "block"
 
 
     @property
@@ -394,6 +419,22 @@ class Block:
     def is_empty(self) -> bool:
         """True if block has no local text content."""
         return len(self._text) == 0
+
+    @property
+    def type(self) -> Type | None:
+        """Get the type of the content value."""
+        return self._type
+    
+    
+    @property
+    def is_block_type(self) -> bool:
+        from typing import Union, get_origin, get_args
+        from types import UnionType
+        origin = get_origin(self._type)
+        if origin is Union or isinstance(self._type, UnionType):
+            args = get_args(self._type)
+            return any(arg is Block for arg in args)
+        return self._type is Block
 
     @property
     def path(self) -> "IndexPath":
@@ -467,6 +508,35 @@ class Block:
         return self.mutator.tail
     
     
+    @property
+    def value(self) -> Any:
+        return self.extract().get_value()
+            
+    def get_value(self):
+        from .object_helpers import parse_union_content        
+        kind = self.kind()
+        if kind == "leaf":
+            return parse_union_content(self.text, self._type or str)
+        elif kind == "record":
+            # return self.body[0].get_value()
+            if self.is_block_type:
+                return self.body[0].dedent()
+            return parse_union_content(self.body[0].text, self._type or str)
+        else:
+            result = {}
+            for child in self.body:
+                ckind = child.kind()
+                if ckind != "leaf":
+                    result[child.head.text] = child.get_value()  
+            if inspect.isclass(self._type) and issubclass(self._type, BaseModel):
+                return self._type(**result)
+            else:
+                return result
+                    
+                
+            
+        
+    
     def hash(self) -> str:
         """
         Compute content hash for this block tree.
@@ -484,6 +554,20 @@ class Block:
     # =========================================================================
     # Public API (delegates to mutator)
     # =========================================================================
+    
+    def append_content(self, content: ContentType, style: str | None = None, logprob: float | None = None) -> list[Block | BlockChunk]:
+        """
+        Append content to this block.
+        """
+        chunks = self.promote_content(content, style=style, logprob=logprob)
+        return self._raw_append(chunks, to_tail=False)
+    
+    def prepend_content(self, content: ContentType, style: str | None = None, logprob: float | None = None) -> list[Block | BlockChunk]:
+        """
+        Prepend content to this block.
+        """
+        chunks = self.promote_content(content, style=style, logprob=logprob)
+        return self._raw_prepend(chunks)
 
     def append(
         self,
@@ -507,11 +591,14 @@ class Block:
         events = []
         if self._should_use_mutator("on_append"):
             # Get text content for mutator hooks
-            text_content = "".join(c.content for c in chunks)
-            for event in self.mutator.on_append(text_content):
-                events.append(event)
+            # text_content = "".join(c.content for c in chunks)
+            for chunk in chunks:
+                for event in self.mutator.on_append(chunk):
+                    events.append(event)
 
         result_chunks = self._raw_append(chunks)
+        if len(events) and isinstance(events[0], Block):
+            return events
         events.extend(result_chunks)
         return events
 
@@ -537,8 +624,8 @@ class Block:
         from .mutator import Mutator
         if type(self.mutator) is Mutator:
             return False
-        if self.mutator.is_streaming:
-            return False
+        # if self.mutator.is_streaming:
+        #     return False
         if is_overridden(self.mutator.__class__, method, Mutator):
             return True
         return False
@@ -580,7 +667,8 @@ class Block:
         if is_transforming():
             prev = child.prev()
             if not prev.is_wrapper and not prev.has_newline():
-                prev.append("\n")    
+                # prev.append("\n")    
+                prev.add_newline()
         else:
             if to_body and self._should_use_mutator("on_append_child"):
                 for event in self.mutator.on_append_child(child=child):
@@ -607,7 +695,7 @@ class Block:
 
     def insert_child(
         self,
-        index: int,
+        index: int | tuple[int, ...] | list[int],
         child: Block | ContentType = None,
         **kwargs
     ) -> Block:
@@ -620,7 +708,17 @@ class Block:
             child = Block(**kwargs)
         elif not isinstance(child, Block):
             child = Block(child, **kwargs)
-        return self._raw_insert_child(index, child)
+        target = self
+        if isinstance(index, (tuple, list)):
+            if len(index) == 0:
+                raise ValueError("Index path cannot be empty")
+            elif len(index) == 1:
+                index = index[0]
+            else:
+                path = index[:-1]
+                index = index[-1]
+                target = target.get_path(path)
+        return target._raw_insert_child(index, child)
 
     # =========================================================================
     # Operator Overloads
@@ -851,6 +949,7 @@ class Block:
     def _raw_append(
         self,
         chunks: list[BlockChunk],
+        to_tail: bool = True,
     ) -> list[BlockChunk]:
         """
         Low-level append chunks to this block's local text.
@@ -864,7 +963,8 @@ class Block:
         Returns:
             List of BlockChunk objects with updated metadata
         """
-        target = self.head
+        # target = self.head
+        target = self.tail if to_tail else self.head
         results = []
 
         for chunk in chunks:
@@ -1088,11 +1188,11 @@ class Block:
         """
         Remove a child block from the tree.
         """
-        if child not in self.children:
+        if child not in self.body:
             raise ValueError("Block is not a child of this block")
 
         child.parent = None
-        self.children.remove(child)
+        self.body.remove(child)
         return child
 
     # =========================================================================
@@ -1180,7 +1280,7 @@ class Block:
 
         Args:
             chunks: List of Chunk objects to populate the block
-            inherit: If True, copy role, tags, style, attrs from this block
+            inherit: If True, copy role, tags, style, attrs, type from this block
 
         Returns:
             New Block with the given chunks
@@ -1191,6 +1291,7 @@ class Block:
                 tags=list(self.tags),
                 style=list(self.style),
                 attrs=dict(self.attrs),
+                type=self._type,
             )
         else:
             block = Block()
@@ -1489,9 +1590,10 @@ class Block:
         for child in self.children:
             yield from child._iter_all_blocks()
 
-    def iter_depth_first(self) -> Iterator[Block]:
+    def iter_depth_first(self, children_only: bool = False) -> Iterator[Block]:
         """Iterate this subtree in depth-first order."""
-        yield self
+        if not children_only:
+            yield self
         for child in self.children:
             yield from child.iter_depth_first()
 
@@ -1570,6 +1672,10 @@ class Block:
         if result is None:
             raise ValueError("No next block: at the end of the tree")
         return result
+    
+    def has_content(self) -> bool:
+        """Check if this block has content."""
+        return self.text and not self.text.isspace()
 
     def has_newline(self) -> bool:
         """Check if this block's text ends with a newline."""
@@ -1578,7 +1684,24 @@ class Block:
     def add_newline(self, style: str | None = None) -> list[BlockChunk]:
         """Add a newline to the end of this block."""
         chunks = self.promote_content("\n", style=style)
-        return self._raw_append(chunks)
+        return self._raw_append(chunks, to_tail=False)
+    
+    
+    def iter_path(self, func: Callable[[Block], bool], exclude_wrappers: bool = True) -> list[int]:
+        curr = self
+        path = []
+        while curr is not None:
+            if exclude_wrappers and curr.is_wrapper:
+                curr = curr.parent
+                continue
+            if func(curr):
+                p = curr.path                
+                index =  p[-1] if len(p) > 0 else 0
+                path.append(index)
+            else:
+                break
+            curr = curr.parent
+        return path
 
     # =========================================================================
     # String Operations
@@ -1587,6 +1710,14 @@ class Block:
     def find(self, pattern: str) -> int:
         """Find pattern in this block's text. Returns position or -1."""
         return self._text.find(pattern)
+
+    def startswith(self, prefix: str) -> bool:
+        """Check if this block's text starts with the given prefix."""
+        return self._text.startswith(prefix)
+
+    def endswith(self, suffix: str) -> bool:
+        """Check if this block's text ends with the given suffix."""
+        return self._text.endswith(suffix)
 
     def find_all(self, pattern: str) -> list[int]:
         """Find all occurrences of pattern. Returns positions."""
@@ -1610,10 +1741,14 @@ class Block:
 
     def indent(self, spaces: int = 2, style: str | None = None):
         if not self.is_wrapper:
-            self.prepend(" " * spaces, style=style or "tab")
+            self.prepend(" " * spaces, style=style or "sp")
         for child in self.children:
             child.indent(spaces, style=style)
         return self
+    
+    
+    def dedent(self):
+        return self.extract("sp")
     
     
     def apply_style(self, style: str, only_views: bool = False, copy: bool = True, recursive: bool = True):
@@ -1647,7 +1782,7 @@ class Block:
         elif isinstance(key, str):
             return self.get(key)
         elif isinstance(key, tuple):
-            return self.get_index(key)
+            return self.get_path(key)
         else:
             raise ValueError(f"Invalid key: {key}")
 
@@ -1659,11 +1794,19 @@ class Block:
         raise ValueError(f"Block with tag '{tag}' not found")
     
     
-    def get_index(self, index: int | tuple[int,...]) -> Block:
-        if isinstance(index, int):
-            return self.body[index]
+    def get_path(self, idx_path: int | tuple[int,...] | list[int]) -> Block:
+        if isinstance(idx_path, int):
+            return self.body[idx_path]
         else:
-            return self.body[index[0]].get_index(index[1:] if len(index) > 2 else index[1])
+            idx = idx_path[0]
+            if len(idx_path) == 1:
+                return self.body[idx]
+            elif len(idx_path) == 2:
+                return self.body[idx].body[idx_path[1]]
+            elif len(idx_path) > 2:
+                return self.body[idx].get_path(idx_path[1:])
+            else:
+                raise ValueError(f"Invalid index path: {idx_path}")
     
     def get_or_none(self, tag: str) -> "Block | None":
         for block in self.iter_depth_first():
@@ -1821,20 +1964,21 @@ class Block:
     # Copy Operations
     # =========================================================================
     
-    def extract(self) -> Block:        
-        ex_block = self.mutator.extract()        
+    def extract(self, style: str | None = None) -> Block:                
+        ex_block = self.mutator.extract(style) if self.is_rendered or style is not None else self.copy(deep=False)        
         for child in self.body:
-            ex_child = child.extract()
+            ex_child = child.extract(style) if not ex_block.is_block_type or style is not None else child.copy(deep=True)
             ex_block.append_child(ex_child)
         return ex_block
         
 
-    def copy(self, deep: bool = True) -> Block:
+    def copy(self, deep: bool = True, copy_id: bool = False) -> Block:
         """
         Create a copy of this block.
 
         Args:
             deep: If True, copy entire subtree. If False, just this block.
+            copy_id: If True, copy the id from this block. If False, generate a new id.
 
         Returns:
             New block with copied content
@@ -1844,27 +1988,74 @@ class Block:
             tags=list(self.tags),
             style=list(self.style),
             attrs=dict(self.attrs),
+            type=self._type,
+            id=self.id if copy_id else None,
         )
         new_block._text = self._text
         new_block.chunks = [c.copy() for c in self.chunks]
 
         if deep:
             for child in self.children:
-                child_copy = child.copy(deep=True)
+                child_copy = child.copy(deep=True, copy_id=copy_id)
                 new_block._raw_append_child(child_copy, to_body=False)
 
         return new_block
 
     
-    def copy_head(self) -> Block:
-        return self.copy(deep=False)
+    def copy_head(self, copy_id: bool = False) -> Block:
+        return self.copy(deep=False, copy_id=copy_id)
     # =========================================================================
     # Serialization
     # =========================================================================
+    def to_dict(self) -> dict:
+        """
+        Convert a block tree to a dictionary.
+
+        The root block is not included in the result.
+        Each child block's text/tag becomes a key, and its children
+        determine the value (either nested dict or leaf value).
+        """
+        result = {}
+
+        for child in self.body:
+            # Get the key from the block's text content
+            key = child.text.strip()
+            if not key and child.tags:
+                key = child.tags[0]
+            if not key:
+                continue
+
+            child_body = child.body
+
+            if len(child_body) == 0:
+                # No children - empty value
+                result[key] = ""
+            elif len(child_body) == 1 and child_body[0].is_leaf():
+                # Single leaf child - extract value with type casting
+                value_block = child_body[0]
+                value_text = value_block.text.strip()
+
+                # Cast based on type annotation
+                value_type = value_block._type
+                if value_type == int:
+                    result[key] = int(value_text)
+                elif value_type == float:
+                    result[key] = float(value_text)
+                elif value_type == bool:
+                    result[key] = value_text.lower() in ('true', '1', 'yes')
+                else:
+                    result[key] = value_text
+            else:
+                # Nested structure - recurse
+                result[key] = child.to_dict()
+
+        return result
 
     def model_dump(self) -> dict[str, Any]:
         """Serialize block to dictionary."""
-        return {
+        from promptview.utils.type_utils import type_to_str
+        result = {
+            "_block_type": self.__class__.__name__,
             "id": self.id,
             "path": str(self.path),
             "text": self._text,
@@ -1883,17 +2074,52 @@ class Block:
                 for c in self.chunks
             ],
             "children": [c.model_dump() for c in self.children],
+            "mutator": self.mutator.get_style(),
         }
+        if self._type is not None:
+            result["type"] = type_to_str(self._type)
+        return result
+    
+    @classmethod   
+    def _load_mutator(cls, block: Block, data: dict[str, Any]) -> Block:
+        from .mutator import MutatorMeta
+        if mutator:= data.get("mutator"):
+            styles = data.get("style", [])
+            if mutator == "block":
+                styles += ["block"]
+            mutator_config = MutatorMeta.resolve(styles)
+            block.mutator = mutator_config.mutator(block)
+            block.stylizers = [stylizer() for stylizer in mutator_config.stylizers]
+        return block
+
 
     @classmethod
     def model_load(cls, data: dict[str, Any]) -> Block:
-        """Deserialize block from dictionary."""
+        """Deserialize block from dictionary.
+
+        Automatically dispatches to the correct class based on _block_type field.
+        """
+        from .schema import BlockSchema, BlockListSchema, BlockList
+        from promptview.utils.type_utils import str_to_type
+
+        # Dispatch to correct class based on _block_type
+        block_type = data.get("_block_type", "Block")
+        if block_type == "BlockListSchema":
+            return BlockListSchema.model_load(data)
+        elif block_type == "BlockSchema":
+            return BlockSchema.model_load(data)
+        elif block_type == "BlockList":
+            return BlockList.model_load(data)
+
+        # Regular Block deserialization
         block = cls(
             role=data.get("role"),
             tags=data.get("tags", []),
             style=data.get("style", []),
             attrs=data.get("attrs", {}),
+            type=str_to_type(data.get("type"), False) if data.get("type") else None,
         )
+        block = cls._load_mutator(block, data)
         block.id = data.get("id", _generate_id())
         block._text = data.get("text", "")
         block.chunks = [
@@ -1907,8 +2133,9 @@ class Block:
             for c in data.get("chunks", [])
         ]
 
+        # Recursively load children with proper class dispatch
         for child_data in data.get("children", []):
-            child = cls.model_load(child_data)
+            child = Block.model_load(child_data)
             child.parent = block
             block.children.append(child)
 
@@ -2113,11 +2340,11 @@ class Block:
         if self.role:
             parts.append(f", role={self.role!r}")
             
-        if isinstance(self, BlockSchema):
-            if self.type is Block:
-                parts.append(f", type=Block")
-            else:
-                parts.append(f", type={type_to_str_or_none(self.type)}")
+        # if isinstance(self, BlockSchema):
+        if self._type is Block:
+            parts.append(f", type=Block")
+        else:
+            parts.append(f", type={type_to_str_or_none(self._type)}")
             
         if self.style:
             parts.append(f", style={self.style}")
@@ -2142,9 +2369,49 @@ class Block:
         """Print debug tree."""
         print(self.debug_tree())
 
+    # =========================================================================
+    # Diff
+    # =========================================================================
+
+    def diff(self, other: "Block") -> "BlockDiff":
+        """
+        Compare this block with another and return structured diff.
+
+        Args:
+            other: Block to compare against
+
+        Returns:
+            BlockDiff with tree-structured comparison
+
+        Example:
+            diff = block_a.diff(block_b)
+            if not diff.is_identical:
+                print(diff.summary())
+                for change in diff.iter_changes():
+                    print(f"  {change.path}: {change.status}")
+        """
+        from .diff import diff_blocks, BlockDiff
+        return diff_blocks(self, other)
+
+    def diff_text(self, other: "Block", context_lines: int = 3) -> str:
+        """
+        Get unified text diff against another block.
+
+        Args:
+            other: Block to compare against
+            context_lines: Number of context lines around changes
+
+        Returns:
+            Unified diff string
+        """
+        from .diff import get_text_diff
+        return get_text_diff(self, other, context_lines)
+
     def __repr__(self) -> str:
-        content_preview = self._text[:20] if self._text else ""
-        if len(self._text) > 20:
+        # _text = self.render()
+        _text = self.text
+        content_preview = _text[:20] if _text else ""
+        if len(_text) > 20:
             content_preview += "..."
         
         block_meta = ""

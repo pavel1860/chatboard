@@ -1,7 +1,8 @@
 """Tests for XmlParser."""
 import pytest
 from promptview.block.block12 import Block, XmlParser
-from __tests__.utils import chunk_xml_for_llm_simulation, strip_text
+from promptview.prompt.validation_utils import chunk_xml_for_llm_simulation, strip_text, assert_events
+from pydantic import BaseModel, Field
 class TestXmlParserBasic:
     """Tests for basic XML parsing."""
 
@@ -21,8 +22,11 @@ class TestXmlParserBasic:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
-        async for _ in pipe:
-            pass
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+        
+        assert_events(events)
 
         assert pipe.result.render() == xml_str
         
@@ -49,8 +53,11 @@ class TestXmlParserBasic:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
+        events = []
         async for ip in pipe:
-            pass
+            events.append(ip)
+        
+        assert_events(events)
 
         assert pipe.result.render() == xml_str        
         
@@ -72,8 +79,10 @@ class TestXmlParserBasic:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
-        async for _ in pipe:
-            pass
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+        assert_events(events)
 
         assert pipe.result.render() == xml_str
 
@@ -104,9 +113,11 @@ class TestXmlParserMultipleTags:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
+        events = []
         async for ip in pipe:
+            events.append(ip)
             # print(ip)
-            pass
+        assert_events(events)
 
         blk = pipe.result
 
@@ -135,9 +146,11 @@ class TestXmlParserMultipleTags:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
+        events = []
         async for ip in pipe:
+            events.append(ip)
             # print(ip)
-            pass
+        assert_events(events)
 
  
 
@@ -189,8 +202,10 @@ class TestXmlParserWithTools:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
-        async for _ in pipe:
-            pass
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+        assert_events(events)
 
         assert pipe.result.render() == xml_str
 
@@ -212,8 +227,159 @@ class TestXmlParserStreaming:
         stream = Stream.from_list(chunks, name="stream_from_list")
 
         pipe = stream | parser
-        async for _ in pipe:
-            pass
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+        assert_events(events)
 
         assert pipe.result is not None
         assert "hello world" in pipe.result.render()
+
+
+
+
+
+class TestMarkdownParser:
+    """Tests for Markdown parsing."""
+
+    @pytest.mark.asyncio
+    async def test_parse_markdown(self):
+        from promptview.prompt.fbp_process import Stream
+
+        xml_str =  strip_text("""
+            <title>Animals</title>
+            <content>
+                # Animals    
+                cats are cute.
+                dogs are cute.
+            </content>
+            """)
+        chunks = chunk_xml_for_llm_simulation(xml_str, seed=42)
+        
+        
+        with Block(tags=["schema"]) as out_fmt:
+            with out_fmt("output schema", tags=["schema", "pirate"]) as schema:    
+                with schema.view("title", str, tags=["pirate"]) as t:
+                    t /= "the title of the content"
+                with schema.view("content", Block, tags=["pirate"]) as r:
+                    r /= "the content of the content block goes here in markdown format"
+                    
+                    
+        parser = XmlParser(schema, verbose=False)
+        stream = Stream.from_list(chunks, name="stream_from_list")
+
+        pipe = stream | parser
+        events = []
+        async for ip in pipe:
+            print(ip.path, ip.type, ip.value)
+            # print_event(ip)
+            events.append(ip)
+        assert_events(events)
+                
+        out = pipe.result        
+        assert out.get("title").value == "Animals"
+
+        # assert pipe.result.render() == xml_str
+
+
+
+
+class TestMarkdownListParser:
+    """Tests for Markdown list parsing."""
+
+    @pytest.mark.asyncio
+    async def test_parse_markdown_list(self):
+        from promptview.prompt.fbp_process import Stream
+
+        xml_str = strip_text("""
+            <thought>lets say hello world</thought>
+            <answer>hello world</answer>
+            <tool name="new_article">
+                <title>Animals</title>
+                <content>
+                    # Animals    
+                    cats are cute.
+                    dogs are cute.
+                </content>
+            </tool>
+            """)
+        chunks = chunk_xml_for_llm_simulation(xml_str, seed=42)
+                             
+
+        class NewArticle(BaseModel):
+            """ use this tool to create a new article """
+            title: str = Field(description="the title of the content")
+            content: Block = Field(description="the content of the content block goes here in markdown format")
+
+        with Block(tags=["schema"]) as out_fmt:
+            with out_fmt("output schema", tags=["schema", "pirate"]) as schema:    
+                with schema.view("thought", str, tags=["pirate"]) as t:
+                    t /= "think step by step what to do with the information you observed and thinkg if there is a tool that can help you to complete the tasks."
+                with schema.view("answer", str, tags=["pirate"]) as r:
+                    r /= "the answer to the user's question goes here"
+                with schema.view_list("tool", key="name") as tools:
+                    tools.register(NewArticle)
+        parser = XmlParser(schema, verbose=False)
+        stream = Stream.from_list(chunks, name="stream_from_list")
+
+        pipe = stream | parser
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+        assert_events(events)
+        
+        out = pipe.result        
+        assert out.get("thought").value == "lets say hello world"
+        assert out.get("answer").value == "hello world"
+
+        assert len(out.get("tool_list")) == 1
+        assert out.get("tool_list")[0].get("title").value == "Animals"
+
+        # assert pipe.result.render() == xml_str
+        
+        
+        
+        
+        
+        
+        
+        
+class TestMarkdownCatArticleListParser:
+    """Tests for Markdown list parsing."""
+
+    @pytest.mark.asyncio
+    async def test_parse_markdown_list(self):
+        from promptview.prompt.fbp_process import Stream
+
+        filepath = "__tests__/data/cat_article.jsonl"
+
+
+        class CreateArticle(BaseModel):
+            """ use this action if the user wants to create a new article. the user can ask for the content of the article or not. if they don't ask for the content, you can leave it blank. the same goes for the title. """
+            title: str | None = Field(description="the title of the article. if the user didn't provide a title, you can leave it blank.", json_schema_extra={"example": "the title of the article"} )
+            # tags: list[str] = Field(description="the tags of the article", json_schema_extra={"example": ["tag1", "tag2"]} )
+            content: Block | None = Field(description="the content of the article if the user asked for it. it should be a in markdown format.", json_schema_extra={"example": "this is the content of the article"} )
+            
+   
+
+        with Block.schema_view(tags=["output","writer"]) as schema:
+            with schema.view("thought", str) as t:
+                t /= "think step by step what to do with the information you observed and thinkg if there is a tool that can help you to complete the tasks."
+            with schema.view("answer", str) as r:
+                r /= "the answer to the user's question goes here. you should use is to give textual answer to the user's question."        
+            with schema.view_list("tool", key="name") as actions:            
+                actions.register(CreateArticle)
+
+
+
+        parser = XmlParser(schema, verbose=True, verbose_debug=False, verbose_markdown=False)
+        stream = Stream.load(filepath)
+        # stream = Stream.from_list(chunks, name="stream_from_list")
+
+        pipe = stream | parser
+        events = []
+        async for ip in pipe:
+            events.append(ip)
+            pass
+        assert_events(events)
+        

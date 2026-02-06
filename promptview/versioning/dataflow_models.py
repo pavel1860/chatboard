@@ -7,9 +7,12 @@ from ..model.fields import KeyField, ModelField, RelationField
 from .models import VersionedModel, Artifact, ArtifactKindEnum, Turn, SpanType
 from .block_storage import BlockModel
 
+from ..llms.types import LlmConfig, LLMUsage
+from ..block.block12.chunk import BlockChunk
 
 if TYPE_CHECKING:
     from ..prompt.context import Context
+    
 
 
 
@@ -150,6 +153,68 @@ class DataFlowNode(Model):
         return dump
 
 
+
+class LlmCall(Model):
+    """a single call to an llm"""
+    id: int = KeyField(primary_key=True)
+    created_at: dt.datetime = ModelField(default_factory=dt.datetime.now, order_by=True)
+    config: "LlmConfig" = ModelField()
+    usage: "LLMUsage" = ModelField()
+    chunks: list[BlockChunk] = ModelField()
+    request_id: str = ModelField()
+    message_id: str = ModelField()
+    span_id: int = ModelField(foreign_key=True)
+    
+    
+    @property
+    def text(self) -> str:
+        return "".join([c.content for c in self.chunks])
+        
+    def print(self, with_metadata: bool = True):
+        if with_metadata:
+            sep = "─" * 50
+            print(sep)
+            print(f"LLM Call  |  model: {self.config.model or 'N/A'}")
+            print(sep)
+            # Config
+            config_parts = [f"temp={self.config.temperature}"]
+            if self.config.max_tokens is not None:
+                config_parts.append(f"max_tokens={self.config.max_tokens}")
+            if self.config.top_p != 1:
+                config_parts.append(f"top_p={self.config.top_p}")
+            if self.config.stream:
+                config_parts.append("stream=True")
+            if self.config.tools:
+                tool_names = [t.__name__ for t in self.config.tools]
+                config_parts.append(f"tools=[{', '.join(tool_names)}]")
+            if self.config.tool_choice is not None:
+                config_parts.append(f"tool_choice={self.config.tool_choice}")
+            print(f"  Config   : {' | '.join(config_parts)}")
+            # Usage
+            usage_parts = [
+                f"input={self.usage.input_tokens}",
+                f"output={self.usage.output_tokens}",
+                f"total={self.usage.total_tokens}",
+            ]
+            if self.usage.cached_tokens:
+                usage_parts.append(f"cached={self.usage.cached_tokens}")
+            if self.usage.reasoning_tokens:
+                usage_parts.append(f"reasoning={self.usage.reasoning_tokens}")
+            print(f"  Tokens   : {' | '.join(usage_parts)}")
+            # IDs
+            print(f"  Request  : {self.request_id}")
+            print(f"  Message  : {self.message_id}")
+            print(f"  Created  : {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(sep)
+        print(self.text)
+        
+        
+    def to_file(self, filename: str):
+        import json
+        with open(filename, "w") as f:
+            for chunk in self.chunks:
+                data = chunk.model_dump()
+                f.write(json.dumps(data) + "\n")
   
 
 class ExecutionSpan(VersionedModel):
@@ -164,17 +229,18 @@ class ExecutionSpan(VersionedModel):
     end_time: dt.datetime | None = ModelField(default=None)
     tags: list[str] | None = ModelField(default=None)
     metadata: dict[str, Any] = ModelField(default={})
-    usage: dict[str, Any] = ModelField(default={})
-    config: dict[str, Any] = ModelField(default={})
+    # usage: dict[str, Any] = ModelField(default={})
+    # config: dict[str, Any] = ModelField(default={})
     status: Literal["running", "completed", "failed"] = ModelField(default="running")
     turn_id: int = ModelField(foreign_key=True, foreign_cls=Turn)
-    request_id: str | None = ModelField(default=None)
-    message_id: str | None = ModelField(default=None)
+    # request_id: str | None = ModelField(default=None)
+    # message_id: str | None = ModelField(default=None)
     
     # Relations
     data: List["DataFlowNode"] = RelationField([], foreign_key="span_id")
     artifacts: List[Artifact] = RelationField(foreign_key="span_id")
     block_trees: List[BlockModel] = RelationField(foreign_key="span_id")
+    llm_calls: List[LlmCall] = RelationField(foreign_key="span_id")
     
     _parent_value: "DataFlowNode | None" = None
     

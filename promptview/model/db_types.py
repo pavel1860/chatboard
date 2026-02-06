@@ -38,6 +38,15 @@ class Tree(Generic[FOREIGN_MODEL]):
         return self.match(normalized_path)
         # return self.items[normalized_path]
     
+    def get(self, path: PathType) -> FOREIGN_MODEL:
+        normalized_path = self._normalize_path(path)
+        res = self.match(normalized_path)
+        return res[0] if res else None
+    
+    def get_many(self, path: PathType) -> List[FOREIGN_MODEL]:
+        normalized_path = self._normalize_path(path)
+        return self.match(normalized_path)
+    
     def __len__(self) -> int:
         return len(self.items)
     

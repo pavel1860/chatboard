@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, Generator, TypeVar
 from xml.parsers import expat
 
 from .block import Block
+from .path import IndexPath
 from .chunk import BlockChunk, ChunkMeta
 from ...prompt.fbp_process import Process
 from .schema import BlockSchema, BlockListSchema, BlockList
@@ -31,11 +32,45 @@ class ParserError(Exception):
 class ParserEvent:
     """Event emitted by the parser during streaming."""
     path: str
-    type: Literal["block_init", "block_commit", "block_delta"]
+    type: Literal["block_init", "block_commit", "block_delta", "block"]
     value: Block | list[BlockChunk]
     
+    def __init__(self, path: str, type: Literal["block_init", "block_commit", "block_delta", "block"], value: Block | list[BlockChunk]):
+        self.path = path
+        self.type = type
+        # self.value = value
+        # if not isinstance(value, Block) and not isinstance(value, list) and not value is None:
+            # raise ValueError(f"Unknown value type: {type(value)}")
+        if isinstance(value, Block):
+            self.value = value.extract()
+            # print("-------------------------------")
+            # self.value.print_debug()
+            if len(self.value.body) > 0:
+                raise ParserError(f"Block Event was emitted with non empty body. Path: {path} Block:\n {value.debug_tree()}")
+        elif isinstance(value, list):
+            self.value = value
+        elif isinstance(value, BlockChunk):
+            self.value = [value]
+        elif value is None:
+            self.value = value
+        else:
+            raise ValueError(f"Unknown value type: {type(value)}")
+        
+        
+    @property
+    def int_path(self) -> tuple[int, ...]:
+        if not self.path:
+            return ()
+        return tuple(int(p) for p in self.path.split("."))
     
 
+    def get_value(self) -> Block | list[BlockChunk]:
+        if isinstance(self.value, Block):
+            return self.value.copy()
+        elif isinstance(self.value, list):
+            return [c.copy() for c in self.value]
+        else:
+            raise ValueError(f"Unknown value type: {type(self.value)}")
 
 
 
@@ -54,13 +89,26 @@ class SchemaCtx[TxSchema]:
         if self._block is None:
             raise ValueError("Block is not initialized")
         return self._block
+    
+    @property
+    def path(self) -> str:
+        return str(self.block.path)
+    
+    
+    @property
+    def tail_path(self) -> str:
+        return str(self.block.tail.path)
+    
+    
+    def get_style(self) -> str:
+        return self.block.mutator.get_style()
 
-    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:
         raise NotImplementedError("init not implemented")
     
     
-    def append(self, chunks: list[BlockChunk]):
-        raise NotImplementedError("append not implemented")
+    def append(self, chunks: list[BlockChunk], style: str | None = None):
+        return self.block.append(chunks, style=style)
     
     def commit(self, name: str, chunks: list[BlockChunk]):
         raise NotImplementedError("commit not implemented")
@@ -76,16 +124,21 @@ class SchemaCtx[TxSchema]:
         if isinstance(schema, BlockListSchema):
             return BlockListSchemaCtx(schema)
         elif isinstance(schema, BlockSchema):
-            if schema.type is Block:
+            if schema.is_block_type:
                 return BlockMarkdownSchemaCtx(schema)
             return BlockSchemaCtx(schema)
         else:
             raise ValueError(f"Unknown schema type: {type(schema)}")
         
-    def add_newline(self):
+    def add_newline(self, chunks: list[BlockChunk] | None = None):
         block = self.block.append_child()
         self._should_add_newline = False
         return block
+    
+    
+    def prepend_chunks(self, chunks: list[BlockChunk], style: str | None = None):        
+        for chunk in reversed(chunks):
+            self.block.prepend(chunk.content, style=style, logprob=chunk.logprob)
     
 class BlockSchemaCtx(SchemaCtx[BlockSchema]):
     
@@ -94,29 +147,31 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         schema = self.schema.get_schema(name)
         return schema
            
-    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:
         self._block = self.schema.init_partial(chunks, is_streaming=True)
-        return [self]
+        return self
     
     
-    def append(self, chunks: list[BlockChunk]):  
-        block = None      
-        for chunk in chunks:
-            style = None
-            if chunk.content:                
-                if self._should_add_newline:
-                    block = self.add_newline()
-                if chunk.is_newline():
-                    self._should_add_newline = True
-                    style = self.block.mutator.styles[0]                    
-                elif chunk.isspace():
-                    style = self.block.mutator.styles[0]
-                elif not self.block.body:
-                    block = self.add_newline()
-                events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)                
-        if block is not None:
-            return block
-        return chunks
+    # def append2(self, chunks: list[BlockChunk]):  
+    #     block = None    
+    #     for chunk in chunks:
+    #         style = None
+    #         if chunk.content:                
+    #             if self._should_add_newline:
+    #                 block = self.add_newline()
+    #                 yield block
+    #             if chunk.is_newline():
+    #                 self._should_add_newline = True
+    #                 style = self.block.mutator.styles[0]                    
+    #             elif chunk.isspace():
+    #                 style = self.block.mutator.styles[0]
+    #             elif not self.block.body:
+    #                 block = self.add_newline()
+    #                 yield block                    
+    #             res = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style or chunk.style)
+    #             yield res
+                
+                    
 
     
     
@@ -125,6 +180,10 @@ class BlockSchemaCtx(SchemaCtx[BlockSchema]):
         self._should_add_newline = False
         self.block.commit(postfix)
         return postfix
+    
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}({self.schema.name!r}, path={self.path})"
 
 class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
     
@@ -145,18 +204,30 @@ class BlockListSchemaCtx(SchemaCtx[BlockListSchema]):
             raise ValueError(f"Unknown item name '{item_name}' - no matching schema found")
         return schema
     
-    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:        
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:        
         self._block = BlockList(
             role=self.schema.role,
             tags=list(self.schema.tags),
             style=list(self.schema.style),
             attrs=dict(attrs) if attrs else dict(self.schema.attrs),
         )
-        item_name = self._get_key(attrs)
-        item_ctx = self.build_child_schema(item_name, attrs)
-        item_ctx.init(item_name, attrs, chunks)
-        return [self, item_ctx]
+        # item_name = self._get_key(attrs)
+        # item_ctx = self.build_child_schema(item_name, attrs)
+        # item_ctx.init(item_name, attrs, chunks)
+        # self._block.append_child(item_ctx.block)
+        return self
     
+    
+    def commit(self, name: str, chunks: list[BlockChunk]) -> list[Block]:
+        return None
+        postfix = Block(chunks)
+        self._should_add_newline = False
+        self.block.commit(postfix)
+        return postfix
+        # events = []
+        # postfix = self.block.commit(chunks)
+        # events.append(postfix)
+        # return events
     
 class BlockMarkdownSchemaCtx(BlockSchemaCtx):
     
@@ -171,53 +242,64 @@ class BlockMarkdownSchemaCtx(BlockSchemaCtx):
     # @property
     # def block(self) -> Block:
     #     return self._md_parser.result
-    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> list[SchemaCtx]:    
+    def get_style(self) -> str:
+        return "md"
+    
+    
+    # @property
+    # def path(self) -> str:
+    #     return str(self.block.tail.path)
+    
+    
+    def init(self, name: str, attrs: dict, chunks: list[BlockChunk]) -> SchemaCtx:    
         self._block = self.schema.init_partial(chunks, is_streaming=True)        
-        return [self]
+        return self
 
         
         
-    def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:                      
-        events = []
+    def append(self, chunks: list[BlockChunk], style: str | None = None):
+                            
         for chunk in chunks:
+            style = None
             if self._markdown_ended:
-                return super().append(chunks)
+                yield from super().append(chunks) 
+                return               
             if not self._found_content:
                 if chunk.is_newline():
                     self._found_content = True
-                res = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=chunk.style)
-                events.append(res)
+                style = self.block.mutator.get_style()
+                events = self.block.tail.append(chunk.content, logprob=chunk.logprob, style=style)
+                yield events
             else:
-                # skip tabs
-                if chunk.starts_with_tab():
-                    continue
-                
                 if not self._markdown_started:
                     self._markdown_started = True
-                    block = self.block.append_child(self._md_parser.result, copy=False)
-                    events.append(block)
-                print(chunk)
-                res = self._md_parser.feed(chunk)
-                events.extend(res)
-        return events
+                    yield self.block.append_child(self._md_parser.result, copy=False)
+                yield from self._md_parser.feed(chunk)
+        
     
     
     def commit(self, name: str, chunks: list[BlockChunk]):
-        super().commit(name, chunks)
+        postfix = super().commit(name, chunks)
         self._md_parser.close()
         self._markdown_ended = True
-        return self.block
+        return postfix
+
+# ContextState = Literal["none", "init", "content", "commit"]
+ContextState = Literal["wait_for_block", "in_block", "in_markdown"]
 
 class ContextStack:
     
-    def __init__(self, schema: "BlockSchema | BlockListSchema", root_name: str | None = None):
+    def __init__(self, schema: "BlockSchema | BlockListSchema", output_queue: list[ParserEvent], root_name: str | None = None, verbose: bool = False, verbose_markdown: bool = False):
         self._stack: list[SchemaCtx] = []
         self._commited_stack: list[SchemaCtx] = []
         self._schema = schema
         self._pending_pop: SchemaCtx | None = None
         self._did_start = False
         self._root_name = root_name
-        self._pending_chunks: list[BlockChunk] = []
+        self.events = output_queue
+        self.index = -1
+        self._verbose = verbose
+        self._verbose_markdown = verbose_markdown
     
     @property
     def curr_block(self) -> Block:
@@ -228,19 +310,26 @@ class ContextStack:
             return self._pending_pop
         return self._stack[-1]
     
-    def push(self, schema_ctx: list[SchemaCtx]):
+    def push(self, schema_ctx: SchemaCtx):
         if self._pending_pop is not None:
             self._pending_pop = None
         if not self.is_empty():
-            self.curr_block.append_child(schema_ctx[0].block)
-        self._stack.extend(schema_ctx)
+            self.curr_block.append_child(schema_ctx.block)
+        self._stack.append(schema_ctx)
         
     def pop(self) -> SchemaCtx:
         schema_ctx = self._stack.pop()
-        if isinstance(schema_ctx, BlockListSchemaCtx):
-            schema_ctx = self._stack.pop()
+        # if isinstance(schema_ctx, BlockListSchemaCtx):            
+            # schema_ctx = self._stack.pop()
+            # events.append(schema_ctx)
         self._pending_pop = schema_ctx
         return schema_ctx
+    
+    
+    def set_index(self, index: int):
+        self.index = index
+        if not self.is_empty() and isinstance(self.top(), BlockMarkdownSchemaCtx):
+            self.top()._md_parser.set_index(index)
     
     def is_empty(self) -> bool:
         return not self._stack
@@ -249,19 +338,35 @@ class ContextStack:
         return len(self._stack) == 1 and self.top().schema == self._schema
     
     
-    def _append_pending_chunks(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
-        if self._pending_chunks and not isinstance(self.top(), BlockMarkdownSchemaCtx):
-        # if self._pending_chunks:
-            pending_chunks = []
-            style = self.top().block.mutator.get_style()
-            for c in self._pending_chunks:
-                c.meta.style = style
-                pending_chunks.append(c)
-            chunks = pending_chunks + chunks
-            self._pending_chunks = []
-        return chunks
+    # def _append_pending_chunks(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
+    #     if self._pending_chunks and not isinstance(self.top(), BlockMarkdownSchemaCtx):
+    #     # if self._pending_chunks:
+    #         pending_chunks = []
+    #         style = self.top().block.mutator.get_style()
+    #         for c in self._pending_chunks:
+    #             c.meta.style = style
+    #             pending_chunks.append(c)
+    #         chunks = pending_chunks + chunks
+    #         self._pending_chunks = []
+    #     return chunks
+    
+    # def _push_pending_chunk(self, chunk: BlockChunk):
+    #     self._pending_chunks.append(chunk)
+        
+        
+    # def _prepend_pending_chunks(self, block: Block):        
+    #     if self._pending_chunks:
+    #         style = self.top().get_style()
+    #         for chunk in reversed(self._pending_chunks):
+    #             block.prepend(chunk.content, style=style, logprob=chunk.logprob)
+    #         self._pending_chunks = []
+    #     return block
+    
+            
         
     def init(self, name: str, attrs: dict, chunks: list[BlockChunk]):
+        if name == self._root_name:
+            chunks = []
         self._pending_pop = None
         if self.is_empty():
             if self._did_start:
@@ -271,21 +376,168 @@ class ContextStack:
         else:
             schema_ctx = self.top().build_child_schema(name, attrs)
             
-        chunks = self._append_pending_chunks(chunks)
-        ctx_list = schema_ctx.init(name, attrs, chunks)
-        self.push(ctx_list)
+            # handle case when the schema is a list schema
+            if isinstance(schema_ctx, BlockListSchemaCtx):
+                schema_ctx = schema_ctx.init(name, attrs, chunks)                
+                self.push(schema_ctx)
+                # events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
+                self._add_event("block_init", schema_ctx.path, schema_ctx.block)
+                schema_ctx = self.top().build_child_schema(name, attrs)
+            
+        # chunks = self._append_pending_chunks(chunks)
+        schema_ctx = schema_ctx.init(name, attrs, chunks)
+        
+        if isinstance(schema_ctx, BlockMarkdownSchemaCtx):
+            schema_ctx._md_parser._verbose = self._verbose_markdown
+            # schema_ctx._md_parser._verbose = self._verbose
+            # self._state = "in_markdown"
+                
+        self.push(schema_ctx)  
+        # self._prepend_pending_chunks(schema_ctx.block)
+        self._add_event("block_init", schema_ctx.path, schema_ctx.block)
+        # events.append(ParserEvent(path=schema_ctx.path, type="block_init", value=schema_ctx.block))
+        # return events
     
     def commit(self, name: str, chunks: list[BlockChunk]):
-        chunks = self._append_pending_chunks(chunks)
+        if name == self._root_name:
+            chunks = []
+        # chunks = self._append_pending_chunks(chunks)
         if self.top(False).schema.name != name:
-            print(f"Expected {name} but got {self.top().schema.name}")
+            if isinstance(self.top(False), BlockListSchemaCtx):
+                schema_ctx = self.pop()                
+                self._add_event("block_commit", schema_ctx.path, None)
+                if self.top(False).schema.name != name:
+                    raise ParserError(f"Expected {name} but got {self.top().schema.name}")
+            else:
+                raise ParserError(f"Expected {name} but got {self.top().schema.name}")
+            # print(f"Expected {name} but got {self.top().schema.name}")
         schema_ctx = self.pop()
-        postfix = schema_ctx.commit(name, chunks)                
+        
+        postfix = schema_ctx.commit(name, chunks)
+        self._add_event("block_commit", schema_ctx.path, postfix)
+        # self._prepend_pending_chunks(postfix)
         self._commited_stack.append(schema_ctx)        
-        return postfix
+    
+    def _add_event(self, type: Literal["block_init", "block_commit", "block_delta", "block"], path: str | IndexPath , value: Block | list[BlockChunk]):
+        if isinstance(path, IndexPath):
+            path = str(path)
+        self.events.append(ParserEvent(path=path, type=type, value=value))
+    
+    
+    def append(self, chunks: list[BlockChunk]):
+        top = self.top()
+        for event in top.append(chunks):
+            if isinstance(event, Block):
+                for block in event.iter_depth_first():
+                    self._add_event("block", str(block.path), block.copy(False))
+            else:
+                self._add_event("block_delta", self.top().tail_path, event)
+        
+    def append3(self, chunks: list[BlockChunk]):
+        top = self.top()
+        style = None
+        for chunk in chunks:            
+            # if chunk.starts_with_tab() and self._state in ["wait_for_block", "in_markdown"]:                
+            if chunk.isspace() and self._state in ["wait_for_block"]:
+                self._push_pending_chunk(chunk)
+                continue
+            elif chunk.is_newline() and self._state == "in_block":
+                # self._state = "wait_for_block" if not isinstance(top, BlockMarkdownSchemaCtx) else "in_markdown"                         
+                self._state = "wait_for_block"
+                style = top.get_style()
+                chunk.meta.style = style
+            for event in top.append([chunk], style=style):
+                if isinstance(event, Block):
+                    last_block = None
+                    for block in event.iter_depth_first():                    
+                        last_block = block
+                        self._add_event("block", str(block.path), block.copy(False))
+                    self._prepend_pending_chunks(last_block)
+                    self._state = "in_block"
+                    # print(f"append Block!")
+                else:
+                    self._add_event("block_delta", self.top().tail_path, event)
+    
+    
+    
+    
+    
+    
+    
+    
+    # def _append_none(self, chunk: BlockChunk):
+    #     if chunk.starts_with_tab():
+    #         self._push_pending_chunk(chunk)
+    #         return
+    #     elif chunk.is_newline():
+    #         pass
+    #     else:
+    #         self._state = "content"
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         self.top().append(_chunks)                                
+            
+    # def _append_init(self, chunk: BlockChunk):
+    #     top_ctx = self.top()
+    #     if chunk.is_newline():
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_init", top_ctx.path, event)
+    #         block = top_ctx.add_newline()
+    #         self._add_event("block", block.path, block)
+    #         self._state = "none"
+    #     else:
+    #         event = top_ctx.append([chunk])            
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         events = top_ctx.append(_chunks)    
+    #         self._add_event("block_delta", top_ctx.path, events)
+    #         self._state = "content"
+                                        
+    # def _append_content(self, chunk: BlockChunk):
+    #     top_ctx = self.top()
+    #     if chunk.is_newline():
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_delta", top_ctx.path, event)
+    #         block = top_ctx.add_newline()
+    #         self._add_event("block", block.path, block)
+    #         self._state = "none"
+    #     else:                        
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         top_ctx.append(_chunks)
+    #         self._add_event("block_delta", top_ctx.path, _chunks)
+    #         self._state = "content"
+    
+    # def _append_commit(self, chunk: BlockChunk):
+    #     top_ctx = self.top()
+    #     if chunk.is_newline():
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_delta", top_ctx.path, event)
+    #         self._state = "none"
+    #     else:
+    #         event = top_ctx.append([chunk])
+    #         self._add_event("block_delta", top_ctx.path, event)
+    #         self._state = "commit"
+    #         _chunks = self._append_pending_chunks([chunk])
+    #         top_ctx.append(_chunks)
+    
+    # def append(self, chunks: list[BlockChunk]):
+    #     for chunk in chunks:
+    #         if self._state == "none":
+    #             self._append_none(chunk)
+    #         elif self._state == "init":
+    #             self._append_init(chunk)
+    #         elif self._state == "content":
+    #             self._append_content(chunk)
+    #         elif self._state == "commit":
+    #             self._append_commit(chunk)
+    #         else:
+    #             raise ParserError(f"Unknown state: {self._state}")
+    
+    
+
+    
     
         
-    def append(self, chunks: list[BlockChunk]) -> list[BlockChunk]:
+    def append2(self, chunks: list[BlockChunk]) -> list[ParserEvent]:
+        # handle suffix data 
         if self._pending_pop is not None:
             if chunks[0] != "\n":
                 self._pending_pop = None
@@ -296,7 +548,14 @@ class ContextStack:
             return []
         else:
             chunks = self._append_pending_chunks(chunks)
-        return self.top().append(chunks)
+        events = []
+        schema_ctx = self.top()
+        for event in schema_ctx.append(chunks):
+            if isinstance(event, Block):
+                events.append(ParserEvent(path=str(event.path), type="block", value=event))
+            else:
+                events.append(ParserEvent(path=str(self.top().block.tail.path), type="block_delta", value=event))
+        return events
     
     
     def result(self) -> Block:
@@ -340,7 +599,15 @@ class XmlParser(Process):
             print(event)
     """
 
-    def __init__(self, schema: "BlockSchema", upstream: Process | None = None, verbose: bool = False):
+    def __init__(
+        self, 
+        schema: "BlockSchema", 
+        upstream: Process | None = None, 
+        verbose: bool = False,
+        exhaust_stream_on_exception: bool = True,
+        verbose_debug: bool = False,
+        verbose_markdown: bool = False
+    ):
         super().__init__(upstream)
 
         # Synthetic root tag handling
@@ -355,7 +622,9 @@ class XmlParser(Process):
         self._root: Block | None = None
         self._stack: list[tuple["BlockSchema", Block]] = []        
         self._verbose = verbose
-
+        self._exhaust_stream_on_exception = exhaust_stream_on_exception
+        self._verbose_debug = verbose_debug
+        self._verbose_markdown = verbose_markdown
         # Expat parser setup
         self._parser = expat.ParserCreate()
         self._parser.buffer_text = False
@@ -370,6 +639,9 @@ class XmlParser(Process):
 
         # Pending event for deferred processing
         self._pending: tuple[str, Any, int] | None = None
+
+        # Buffered whitespace-only chardata chunks (XML indentation)
+        self._pending_whitespace: list[BlockChunk] = []
 
         # Output queue for events
         self._output_queue: list[ParserEvent] = []
@@ -390,9 +662,13 @@ class XmlParser(Process):
             # Single schema - wrap it
             self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
             self._wrapper_schema._raw_append_child(self.schema)
-        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, root_name=self._root_tag)
-        self._index = 0
+        self.index = -1
+        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, output_queue=self._output_queue, root_name=self._root_tag, verbose=verbose, verbose_markdown=verbose_markdown)
+
         self._exception_to_raise: Exception | None = None
+
+        # Buffer for sanitizing invalid XML tokens split across chunks
+        self._sanitize_buffer: str = ""
 
         # Start with synthetic root
         self.feed("<{}>".format(self._root_tag))
@@ -425,6 +701,9 @@ class XmlParser(Process):
             return None
         return self._stack[-1][0]
 
+    
+    def get_chunks(self) -> list[BlockChunk]:
+        return [c[2] for c in self._chunks if self._root_tag not in c[2].content]
     # -------------------------------------------------------------------------
     # Process interface
     # -------------------------------------------------------------------------
@@ -433,21 +712,40 @@ class XmlParser(Process):
         """Called when upstream is exhausted - finalize parsing."""
         self.close()
 
+    async def _drain_stream(self):
+        """Consume remaining upstream chunks without parsing, for reproducibility."""
+        try:
+            while True:
+                upstream_chunk = await super().__anext__()
+                if isinstance(upstream_chunk, BlockChunk):
+                    chunk = upstream_chunk
+                elif hasattr(upstream_chunk, 'content'):
+                    chunk = BlockChunk(
+                        upstream_chunk.content,
+                        logprob=getattr(upstream_chunk, 'logprob', None)
+                    )
+                else:
+                    chunk = BlockChunk(str(upstream_chunk))
+                # Store raw chunk data without feeding to parser
+                data = chunk.content.encode("utf-8")
+                start = self._total_bytes
+                end = start + len(data)
+                self._chunks.append((start, end, chunk))
+                self._total_bytes = end
+        except (StopAsyncIteration, Exception):
+            self._is_stream_exhausted = True
+
     async def __anext__(self):
         """
         Get next event from parser.
 
         Consumes chunks from upstream until an event is ready to output.
         """
-        # On Exception, consume the entire stream
+        # Re-raise stored exception (stream already drained)
         if self._exception_to_raise:
-            try:
-                for i in range(1000):
-                    upstream_chunk = await super().__anext__()
-            except StopAsyncIteration:
-                raise self._exception_to_raise
-            
-        # Return queued output if available    
+            raise self._exception_to_raise
+
+        # Return queued output if available
         if self._output_queue:
             return self._output_queue.pop(0)
         elif self._is_stream_exhausted:
@@ -476,7 +774,10 @@ class XmlParser(Process):
                     return self._output_queue.pop(0)
                 raise
             except Exception as e:
-                self._exception_to_raise = e                
+                if self._exhaust_stream_on_exception:
+                    await self._drain_stream()
+                    self._exception_to_raise = e
+                raise
 
         if self._output_queue:
             return self._output_queue.pop(0)
@@ -485,6 +786,54 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Feeding data
     # -------------------------------------------------------------------------
+
+    def _sanitize_xml_tokens(self, content: str) -> str:
+        """
+        Sanitize content by removing invalid XML tokens (stateful for streaming).
+
+        Removes empty tags like <> and </> that some LLMs produce
+        which are not valid XML. Handles tokens split across chunks.
+
+        States:
+        - "": normal processing
+        - "<": saw '<', waiting to see if it's '<>' or '</'
+        - "</": saw '</', waiting to see if it's '</>'
+        """
+        result = []
+        i = 0
+
+        # Prepend buffered content from previous chunk
+        content = self._sanitize_buffer + content
+        self._sanitize_buffer = ""
+
+        while i < len(content):
+            char = content[i]
+
+            if char == '<':
+                # Look ahead to determine what kind of tag
+                remaining = content[i:]
+
+                if remaining.startswith('<>'):
+                    # Empty tag <> - skip it
+                    i += 2
+                    continue
+                elif remaining.startswith('</>'):
+                    # Empty closing tag </> - skip it
+                    i += 3
+                    continue
+                elif remaining == '<' or remaining == '</':
+                    # Incomplete - buffer for next chunk
+                    self._sanitize_buffer = remaining
+                    break
+                else:
+                    # Valid tag start - keep it
+                    result.append(char)
+                    i += 1
+            else:
+                result.append(char)
+                i += 1
+
+        return ''.join(result)
 
     def feed(self, chunk: BlockChunk | str, logprob: float | None = None, is_final: bool = False):
         """
@@ -499,7 +848,17 @@ class XmlParser(Process):
         if isinstance(chunk, str):
             chunk = BlockChunk(chunk, logprob=logprob)
 
-        data = chunk.content.encode("utf-8")
+        # Sanitize invalid XML tokens
+        sanitized_content = self._sanitize_xml_tokens(chunk.content)
+
+        # Skip if all content was buffered or removed
+        if not sanitized_content:
+            return
+
+        if sanitized_content != chunk.content:
+            chunk = BlockChunk(sanitized_content, logprob=chunk.logprob, style=chunk.style)
+
+        data = sanitized_content.encode("utf-8")
         start = self._total_bytes
         end = start + len(data)
         self._chunks.append((start, end, chunk))
@@ -516,6 +875,9 @@ class XmlParser(Process):
         if self._is_closed:
             return
         self._is_closed = True
+
+        # Discard any incomplete invalid tokens in the sanitize buffer
+        self._sanitize_buffer = ""
 
         if not self._exception_to_raise:
             if self._has_synthetic_root:
@@ -587,8 +949,12 @@ class XmlParser(Process):
             if chunk.content:
                 if chunk.starts_with_tab():
                     lchunk, chunk = chunk.split_tab()
-                    result.append(lchunk)                    
-                result.append(chunk)
+                    result.append(lchunk)
+                    if chunk.content:
+                        result.append(chunk)
+                else:
+                    result.append(chunk)
+                # result.append(chunk)
 
             i += 1
 
@@ -597,41 +963,55 @@ class XmlParser(Process):
     # -------------------------------------------------------------------------
     # Event handling
     # -------------------------------------------------------------------------
+    
+    def inc_index(self):
+        self.index += 1
+        self._ctx_stack.set_index(self.index)
 
     def _flush_pending(self, end_byte: int):
         """Process any pending event."""
         if self._pending is None:
             return
-        self._index += 1
+        self.inc_index()
         event_type, event_data, start_byte = self._pending
         chunks = self._get_chunks_in_range(start_byte, end_byte)
         self._pending = None
 
-        # if not chunks:
-        #     return
+        # Buffer whitespace-only chardata (XML indentation)
+        if event_type == "chardata" and chunks and all(c.isspace() for c in chunks):
+            self._pending_whitespace.extend(chunks)
+            return
+
+        # Prepend buffered whitespace to this event's chunks
+        if self._pending_whitespace:
+            chunks = self._pending_whitespace + chunks
+            self._pending_whitespace = []
 
         if self._verbose:
             if event_type == "start":
                 print(f"*********************** {event_data[0]} *************************")
-            print("__________________")
-            print(f"Event {self._index}: {event_type}, data={event_data!r}, chunks={chunks}")
+            if event_type in ["chardata", "end"]:
+                print("__________________")
+            print(f"Event {self.index}: {event_type}, data={event_data!r}, chunks={chunks}")
             if event_type == "end":
-                print(f"####################### {event_data} #########################")
-            
+                # print(f"####################### {event_data} #########################")
+                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event_data} ^^^^^^^^^^^^^^^^^^^^^^^^")
 
         if event_type == "start":
             name, attrs = event_data
-            self._handle_start(name, attrs, chunks)
+            self._ctx_stack.init(name, attrs, chunks)
         elif event_type == "end":
             name = event_data
-            self._handle_end(name, chunks)
+            self._ctx_stack.commit(name, chunks)
         elif event_type == "chardata":
-            self._handle_chardata(chunks)
+            self._ctx_stack.append(chunks)
+        # print(f"({self._ctx_stack._state}) {self._ctx_stack._pending_chunks}")
         
-        # if self._verbose:
-        #     if not self._ctx_stack.is_empty():
-        #         print("===>")                
-        #         self._ctx_stack._stack[0].block.print_debug()
+        
+        if self._verbose_debug:
+            if not self._ctx_stack.is_empty():
+                print("---")                
+                self._ctx_stack._stack[0].block.print_debug()
 
     def _on_start(self, name: str, attrs: dict):
         """Handle start tag event from expat."""
@@ -660,26 +1040,22 @@ class XmlParser(Process):
         """Handle opening tag - instantiate block from schema."""
         if name == self._root_tag:
             chunks = []
-        self._ctx_stack.init(name, attrs, chunks)
-        self._emit_event("block_init", self._ctx_stack.top_event_block())
+        self._output_queue += self._ctx_stack.init(name, attrs, chunks)
+        # self._emit_event("block_init", self._ctx_stack.top_event_block())
         
         
     def _handle_end(self, name: str, chunks: list[BlockChunk]):
         """Handle closing tag - commit and pop stack."""
         if name == self._root_tag:
             chunks = []
-        postfix = self._ctx_stack.commit(name, chunks)        
-        self._emit_event("block_commit", postfix)
+        self._output_queue += self._ctx_stack.commit(name, chunks)        
+        
         
         
     def _handle_chardata(self, chunks: list[BlockChunk]):
         """Handle character data - append to current block."""
         output = self._ctx_stack.append(chunks)
-        if output:
-            if isinstance(output, Block):
-                self._emit_event("block", output)
-            else:
-                self._emit_event("block_delta", output)
+        self._output_queue += output
 
 
     def _handle_start2(self, name: str, attrs: dict, chunks: list[BlockChunk]):
@@ -769,7 +1145,10 @@ class XmlParser(Process):
         # Build path from stack
         # path = "/".join(str(i) for i, _ in enumerate(self._stack))
         # path = self._ctx_stack.top().block.path
-        path = self._ctx_stack.top().block.tail.path
+        if isinstance(value, Block):
+            path = value.path
+        else:
+            path = self._ctx_stack.top().block.tail.path        
         event = ParserEvent(path=str(path), type=event_type, value=value)
         self._output_queue.append(event)
 
@@ -799,24 +1178,35 @@ class MdBlockCtx:
     def __init__(self, tag_name: str, chunks: list[BlockChunk], attrs: dict, style: str, depth: int):
         from .mutator import MutatorMeta
         config = MutatorMeta.resolve([style])
-        self.block = config.create_block(chunks, tags=[tag_name], attrs=attrs)
+        self.block = config.create_block(chunks, tags=[tag_name], attrs=attrs, role="assistant")
         # self.block = Block(style=style)
-        self._should_add_newline = False
         self._tag_name = tag_name
         self.depth = depth
-        self._should_add_newline = False
-        
-    
         
     def add_newline(self):
         block = self.block.append_child()
-        self._should_add_newline = False
         return block
     
+    @classmethod
+    def init(cls, tag_name: str, chunks: list[BlockChunk], attrs: dict, style: str, depth: int):
+        return cls(tag_name, chunks, attrs, style, depth)
     
     def append(self, chunk: BlockChunk) -> list[BlockChunk]:        
         return self.block.tail.append(chunk.content, style=chunk.style, logprob=chunk.logprob)                
-        
+
+class HeaderBlockCtx(MdBlockCtx):
+    pass
+    
+
+class ParagraphBlockCtx(MdBlockCtx):
+    # pass
+    
+    @classmethod
+    def init(cls, tag_name: str, chunks: list[BlockChunk], attrs: dict, style: str, depth: int):
+        # self.block.append_child()
+        ctx = cls(tag_name, [], attrs, style, depth)
+        ctx.block.append_child(Block(chunks))
+        return ctx
     
 class MdContextStack:
     def __init__(self):
@@ -824,15 +1214,29 @@ class MdContextStack:
         self._committed_stack: list[MdBlockCtx] = []
         self.init("md-root", {}, [], "root", 0)
         self._should_add_newline = False
+        self.index = -1
         
         
     def add_newline(self):
-        block = self.top().block.append_child()
+        # block = self.top().block.append_child()
+        block = self.top().add_newline()
         self._should_add_newline = False
         return block
+    
+    
+    def _try_pop_header(self, new_ctx: MdBlockCtx) -> bool:
+        if self.is_empty():
+            return False
+        top = self.top()
+        if isinstance(top, HeaderBlockCtx) and isinstance(new_ctx, HeaderBlockCtx):            
+            if top.depth >= new_ctx.depth:
+                self.pop()
+                return True
+        return False
 
 
     def push(self, block_ctx: MdBlockCtx):
+        self._try_pop_header(block_ctx)
         if self._stack:
             self._stack[-1].block.append_child(block_ctx.block)
         self._stack.append(block_ctx)
@@ -852,12 +1256,31 @@ class MdContextStack:
     def init(self, tag_name: str, attrs: dict, chunks: list[BlockChunk], style: str, depth: int):
         # Reset newline flag when starting a new block
         self._should_add_newline = False
-        block_ctx = MdBlockCtx(tag_name, chunks, attrs, style, depth)
+        # block_ctx = MdBlockCtx(tag_name, chunks, attrs, style, depth)
+        if tag_name == "md-root":
+            block_ctx = MdBlockCtx.init(tag_name, chunks, attrs, style, depth)        
+        elif tag_name == "p":
+            block_ctx = ParagraphBlockCtx.init(tag_name, chunks, attrs, style, depth)
+        elif tag_name.startswith("h"):
+            block_ctx = HeaderBlockCtx.init(tag_name, chunks, attrs, style, depth)
+        else:
+            raise ParserError(f"Unknown tag '{tag_name}' - no matching block context found")
         self.push(block_ctx)
+        # print("----------------------------")
+        # if self._stack:
+        #     self._stack[0].block.print_debug()
     
+    
+
     
     def commit(self, tag_name: str, chunks: list[BlockChunk]):
-        pass
+        if len(self._stack) > 1:  # Don't pop the root md-root
+            top = self.top()
+            if isinstance(top, HeaderBlockCtx):
+                return
+            else:
+                ctx = self.pop()
+            self._committed_stack.append(ctx)
     
     # def append(self, chunks: list[BlockChunk]) -> Block |list[BlockChunk]:
     #     return self.top().append(chunks)
@@ -867,8 +1290,8 @@ class MdContextStack:
         for chunk in chunks:
             style = None
             if self._should_add_newline:
-                if "md" not in self.top().block.style:
-                    self.pop()
+                # if len(self._stack) > 1 and "md" not in self.top().block.style:
+                    # self.pop()
                 block = self.add_newline()
             if chunk.is_newline():
                 self._should_add_newline = True
@@ -892,7 +1315,7 @@ class MdEvent:
     type: Literal["open", "delta", "close"]
     tag: str
     content: str  # The actual content for this event (may be subset of chunk)
-    chunk: BlockChunk  # Original chunk (for logprob etc.)
+    chunks: list[BlockChunk]  # Chunks for this event (may have different styles)
     level: int = 0  # For headings: 1-6
 
 
@@ -922,10 +1345,11 @@ class MarkdownParser:
 
     def __init__(self, verbose: bool = False):
         self._verbose = verbose
-        self._index = 0
+        self.index = 0
         # State machine
         self._state = self.STATE_LINE_START
         self._markup_buffer = ""  # Accumulated markup (e.g., "##")
+        self._whitespace_buffer = ""  # Accumulated leading whitespace at line start
         self._current_tag: str | None = None  # Current block tag (h1, h2, p)
         self._current_level: int = 0  # Heading level
         self._pending_newlines: int = 0  # Track newlines for paragraph close
@@ -964,6 +1388,7 @@ class MarkdownParser:
 
         # Split chunk at newlines for consistent handling
         sub_chunks = self._split_at_newlines(chunk)
+        # sub_chunks = [chunk]
 
         for sub_chunk in sub_chunks:
             # Process chunk and generate events
@@ -973,12 +1398,13 @@ class MarkdownParser:
             for event in events:
                 output = self._handle_event(event)
                 if output is not None:
-                    outputs.append(output)
+                    yield output
+                    # outputs.append(output)
 
-            if self._verbose:
-                print(f"[MD] fed {sub_chunk.content!r} → {len(events)} events, {len(outputs)} outputs")
+            # if self._verbose:
+                # print(f"[MD] fed {sub_chunk.content!r} → {len(events)} events, {len(outputs)} outputs")
 
-        return outputs
+        # return outputs
 
     def _split_at_newlines(self, chunk: BlockChunk) -> list[BlockChunk]:
         """
@@ -1029,6 +1455,10 @@ class MarkdownParser:
             result.append(BlockChunk(after_content, meta=after_meta))
 
         return result
+    
+    def set_index(self, index: int):
+        self.index = index
+        self._ctx_stack.index = index
 
     def close(self) -> list[Block | list[BlockChunk]]:
         """Close the parser and finalize any open blocks."""
@@ -1040,7 +1470,7 @@ class MarkdownParser:
 
         # Close any open block
         if self._current_tag:
-            close_event = MdEvent("close", self._current_tag, "", BlockChunk(""), self._current_level)
+            close_event = MdEvent("close", self._current_tag, "", [BlockChunk("")], self._current_level)
             output = self._handle_event(close_event)
             if output:
                 outputs.append(output)
@@ -1072,7 +1502,7 @@ class MarkdownParser:
                 "delta",
                 self._current_tag,
                 self._content_buffer,
-                BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style),
+                [BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style)],
                 self._current_level
             ))
             self._content_buffer = ""
@@ -1082,32 +1512,45 @@ class MarkdownParser:
     def _process_char(self, char: str, chunk: BlockChunk) -> list[MdEvent]:
         """Process a single character, return events."""
         events = []
-
+        if self._verbose:
+            print(f"{self.index}  [ MD CHAR ] {char!r} state: {self._state}")
         if self._state == self.STATE_LINE_START:
-            if char == '#':
+            if char == ' ' or char == '\t':
+                # Buffer leading whitespace until we know what follows
+                self._whitespace_buffer += char
+            elif char == '#':
+                # Heading markup — keep buffered whitespace for inclusion in markup
                 self._markup_buffer += char
                 self._state = self.STATE_IN_MARKUP
             elif char == '\n':
-                # Blank line
+                # Blank line — discard buffered whitespace
+                self._whitespace_buffer = ""
                 self._pending_newlines += 1
                 if self._current_tag == 'p' and self._pending_newlines >= 1:
                     # Emit any pending content first
                     if self._content_buffer:
                         events.append(MdEvent(
                             "delta", "p", self._content_buffer,
-                            BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style), 0
+                            [BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style)], 0
                         ))
                         self._content_buffer = ""
                     # Close paragraph on blank line
-                    events.append(MdEvent("close", "p", "", chunk, 0))
+                    events.append(MdEvent("close", "p", "", [chunk], 0))
                     self._current_tag = None
                     self._current_level = 0
             else:
-                # Start of paragraph
+                # Start of paragraph — emit whitespace separately with "sp" style
                 self._pending_newlines = 0
                 if self._current_tag is None:
                     self._current_tag = 'p'
-                    events.append(MdEvent("open", "p", "", chunk, 0))
+                    events.append(MdEvent("open", "p", "", [chunk], 0))
+                if self._whitespace_buffer:
+                    events.append(MdEvent(
+                        "delta", self._current_tag, self._whitespace_buffer,
+                        [BlockChunk(self._whitespace_buffer, logprob=chunk.logprob, style="sp")],
+                        self._current_level
+                    ))
+                    self._whitespace_buffer = ""
                 self._state = self.STATE_IN_CONTENT
                 self._content_buffer += char
 
@@ -1121,17 +1564,22 @@ class MarkdownParser:
 
                 # Close previous block if needed
                 if self._current_tag:
-                    events.append(MdEvent("close", self._current_tag, "", chunk, self._current_level))
+                    events.append(MdEvent("close", self._current_tag, "", [chunk], self._current_level))
 
                 self._current_tag = tag
                 self._current_level = level
-                markup_content = self._markup_buffer + " "
+                markup_str = self._markup_buffer + " "
+                markup_content = self._whitespace_buffer + markup_str
+                open_chunks = []
+                if self._whitespace_buffer:
+                    open_chunks.append(BlockChunk(self._whitespace_buffer, logprob=chunk.logprob, style="sp"))
+                open_chunks.append(BlockChunk(markup_str, logprob=chunk.logprob, style="md"))
+                self._whitespace_buffer = ""
                 self._markup_buffer = ""
                 self._pending_newlines = 0
                 self._state = self.STATE_IN_CONTENT
                 events.append(MdEvent(
-                    "open", tag, markup_content,
-                    BlockChunk(markup_content, logprob=chunk.logprob, style="md"), level
+                    "open", tag, markup_content, open_chunks, level
                 ))
             elif char == '\n':
                 # Just "#" without space - treat as paragraph content
@@ -1141,7 +1589,7 @@ class MarkdownParser:
                 # Not a heading - treat as paragraph
                 if self._current_tag is None:
                     self._current_tag = 'p'
-                    events.append(MdEvent("open", "p", "", chunk, 0))
+                    events.append(MdEvent("open", "p", "", [chunk], 0))
                 self._state = self.STATE_IN_CONTENT
                 self._content_buffer += self._markup_buffer + char
                 self._markup_buffer = ""
@@ -1150,26 +1598,28 @@ class MarkdownParser:
             if char == '\n':
                 self._pending_newlines += 1
 
+                # Flush content buffer first
+                if self._content_buffer:
+                    events.append(MdEvent(
+                        "delta", self._current_tag, self._content_buffer,
+                        [BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style)],
+                        self._current_level
+                    ))
+                    self._content_buffer = ""
+                # Emit newline separately with "md" style
+                events.append(MdEvent(
+                    "delta", self._current_tag, "\n",
+                    [BlockChunk("\n", logprob=chunk.logprob, style="md")],
+                    self._current_level
+                ))
+
                 if self._current_tag and self._current_tag.startswith('h'):
-                    # Include the newline in the content buffer
-                    self._content_buffer += char
-                    # Emit content including newline
-                    if self._content_buffer:
-                        events.append(MdEvent(
-                            "delta", self._current_tag, self._content_buffer,
-                            BlockChunk(self._content_buffer, logprob=chunk.logprob, style=chunk.style),
-                            self._current_level
-                        ))
-                        self._content_buffer = ""
                     # Headings close on newline
-                    events.append(MdEvent("close", self._current_tag, "", chunk, self._current_level))
+                    events.append(MdEvent("close", self._current_tag, "", [chunk], self._current_level))
                     self._current_tag = None
                     self._current_level = 0
-                    self._state = self.STATE_LINE_START
-                else:
-                    # Paragraph continues, include newline in content
-                    self._content_buffer += char
-                    self._state = self.STATE_LINE_START
+
+                self._state = self.STATE_LINE_START
             else:
                 self._pending_newlines = 0
                 self._content_buffer += char
@@ -1185,9 +1635,15 @@ class MarkdownParser:
         Handle an event by calling ctx_stack methods.
         Returns the output for streaming.
         """
-        self._index += 1
+        # self._index += 1
         if self._verbose:
-            print(f"{self._index}  [EVENT] {event.type} {event.tag} content={event.content!r}")
+            if event.type == "open":
+                print(f"*********************** {event.type} {event.tag} *************************")
+            if event.type in ["delta", "close"]:
+                print("__________________")
+            print(f"{self.index}  [ MD EVENT ] {event.type} {event.tag} content={event.content!r}")
+            if event.type == "close":
+                print(f"^^^^^^^^^^^^^^^^^^^^^^^ {event.type} {event.tag} ^^^^^^^^^^^^^^^^^^^^^^^")
 
         if event.type == "open":
             return self._handle_open(event)
@@ -1203,7 +1659,7 @@ class MarkdownParser:
         style = "md" if event.tag.startswith('h') else "p"
         # Only pass chunks for elements with markup (headings)
         # Paragraphs have no markup - content comes via delta events
-        chunks = [event.chunk] if event.tag.startswith('h') and event.content else []
+        chunks = event.chunks if event.tag.startswith('h') and event.content else []
         self._ctx_stack.init(event.tag, {}, chunks, style, event.level)
         return self._ctx_stack.top().block
 
@@ -1212,405 +1668,12 @@ class MarkdownParser:
         # Skip empty deltas
         if not event.content:
             return None
-        # Use the event's chunk which contains just the content
-        output = self._ctx_stack.append([event.chunk])
+        # Use the event's chunks which contain just the content
+        output = self._ctx_stack.append(event.chunks)
         return output
 
     def _handle_close(self, event: MdEvent) -> Block | None:
         """Handle CLOSE event - finalize block."""
-        result = self._ctx_stack.commit(event.tag, [event.chunk])
+        result = self._ctx_stack.commit(event.tag, event.chunks)
         return result
 
-
-# =============================================================================
-# HybridParser - Schema-aware parser that switches between XML and Markdown
-# =============================================================================
-
-
-class HybridParser(Process):
-    """
-    Schema-aware parser that switches between XML and Markdown parsing modes.
-
-    Uses the schema's type information to determine parsing mode:
-    - type == str (or no type) → parse content as plain text (XML mode)
-    - type == Block → parse content as markdown
-
-    Example schema:
-        with schema.view("thought", str) as t:    # XML mode - plain text
-            ...
-        with schema.view("content", Block) as c:  # Markdown mode
-            ...
-
-    Example input:
-        <thought>lets think...</thought>
-        <content>
-        # Title
-        Some markdown content.
-        </content>
-
-    The parser automatically switches modes based on the current tag's schema type.
-    """
-
-    def __init__(self, schema: "BlockSchema", upstream: Process | None = None, verbose: bool = False):
-        super().__init__(upstream)
-
-        self._verbose = verbose
-        self._schema = schema
-
-        # Synthetic root tag handling
-        self._root_tag = "_root_"
-        self._has_synthetic_root = True
-
-        # Extract schema with root tag for wrapping multiple schemas
-        self.schema = schema.extract_schema(style="xml", root=self._root_tag, role="assistant")
-        if self.schema is None:
-            raise ParserError("No schema found to parse against")
-
-        # Build schema lookup by tag name
-        self._schema_lookup: dict[str, BlockSchema] = {}
-        self._build_schema_lookup(self.schema)
-
-        # Create wrapper schema
-        if self.schema.name == self._root_tag:
-            self._wrapper_schema = self.schema
-        else:
-            self._wrapper_schema = BlockSchema(name=self._root_tag, style="block", is_root=True, role="assistant")
-            self._wrapper_schema._raw_append_child(self.schema)
-
-        # Context stack for block building
-        self._ctx_stack: ContextStack = ContextStack(self._wrapper_schema, root_name=self._root_tag)
-
-        # Expat parser setup (for XML structure)
-        self._parser = expat.ParserCreate()
-        self._parser.buffer_text = False
-        self._parser.StartElementHandler = self._on_start
-        self._parser.EndElementHandler = self._on_end
-        self._parser.CharacterDataHandler = self._on_chardata
-
-        # Chunk tracking
-        self._chunks: list[tuple[int, int, BlockChunk]] = []
-        self._total_bytes = 0
-        self._chunk_cursor: int = 0
-
-        # Pending event for deferred processing
-        self._pending: tuple[str, Any, int] | None = None
-
-        # Output queue for events
-        self._output_queue: list[ParserEvent] = []
-
-        # Stream exhausted flag
-        self._is_stream_exhausted = False
-
-        # Parser closed flag
-        self._is_closed = False
-
-        # Markdown mode tracking
-        self._md_parser: MarkdownParser | None = None  # Active markdown parser
-        self._md_tag: str | None = None  # Tag we're parsing markdown for
-        self._md_schema: BlockSchema | None = None  # Schema of the markdown tag
-
-        self._index = 0
-
-        # Start with synthetic root
-        self.feed("<{}>".format(self._root_tag))
-
-    def _build_schema_lookup(self, schema: BlockSchema, prefix: str = ""):
-        """Build a lookup table of schemas by tag name."""
-        if schema.name:
-            self._schema_lookup[schema.name] = schema
-        for tag in schema.tags:
-            if tag and tag != schema.name:
-                self._schema_lookup[tag] = schema
-        for child in schema.children:
-            if isinstance(child, BlockSchema):
-                self._build_schema_lookup(child, prefix)
-
-    def _get_schema_for_tag(self, tag_name: str) -> BlockSchema | None:
-        """Get the schema for a given tag name."""
-        return self._schema_lookup.get(tag_name)
-
-    def _should_use_markdown(self, schema: BlockSchema | None) -> bool:
-        """Check if the schema indicates markdown parsing should be used."""
-        if schema is None:
-            return False
-        # Check if type is Block (markdown content)
-        return schema.type == Block
-
-    # -------------------------------------------------------------------------
-    # Properties
-    # -------------------------------------------------------------------------
-
-    @property
-    def result(self) -> Block | None:
-        """Get the built block tree."""
-        return self._ctx_stack.result()
-
-    # -------------------------------------------------------------------------
-    # Process interface
-    # -------------------------------------------------------------------------
-
-    async def on_stop(self):
-        """Called when upstream is exhausted - finalize parsing."""
-        self.close()
-
-    async def __anext__(self):
-        """Get next event from parser."""
-        if self._output_queue:
-            return self._output_queue.pop(0)
-        elif self._is_stream_exhausted:
-            raise StopAsyncIteration()
-
-        while not self._output_queue and not self._is_stream_exhausted:
-            try:
-                upstream_chunk = await super().__anext__()
-                if isinstance(upstream_chunk, BlockChunk):
-                    self.feed(upstream_chunk)
-                elif hasattr(upstream_chunk, 'content'):
-                    chunk = BlockChunk(
-                        upstream_chunk.content,
-                        logprob=getattr(upstream_chunk, 'logprob', None)
-                    )
-                    self.feed(chunk)
-                else:
-                    self.feed(str(upstream_chunk))
-            except StopAsyncIteration:
-                self._is_stream_exhausted = True
-                await self.on_stop()
-                if self._output_queue:
-                    return self._output_queue.pop(0)
-                raise
-
-        if self._output_queue:
-            return self._output_queue.pop(0)
-        raise StopAsyncIteration()
-
-    # -------------------------------------------------------------------------
-    # Feeding data
-    # -------------------------------------------------------------------------
-
-    def feed(self, chunk: BlockChunk | str, logprob: float | None = None, is_final: bool = False):
-        """
-        Feed a chunk to the parser.
-
-        Always feeds to expat for XML structure detection.
-        Character data is routed to markdown parser when in markdown mode.
-        """
-        if isinstance(chunk, str):
-            chunk = BlockChunk(chunk, logprob=logprob)
-
-        data = chunk.content.encode("utf-8")
-        start = self._total_bytes
-        end = start + len(data)
-        self._chunks.append((start, end, chunk))
-        self._total_bytes = end
-
-        # Always feed to expat for XML structure (tags, etc.)
-        try:
-            self._parser.Parse(data, is_final)
-        except expat.ExpatError as e:
-            current_data = "".join(c[2].content for c in self._chunks)
-            raise ParserError(f"XML parse error: {e}. Current data: {current_data}")
-
-    def close(self):
-        """Close the parser and finalize."""
-        if self._is_closed:
-            return
-        self._is_closed = True
-
-        # Close any active markdown parser
-        if self._md_parser is not None:
-            self._md_parser.close()
-            self._attach_markdown_result()
-            self._md_parser = None
-            self._md_tag = None
-            self._md_schema = None
-
-        if self._has_synthetic_root:
-            self.feed("</{}>".format(self._root_tag))
-        self._parser.Parse(b"", True)
-        self._flush_pending(self._total_bytes)
-
-    # -------------------------------------------------------------------------
-    # Chunk retrieval
-    # -------------------------------------------------------------------------
-
-    def _get_chunks_in_range(self, start: int, end: int) -> list[BlockChunk]:
-        """Get chunks overlapping the byte range [start, end)."""
-        result = []
-        chunks = self._chunks
-        n = len(chunks)
-        i = self._chunk_cursor
-
-        while i < n and chunks[i][1] <= start:
-            i += 1
-        self._chunk_cursor = i
-
-        while i < n:
-            chunk_start, chunk_end, chunk = chunks[i]
-            if chunk_start >= end:
-                break
-
-            if chunk_end > end:
-                chunk, _ = chunk.split(end - chunk_start)
-            if chunk_start < start:
-                _, chunk = chunk.split(start - chunk_start)
-            if chunk.content:
-                if chunk.starts_with_tab():
-                    lchunk, chunk = chunk.split_tab()
-                    result.append(lchunk)
-                result.append(chunk)
-            i += 1
-
-        return result
-
-    # -------------------------------------------------------------------------
-    # Event handling
-    # -------------------------------------------------------------------------
-
-    def _flush_pending(self, end_byte: int):
-        """Process any pending event."""
-        if self._pending is None:
-            return
-        self._index += 1
-        event_type, event_data, start_byte = self._pending
-        chunks = self._get_chunks_in_range(start_byte, end_byte)
-        self._pending = None
-
-        if not chunks:
-            return
-
-        if self._verbose:
-            if event_type == "start":
-                print(f"[HYBRID] *** {event_data[0]} ***")
-            print(f"[HYBRID] Event {self._index}: {event_type}, data={event_data!r}, chunks={[c.content for c in chunks]}")
-
-        if event_type == "start":
-            name, attrs = event_data
-            self._handle_start(name, attrs, chunks)
-        elif event_type == "end":
-            name = event_data
-            self._handle_end(name, chunks)
-        elif event_type == "chardata":
-            self._handle_chardata(chunks)
-
-    def _on_start(self, name: str, attrs: dict):
-        """Handle start tag event from expat."""
-        current_pos = self._parser.CurrentByteIndex
-        self._flush_pending(current_pos)
-        self._pending = ("start", (name, attrs), current_pos)
-
-    def _on_end(self, name: str):
-        """Handle end tag event from expat."""
-        current_pos = self._parser.CurrentByteIndex
-        self._flush_pending(current_pos)
-        self._pending = ("end", name, current_pos)
-
-    def _on_chardata(self, data: str):
-        """Handle character data event from expat."""
-        current_pos = self._parser.CurrentByteIndex
-        self._flush_pending(current_pos)
-        self._pending = ("chardata", data, current_pos)
-
-    # -------------------------------------------------------------------------
-    # Block building with mode switching
-    # -------------------------------------------------------------------------
-
-    def _handle_start(self, name: str, attrs: dict, chunks: list[BlockChunk]):
-        """Handle opening tag - check if we should switch to markdown mode."""
-        if name == self._root_tag:
-            chunks = []
-
-        # Get schema for this tag
-        tag_schema = self._get_schema_for_tag(name)
-
-        if self._verbose:
-            type_info = tag_schema.type.__name__ if tag_schema and tag_schema.type else "None"
-            print(f"[HYBRID] START {name} schema_type={type_info}")
-
-        # Check if we should switch to markdown mode
-        if self._should_use_markdown(tag_schema):
-            if self._verbose:
-                print(f"[HYBRID] Switching to MARKDOWN mode for <{name}>")
-            self._md_parser = MarkdownParser(verbose=self._verbose)
-            self._md_tag = name
-            self._md_schema = tag_schema
-
-        # Initialize block in context stack
-        self._ctx_stack.init(name, attrs, chunks)
-        self._emit_event("block_init", self._ctx_stack.top_event_block())
-
-    def _handle_end(self, name: str, chunks: list[BlockChunk]):
-        """Handle closing tag - check if we should exit markdown mode."""
-        if name == self._root_tag:
-            chunks = []
-
-        if self._verbose:
-            print(f"[HYBRID] END {name}")
-
-        # Check if we're closing the markdown tag
-        if self._md_parser is not None and name == self._md_tag:
-            if self._verbose:
-                print(f"[HYBRID] Exiting MARKDOWN mode for </{name}>")
-            self._md_parser.close()
-            self._attach_markdown_result()
-            self._md_parser = None
-            self._md_tag = None
-            self._md_schema = None
-
-        # Commit block
-        postfix = self._ctx_stack.commit(name, chunks)
-        self._emit_event("block_commit", postfix)
-
-    def _handle_chardata(self, chunks: list[BlockChunk]):
-        """Handle character data - route to appropriate handler based on mode."""
-        if self._md_parser is not None:
-            # Markdown mode - feed chunks to markdown parser
-            for chunk in chunks:
-                self._md_parser.feed(chunk)
-            if self._verbose:
-                print(f"[HYBRID] MD chardata: {[c.content for c in chunks]}")
-            # Emit delta events from markdown parser could be done here
-            # For now, the markdown result is attached when tag closes
-            return
-
-        # XML mode - append to current block
-        output = self._ctx_stack.append(chunks)
-        if output:
-            if isinstance(output, Block):
-                self._emit_event("block", output)
-            else:
-                self._emit_event("block_delta", output)
-
-    def _attach_markdown_result(self):
-        """Attach the markdown parser result to the current block."""
-        if self._md_parser is None:
-            return
-
-        md_result = self._md_parser.result
-        if md_result is not None:
-            # Get the current block and attach markdown result as child
-            current_block = self._ctx_stack.curr_block
-            if current_block is not None:
-                # Append markdown block as child
-                current_block.append_child(md_result)
-                if self._verbose:
-                    print(f"[HYBRID] Attached markdown result to {current_block.tags}")
-
-    def _emit_event(self, event_type: str, value: Block | list[BlockChunk]):
-        """Emit a parser event."""
-        path = self._ctx_stack.top().block.tail.path
-        event = ParserEvent(path=str(path), type=event_type, value=value)
-        self._output_queue.append(event)
-
-    # -------------------------------------------------------------------------
-    # Iterator interface
-    # -------------------------------------------------------------------------
-
-    def events(self) -> Generator[ParserEvent, None, None]:
-        """Yield all queued events."""
-        while self._output_queue:
-            yield self._output_queue.pop(0)
-
-    def __iter__(self):
-        """Synchronous iterator for events."""
-        return self.events()

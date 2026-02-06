@@ -4,7 +4,7 @@ from .block7 import block, ContextStack, Blockable
 # from .block9 import BlockChunk, BlockSent,  block, Block, BlockSchema, BaseBlock, AttrBlock, BlockList
 from .block9 import BlockSent,  block, BaseBlock, AttrBlock
 # from .block10 import Block, BlockSchema, BlockListSchema, BlockChunk, BlockBase, BlockText, BlockBuilderContext, XmlParser, BlockList
-from .block12 import Block, BlockSchema, BlockListSchema, XmlParser, BlockList, Mutator, ContentType, BlockChunk
+from .block12 import Block, BlockSchema, BlockListSchema, XmlParser, BlockList, Mutator, ContentType, BlockChunk, ParserEvent, IndexPath
 from .util import BlockRole, LlmUsage, ToolCall
 
 from .style import InlineStyle, BlockStyle, StyleManager, UndefinedTagError
@@ -38,4 +38,6 @@ __all__ = [
     "XmlParser",
     "Mutator",
     "ContentType",
+    "ParserEvent",
+    "IndexPath",
 ]

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Type
+from typing import List, Type, AsyncGenerator, Any
 import openai
 import os
 
@@ -7,13 +7,13 @@ from pydantic import BaseModel
 from ..block import BlockChunk, BlockList
 from ..block.util import LLMEvent, ToolCall
 from ..context.execution_context import ExecutionContext
-from ..llms.llm2 import BaseLLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
+from ..llms.llm2 import LLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
 from openai.types.chat import ChatCompletionMessageParam
 from ..utils.model_utils import schema_to_function
 from ..tracer.langsmith_tracer import Tracer
 
 
-class OpenAiLLM(BaseLLM):
+class OpenAiLLM(LLM):
     name: str = "OpenAiLLM"
     default_model: str= "gpt-4o"
     models = ["gpt-4o", "gpt-4o-mini"]
@@ -50,13 +50,12 @@ class OpenAiLLM(BaseLLM):
         schema = schema_to_function(tool)
         return schema
     
-    @llm_stream(name="openai_llm")
     async def stream(
         self, 
         blocks: BlockList,
         config: LlmConfig,
         tools: List[Type[BaseModel]] | None = None
-    ):
+    ) -> AsyncGenerator[Any, None]:
         
             
         messages = [
@@ -70,7 +69,7 @@ class OpenAiLLM(BaseLLM):
         if tools:
             llm_tools = [self.to_tool(tool) for tool in tools]        
             tool_choice = config.tool_choice
-
+            
         with Tracer(
             run_type="llm",
             name=self.__class__.__name__,

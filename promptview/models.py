@@ -1,6 +1,6 @@
 from typing import Literal, Self, Type
 from .model import ModelField, RelationField
-from .versioning import ArtifactModel, TurnStatus, BlockTree, BlockSpan, BlockModel, Branch, Turn
+from .versioning import ArtifactModel, TurnStatus, Branch, Turn
 from .versioning import BlockLog, StoredBlockModel, compute_block_hash
 from .block import BlockSchema, Block
 from pydantic import Field
@@ -58,12 +58,38 @@ class BlockArtifact(ArtifactModel):
             **kwargs
         )
 
-        async def parse_rows(rows):
-            for row in rows:
-                stored_block = row.get("stored_block")
-                if stored_block:
-                    row["content"] = stored_block.to_block()
-            return rows
+        # async def parse_rows(rows):
+        #     for row in rows:
+        #         stored_block = row.get("stored_block")
+        #         if stored_block:                    
+        #             row["content"] = stored_block.to_block()
+        #     return rows
 
-        query.include(StoredBlockModel.query()).parse(parse_rows, target="rows")
+        # query.include(StoredBlockModel.query()).parse(parse_rows, target="rows")
+        async def parse_models(recs):
+            for rec in recs:
+                stored_block = rec.stored_block
+                if stored_block:                    
+                    rec.content = stored_block.to_block()
+            return recs
+
+        query.include(StoredBlockModel.query(use_liniage=use_liniage)).parse(parse_models, target="models")
+
         return query
+
+    
+    def to_block(self, exclude: set[str] | None = None, include_artifact: bool = False) -> Block:
+        from .block import Block
+        from .block.block12.object_helpers import pydantic_to_schema        
+        artifact_fields = {"artifact_id", "artifact", "stored_block"} if not include_artifact else set()
+        exclude = exclude or set()
+        with Block(self.__class__.__name__, style="md") as blk:
+            for name, field in self.__class__.model_fields.items():
+                if name in artifact_fields or name in exclude or name == "content":
+                    continue                
+                with blk.view(name, type=field.annotation, style="def") as view:
+                        view /= getattr(self, name)
+                        
+            with blk.view("content", type=Block, style="md") as view:
+                view /= self.content
+        return blk

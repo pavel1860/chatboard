@@ -23,8 +23,8 @@ class PromptStream(StreamController[P, STREAM_EVENT, STREAM_RESPONSE]):
     
     
     def _filter_args_for_trace(self, *args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
-        from ..llms import LLM
-        _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLM, Context))
+        from ..llms import LLMRegistry
+        _args, _kwargs = filter_args_by_exclude(args, kwargs, (LLMRegistry, Context))
         return {"args": _args, "kwargs": _kwargs}
     
     

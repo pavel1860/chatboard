@@ -2,7 +2,7 @@ from typing import AsyncGenerator, List
 from promptview.block.util import StreamEvent
 from promptview.prompt import component, Depends
 from promptview.block import Block
-from promptview.llms import LLM
+from promptview.llms import LLMRegistry
 from promptview.context.execution_context import ExecutionContext
 import datetime as dt
 from uuid import UUID, uuid4
@@ -84,7 +84,7 @@ class GiveQuestAction(BaseModel):
 #     yield llm.stream(sys, user_message).name("pirate_talk_llm").load("research/data/pirate_talk.jsonl", delay=0.01).parse(schema)
 
 @component(tags=["pirate"])
-async def pirate_talk(llm: LLM = Depends(LLM)):
+async def pirate_talk(llm: LLMRegistry = Depends(LLMRegistry)):
     with Block(role="system") as sys:
         sys /= "you are a pirate by the name of Jack Black"
         sys /= "you speak like a pirate"
