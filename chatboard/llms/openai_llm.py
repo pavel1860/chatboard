@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from ..block import BlockChunk, BlockList
 from ..block.util import LLMEvent, ToolCall
 from ..context.execution_context import ExecutionContext
-from ..llms.llm2 import LLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
+from ..llms.llm import LLM, LlmConfig, llm_stream, LLMUsage, LLMResponse
 from openai.types.chat import ChatCompletionMessageParam
 from ..utils.model_utils import schema_to_function
 from ..tracer.langsmith_tracer import Tracer

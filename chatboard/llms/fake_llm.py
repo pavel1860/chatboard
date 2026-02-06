@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from ..block import BlockChunk, BlockList
 from ..block.util import LLMEvent, ToolCall
 from ..context.execution_context import ExecutionContext
-from .llm2 import LLMStreamController, LlmConfig
+from .llm import LLMStreamController, LlmConfig
 from openai.types.chat import ChatCompletionMessageParam
 
 

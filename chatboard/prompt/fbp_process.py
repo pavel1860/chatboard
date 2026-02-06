@@ -112,13 +112,20 @@ import json
 import asyncio
 import hashlib
 import os
-
+from enum import Enum
 
 # from ..versioning import DataFlowNode, ExecutionSpan, SpanType
 
 if TYPE_CHECKING:
     from ..block import Block, BlockChunk
     from ..versioning import DataFlowNode, ExecutionSpan, SpanType, LlmCall
+
+
+
+class EventLogLevel(Enum):
+    chunk = 0
+    span = 1
+    turn = 2
 
 
 def _serialize_for_hash(value: Any) -> Any:
@@ -200,8 +207,7 @@ def compute_stream_cache_key(name: str, bound_args: dict[str, Any]) -> str:
 
 
 if TYPE_CHECKING:
-    from .span_tree import SpanTree, DataFlow
-    from ..block import Block, BlockChunk, BlockSchema, BaseBlock
+    from ..block import Block, BlockChunk, BlockSchema
     from .context import Context
 
 
@@ -253,7 +259,7 @@ class Process:
         self._did_yield = False
         self._did_end = False
         self._last_ip: Any = None
-        self._span_tree: "SpanTree | None" = None
+        self._span_tree: "ExecutionSpan | None" = None
 
     @property
     def upstream(self):
@@ -1006,7 +1012,6 @@ class ObservableProcess(Process):
         Returns:
             FlowRunner configured to emit events
         """
-        from .flow_components import EventLogLevel
         if event_level is None:
             event_level = EventLogLevel.chunk
         self._ctx = ctx
@@ -1107,7 +1112,7 @@ class StreamController(ObservableProcess):
         self._gen: AsyncGenerator | None = None
         self._save_filepath: str | None = None
         self._load_filepath: str | None = None
-        self._stream_value: DataFlow | None = None
+        self._stream_value = None
         self._value_event_type: str = f"{self._span_type}_delta"
         self._load_delay: float | None = None
         self._temp_data_flow: "DataFlowNode | None" = None        
@@ -1215,7 +1220,7 @@ class StreamController(ObservableProcess):
         """
         from .events import StreamEvent
         from ..versioning.artifact_log import ArtifactLog
-        from ..block.block12.parsers import ParserEvent
+        from ..block.parsers import ParserEvent
 
         
         if type(payload) == ParserEvent: 
@@ -1299,7 +1304,7 @@ class StreamController(ObservableProcess):
         In replay mode, yields saved outputs from the span instead of executing
         the generator function.
         """
-        from ..block.block12.parsers import ParserEvent
+        from ..block.parsers import ParserEvent
         if not self._did_start:
             await self.on_start()
             self._did_start = True
@@ -2059,7 +2064,6 @@ class FlowRunner:
         if event is None:
             return None
 
-        from .flow_components import EventLogLevel
 
         if self._event_level == EventLogLevel.chunk:
             return event
@@ -2079,8 +2083,6 @@ class FlowRunner:
         if event is None:
             return None
 
-        from .flow_components import EventLogLevel
-
         if self._event_level == EventLogLevel.chunk:
             return event
         elif self._event_level == EventLogLevel.span:
@@ -2098,8 +2100,6 @@ class FlowRunner:
         event = await process.on_stop_event(value)
         if event is None:
             return None
-
-        from .flow_components import EventLogLevel
 
         if self._event_level == EventLogLevel.chunk:
             return event

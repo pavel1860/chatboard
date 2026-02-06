@@ -1,525 +1,444 @@
-from __future__ import annotations
-from abc import abstractmethod
-from enum import StrEnum
-from functools import singledispatch
-from typing import Any, AsyncGenerator, Callable, Dict, Generic, List, Literal, ParamSpec, Self, Type, TypeVar, Union, TYPE_CHECKING, get_args
-from pydantic import BaseModel, Field, PrivateAttr, ValidationError
-from pydantic.fields import FieldInfo
-from ..block.util import StreamEvent
-from ..llms.types import ErrorMessage
-from ..block import BlockChunk, BlockRole, ToolCall, LlmUsage, BlockList
-from ..tracer import Tracer
-from ..parsers import XmlOutputParser
-from ..utils import logger
-from ..utils.function_utils import call_function
-from ..utils.model_utils import get_list_type, is_list_type, is_optional_type, schema_to_ts  
-import xml.etree.ElementTree as ET
+import copy
+import os
+from functools import wraps
+from typing import Any, AsyncGenerator, Callable, Dict, List, Literal, Type, TypedDict, Unpack, TYPE_CHECKING
+from pydantic import BaseModel, Field
 
-class LLMToolNotFound(Exception):
+from ..block import BlockChunk, Block, BlockList, BlockSchema
+# from ..prompt.flow_components import StreamController
+from ..prompt.fbp_process import StreamController, Stream, compute_stream_cache_key, Accumulator, Process
+from dataclasses import dataclass
+from .types import LlmConfig, LLMResponse, LLMUsage
+if TYPE_CHECKING:
+    from ..prompt import Context
+
+
+
+class LLMStream(Stream):
+    response: LLMResponse | None = None
+    usage: LLMUsage | None = None
     
-    def __init__(self, tool_name) -> None:
-        self.tool_name = tool_name
-        super().__init__(f"Action {tool_name} is not found")
-
-
-ToolChoice = Literal['auto', 'required', 'none']
-
-LLM_CLIENT = TypeVar('LLM_CLIENT')
-CLIENT_PARAMS = ParamSpec('CLIENT_PARAMS')
-CLIENT_RESPONSE = TypeVar('CLIENT_RESPONSE')
-
-
-
-ToolReprFormat = Literal['json', 'function', 'xml']
-
-class BaseLlmClient(BaseModel, Generic[LLM_CLIENT, CLIENT_RESPONSE]):
-    client: LLM_CLIENT
+    def __init__(self, gen: AsyncGenerator, name: str = "stream", response: LLMResponse | None = None, usage: LLMUsage | None = None):
+        super().__init__(gen, name=name)
+        self.response = response
+        self.usage = usage
     
-    @abstractmethod
-    async def complete(
-        self, 
-        messages: List[dict], 
-        tools: List[dict], 
-        model: str, 
-        tool_choice: str, 
-        **kwargs
-    ) -> CLIENT_RESPONSE:
-        ...
+    async def __anext__(self):
+        """
+        Receive next IP from wrapped generator.
 
-
-class LlmConfig(BaseModel):
-    model: str | None = Field(default=None, description="The model to use")
-    temperature: float = Field(default=0, ge=0, le=1, description="The temperature of the response")
-    max_tokens: int = Field(default=None, ge=0, description="The maximum number of tokens in the response")
-    stop_sequences: List[str] = Field(default=None, description="The stop sequences of the response")
-    stream: bool = Field(default=False, description="If the response should be streamed")
-    logit_bias: Dict[str, int] | None = Field(default=None, description="The logit bias of the response")
-    top_p: float = Field(default=1, ge=0, le=1, description="The top p of the response")
-    presence_penalty: float | None = Field(default=None, ge=-2, le=2, description="The presence penalty of the response")
-    logprobs: bool | None = Field(default=None, description="If the logprobs should be returned")
-    seed: int | None = Field(default=None, description="The seed of the response")
-    frequency_penalty: float | None = Field(default=None, ge=-2, le=2, description="The frequency penalty of the response")
-    tools: List[Type[BaseModel]] | None = Field(default=None, description="The tools of the response")
-    retries: int = Field(default=3, ge=1, description="The number of retries")
-    parallel_tool_calls: bool = Field(default=False, description="If the tool calls should be parallel")
-    tool_choice: ToolChoice | None = Field(default=None, description="The tool choice of the response")
-    
-    
-    # def get_llm_args(self, **kwargs):
-    #     model_kwargs={}
-    #     stop_sequences = kwargs.get("stop_sequences", self.stop_sequences)
-    #     if stop_sequences:
-    #         model_kwargs['stop'] = stop_sequences
-    #     logit_bias = kwargs.get("logit_bias", self.logit_bias)
-    #     if logit_bias:            
-    #         model_kwargs['logit_bias'] = logit_bias
-    #     top_p = kwargs.get("top_p", self.top_p)
-    #     if top_p:
-    #         if top_p > 1.0 or top_p < 0.0:
-    #             raise ValueError("top_p must be between 0.0 and 1.0")
-    #         model_kwargs['top_p'] = top_p
-    #     presence_penalty = kwargs.get("presence_penalty", self.presence_penalty)
-    #     if presence_penalty:
-    #         if presence_penalty > 2.0 or presence_penalty < -2.0:
-    #             raise ValueError("presence_penalty must be between -2.0 and 2.0")
-    #         model_kwargs['presence_penalty'] = presence_penalty
-    #     frequency_penalty = kwargs.get("frequency_penalty", self.frequency_penalty)
-    #     if frequency_penalty:
-    #         if frequency_penalty > 2.0 or frequency_penalty < -2.0:
-    #             raise ValueError("frequency_penalty must be between -2.0 and 2.0")
-    #         model_kwargs['frequency_penalty'] = frequency_penalty
-    #     temperature = kwargs.get("temperature", self.temperature)
-    #     if temperature is not None:
-    #         model_kwargs['temperature'] = temperature
-    #     max_tokens = kwargs.get("max_tokens", self.max_tokens)
-    #     if max_tokens is not None:
-    #         model_kwargs['max_tokens'] = max_tokens
-
-    #     # model = kwargs.get("model", self.model)
-    #     # if model is not None:
-    #     #     model_kwargs['model'] = model
-        
-    #     seed = kwargs.get("seed", self.seed)
-    #     if seed is not None:
-    #         model_kwargs['seed'] = seed
+        If persistence is enabled, collects IP for later save.
+        Only saves to JSONL on successful stream completion (not on errors).
+        """
+        from ..block import BlockChunk
+        for i in range(10):
+            # ip = await super().__anext__()
+            ip = await Process.__anext__(self)
             
-    #     # parallel_tool_calls = kwargs.get("parallel_tool_calls", self.parallel_tool_calls)
-    #     # if parallel_tool_calls is not None and actions:
-    #     #     model_kwargs['parallel_tool_calls'] = parallel_tool_calls
-            
-    #     logprobs = kwargs.get("logprobs", self.logprobs)
-    #     if logprobs is not None:
-    #         model_kwargs['logprobs'] = logprobs        
-    #     return model_kwargs
-
-
-        
-def get_field_type(field_info) -> str:
-    if get_args(field_info.annotation):
-        return str(field_info.annotation)
-    return field_info.annotation.__name__
-
-
-class OutputModel(BaseModel):    
-    tool_calls: List[ToolCall] = Field(default=[], json_schema_extra={"render": False})
-    _block: BlockChunk = PrivateAttr()
-    
-    
-    
-    @classmethod
-    def user_suffix(cls) -> str:
-        return ""
-    
-    @classmethod
-    def response_prefix(cls) -> str:
-        return ""
-    
-    @classmethod
-    def extra_rules(cls) -> BlockChunk | None:
-        return None
-    
-    def output_fields(self) -> List[tuple[str, FieldInfo]]:
-        return [(field, field_info) for field, field_info in self.model_fields.items() if field != "tool_calls"]
-    
-    @classmethod
-    def iter_fields(cls):
-        for field, field_info in cls.model_fields.items():
-            extra = field_info.json_schema_extra
-            if extra and extra.get("render") == False:
+            if isinstance(ip, LLMResponse):
+                self.response = ip
                 continue
-            yield field, field_info
-            
-
-    @classmethod
-    def render(cls, tools: List[Type[BaseModel]] = [], config: LlmConfig | None = None) -> BlockChunk:
-        with BlockChunk("Output format", tags=["output_format"]) as blk:
-            blk += "you **MUST** use the following format for your output:"
-            for field, field_info in cls.iter_fields():
-                render_func = getattr(cls, f"render_{field}", None)                
-                if render_func:
-                    blk /= render_func()
-                else:
-                    with blk(field, style=["xml"]):
-                        if field_info.description:
-                            blk += field_info.description
-            if tools:
-                
-                # elif config and config.tool_choice == "none":
-                    # blk += "you should not use any tool calls"
-                blk /= "the tool calls you want to use should be in the following xml format:"
-                # with blk("tool_calls", tags=["tool_calls"], style=["xml"]):
-                with blk("tool", tags=["tool_example"], attrs={"name": "{{the tool name}}"}, style=["xml"]):
-                    blk /= "{{the tool arguments in json format}}"
-                with blk("tool", tags=["tool_example"], attrs={"name": "{{the second tool name}}"}, style=["xml"]):
-                    blk /= "{{the second tool arguments in json format}}"
-                blk /= "<!-- (... more tool calls if needed) -->"
-                    
-                    
-                with blk("Tool Call Rules", tags=["tool_call_rules"], style=["list"]):
-                    blk /= "read carefully the tool description and the tool arguments."
-                    blk /= "understand if you have a tool that can help you to complete the task or you should respond only in text."
-                    blk /= "you can perform actions in response to the user input."
-                    blk /= "tool calls should be in xml format with json schema inside as a child element."
-                    blk /= "make sure the order of the xml tags is correct."
-                    blk /= "IMPORTANT! you must use this output format!"
-                    if config and config.tool_choice == "required":
-                        blk /= "you have to pick the right tool to respond to the user input"
-                    elif config and config.tool_choice == "auto":
-                        blk /= "you can use as many tools as needed to complete the task"
-                if extra_rules_block:= cls.extra_rules():
-                    blk /= extra_rules_block
-                blk /= "you must use the provided output format."
-                blk /= "** end of output format **"
-                # blk /= "don't forget to output a message when you have something to say."
-                blk /= ""
-                blk /= ""
-                with blk("Available tools", tags=["available_tools"], style=["xml"]):
-                    blk /= "you can use the following tools to complete the task:"
-                    for tool in tools:
-                        if not tool.__doc__:
-                            raise ValueError(f"Tool {tool.__name__} has no description")
-                        with blk("tool", attrs={"name": tool.__name__, "description": tool.__doc__}, tags=["tool"], style=["xml"]):                            
-                            # blk /= "description:" + tool.__doc__
-                            blk.model_schema(tool)
-        return blk
-    
-    def block(self) -> BlockChunk:
-        self._block.tool_calls = self.tool_calls
-        return self._block
-    
-    
-    def find_tool(self, tool_name: str) -> ToolCall | None:
-        for tool in self.tool_calls:
-            if tool.name == tool_name:
-                return tool
-        return None
-
-    def find_except(self, tool_name: str) -> List[ToolCall]:
-        tools = []
-        for tool in self.tool_calls:
-            if tool.name == tool_name:
+            elif isinstance(ip, LLMUsage):
+                self.usage = ip
                 continue
-            tools.append(tool)
-        return tools
-
-    # @classmethod
-    # def parse(cls, completion: Block, tools: List[Type[BaseModel]]) -> Self:
-    #     """parse the completion into the output model"""
-    #     try:
-    #         xml_parser = XmlOutputParser()
-    #         fmt_res, fmt_tools = xml_parser.parse(f"<root>{cls.response_prefix()}{completion.content}</root>", tools, cls)
-    #         fmt_res.tool_calls = fmt_tools
-    #         fmt_res._block = completion
-    #         return fmt_res
-    #     except ValidationError as e:
-    #         logger.exception("Output Model Validation Error")
-    #         raise ErrorMessage(f"Validation error: {e}")
-    
-    @classmethod
-    def parse_tool_calls(cls, item: ET.Element, tools: List[Type[BaseModel]]) -> List[ToolCall]:
-        from ..block import ToolCall
-        from uuid import uuid4
-        tool_calls = []
-        tool_lookup = {tool.__name__: tool for tool in tools}        
-        for tool in item.findall("tool"):
-            tool_cls = tool_lookup.get(tool.attrib["name"], None)
-            if not tool_cls:
-                from . import ErrorMessage
-                raise ErrorMessage(tool.attrib["name"])
-            # params = {param.attrib["name"]: param.text for param in tool.findall(param_tag)}
-            tool_inst = tool_cls.model_validate_json(tool.text)
-            tool_calls.append(
-                ToolCall(
-                    id=f"tool_call_{uuid4()}"[:40], 
-                    name=tool.attrib["name"], 
-                    tool=tool_inst
-                )
-            )
-        return tool_calls
-    
-    @classmethod
-    def parse(cls, completion: BlockChunk, tools: List[Type[BaseModel]]) -> Self:
-        """parse the completion into the output model"""
-        try:
-            root = ET.fromstring(f"<root>{cls.response_prefix()}{completion.content}</root>")
-            params = {}
-            for field, field_info in cls.model_fields.items():
-                item = root.find(field)                 
-                if field == "tool_calls":
-                    params[field] = cls.parse_tool_calls(root, tools)
-                    continue
-                              
-                if item is None:
-                    continue
-                elif item.text is None:
-                    raise ErrorMessage(f"Field {field} has no text")
+            # Collect for save if persistence enabled
+            if self._save_stream_path is not None:
+                if hasattr(ip, "model_dump"):
+                    data = ip.model_dump()
                 else:
-                    parse_func = getattr(cls, f"parse_{field}", None)
-                    if parse_func:
-                        params[field] = parse_func(item)
-                    else:
-                        params[field] = item.text.strip()             
-            obj = cls(**params)
-            obj._block = completion
-            return obj
-        except ValidationError as e:
-            logger.exception("Output Model Validation Error")
-            raise ErrorMessage(f"Validation error: {e}")
-    
-    
-    
-    def __repr__(self) -> str:
-        s = f"<{self.__class__.__name__}>"
-        for field, field_info in self.model_fields.items():
-            s += f"\n{field}: {getattr(self, field)}"
-        # for tool in self.tool_calls:
-        #     s += f"\n{tool}"
-        s += f"\n</{self.__class__.__name__}>"
-        return s
- 
- 
-OUTPUT_MODEL = TypeVar('OUTPUT_MODEL', bound=OutputModel)
+                    data = ip
+                self._collected_chunks.append(data)
 
-class LlmContext(Generic[OUTPUT_MODEL]):
-    models: list[str] = []  
-    
-    def __init__(self, model: str):
-        if model not in self.models:
-            raise ValueError(f"Model {model} is not supported by {self.__class__.__name__}")
-        self.config: LlmConfig = LlmConfig(model=model)
-        self.blocks: BlockList = BlockList()
-        self.tools: List[Type[BaseModel]] = []
-        self.output_model: Type[OutputModel] | None = None
-        self.is_traceable = True
-        self.tracer_run: Tracer | None = None
-        self.parse_response_fn: Callable[[BlockChunk], BlockChunk] | None = None
-        self.parse_output_fn: Callable[[OUTPUT_MODEL], OUTPUT_MODEL] | None = None
+            return ip
+        else:
+            raise ValueError("more than 10 tries to get chunks")
         
+    @classmethod    
+    async def load_llm_call(cls, llm_call_id: int, delay: float = 0.05):
+        from ..versioning.dataflow_models import LlmCall
+        import asyncio
+        llm_call = await LlmCall.get_or_none(id=llm_call_id)
+        if llm_call is None:
+            raise ValueError(f"LLM call {llm_call_id} not found")
         
-    def __call__(self, blocks: BlockList) -> Self:
-        self.blocks = blocks
-        return self
+        response = LLMResponse(id=llm_call.request_id, item_id=llm_call.message_id)
+        usage = llm_call.usage
+        
+        async def load_llm_call_stream(llm_call: LlmCall):
+            from ..block import BlockChunk
+            for chunk in llm_call.chunks:
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                yield chunk
+        # self.upstream = load_llm_call_stream(llm_call)
+        return cls(load_llm_call_stream(llm_call), name=f"{cls.__name__}_stream", response=response, usage=usage)
+        
     
-    def __await__(self):                
-        return self.run_controller_block().__await__()
-    
-    def set_blocks(self, blocks: BlockList):
-        self.blocks = blocks
-        return self
-    
-    def set_model(self, model: str):
-        self.config.model = model
-        return self
 
-    @abstractmethod
-    def to_chat(
-        self, 
-        blocks: BlockList, 
-        tools: List[Type[BaseModel]] | None = None, 
-        error_blocks: BlockList | None = None
-    ) -> List[dict]:
-        ...
-        
-    @abstractmethod
-    async def client_complete(
-        self, 
-        blocks: BlockList, 
-        tools: List[Type[BaseModel]] | None = None, 
-        config: LlmConfig | None = None, 
-        error_blocks: List[BlockChunk] | None = None
-    ) -> BlockChunk:
-        ...
+class LLMStreamController(StreamController):
+    llm: "LLM"
+    blocks: BlockList
+    llm_config: LlmConfig
+    tools: List[Type[BaseModel]] | None = None
+    model: str | None = None
+    models: List[str] = []
     
-    def pick(
+    
+    def __init__(
         self, 
-        tools: List[Type[BaseModel]], 
-        tool_choice: ToolChoice="required", 
-        parallel_tool_calls: bool=False
+        # gen_func: Callable[..., AsyncGenerator], 
+        llm: "LLM",
+        blocks: BlockList, 
+        config: LlmConfig, 
+        tools: List[Type[BaseModel]] | None = None, 
+        args: tuple = (), 
+        kwargs: dict = {}
     ):
-        self.config.tool_choice = tool_choice
-        self.config.parallel_tool_calls = parallel_tool_calls
+        # super().__init__(self.stream, acc_factory=lambda : BlockList([], style="stream"), name="openai_llm", span_type="llm")
+        super().__init__(gen_func=None, args=args, kwargs=kwargs, name="openai_llm", span_type="llm")
+        self.blocks = blocks
+        self.llm_config = config
         self.tools = tools
-        return self
-    
-    def pick_one(self, tools: List[Type[BaseModel]]):
-        self.config.tool_choice = "required"
-        self.config.parallel_tool_calls = False
-        self.tools = tools
-        return self
-    
-    def pick_many(self, tools: List[Type[BaseModel]]):
-        self.config.tool_choice = "required"
-        self.config.parallel_tool_calls = True
-        self.tools = tools
-        return self
-    
-    def generate_or_pick_one(self, tools: List[Type[BaseModel]]):
-        self.config.tool_choice = "auto"
-        self.config.parallel_tool_calls = False
-        self.tools = tools
-        return self
-    
-    def generate_or_pick_many(self, tools: List[Type[BaseModel]]):
-        self.config.tool_choice = "auto"
-        self.config.parallel_tool_calls = True
-        self.tools = tools
-        return self
-    
-    def parse_response(self, parse_response_fn: Callable[[BlockChunk], BlockChunk]) -> Self:
-        self.parse_response_fn = parse_response_fn
-        return self
-    
-    def parse_output(self, parse_output_fn: Callable[[OUTPUT_MODEL], OUTPUT_MODEL]) -> Self:
-        self.parse_output_fn = parse_output_fn
-        return self
-    
-    # @singledispatch
-    # async def complete(self, output_model):
-    #     raise NotImplementedError("Output model is not set")
-    
-    # @complete.register(type(None))
-    # async def _(self):
-    #     return await self.run_controller_block()
+        self.model = config.model
+        self.llm = llm
         
-    # @complete.register    
-    # async def _(self, output_model: Type[OutputModel]):
-    #     self.output_model = output_model
-    #     response = await self.run_controller_output_model()
-    #     return response
-    
-    async def complete(self, output_model: Type[OUTPUT_MODEL] | None = None) -> OUTPUT_MODEL:
-        if output_model is None:
-            return await self.run_controller_output_model()
-        self.output_model = output_model
-        response = await self.run_controller_output_model()
-        return response
-    
-    async def run_controller_output_model(self) -> OUTPUT_MODEL:
-        blocks, output_model = await self.controller(self.blocks, self.tools, self.config)
-        if output_model is None:
-            raise ValueError("Output model is not set")
-        return output_model
-    
-    async def run_controller_block(self) -> BlockChunk:
-        blocks, output_model = await self.controller(self.blocks, self.tools, self.config)
-        return blocks
-    
-    
-    async def stream(self) -> AsyncGenerator[StreamEvent, None]:
-        raise NotImplementedError("Streaming is not implemented")
+    @property
+    def inputs(self) -> list[Any]:
+        """Get the inputs."""
+        return self.blocks
+
+    def _init_stream(self, args: tuple, kwargs: dict):
+        gen_instance = self._gen_func(*args, **kwargs)
+        stream = LLMStream(gen_instance, name=f"{self._name}_stream")
+        return stream
     
     
     
-    async def controller(
+    # async def _load_llm_call(self):
+    #     from ..versioning.dataflow_models import LlmCall
+    #     if self.ctx is not None:
+    #         load_llm_calls = self.ctx.load_llm_calls.get(self._name)
+    #         if load_llm_calls is not None:
+    #             llm_call = await LlmCall.get_or_none(id=load_llm_calls)
+    #             if llm_call is not None:
+    #                 return llm_call
+    #             raise ValueError(f"LLM call {load_llm_calls} not found")
+    
+    
+    async def on_start(self):
+        """
+        Build subnetwork and register with context.
+
+        Called automatically on first __anext__() call.
+        Creates span, resolves dependencies, logs kwargs as inputs, and builds the internal stream.
+
+        In replay mode (when span has saved outputs), sets up replay buffer instead of
+        executing the generator function.
+
+        Auto-cache behavior:
+        - If ctx.cache_dir is set and no explicit load/save path is configured:
+          - Computes cache key from stream name + bound arguments
+          - If cache file exists: loads from cache (no re-execution)
+          - If cache file doesn't exist: executes and saves to cache
+        """
+        from ..block import Block
+        bound, kwargs = await self._resolve_dependencies()
+        
+        load_filepath = self._load_cache(bound)
+        llm_call_id = None
+        if not self.dry_run and self.ctx is not None:
+            llm_call_id = self.ctx.load_llm_calls.get(self._name)
+        # stream = self._init_stream(bound.args, bound.kwargs)
+        
+        if llm_call_id is not None:
+            stream = await LLMStream.load_llm_call(llm_call_id, delay=self._load_delay or 0.01)
+        elif load_filepath is not None:
+            stream = LLMStream.load(load_filepath, delay=self._load_delay or 0.05)
+        else:
+            gen_instance = self._gen_func(*bound.args, **bound.kwargs)
+            stream = LLMStream(gen_instance, name=f"{self._name}_stream")
+
+        self._handle_save_cache(stream)
+
+        self._stream = stream
+        self._gen = stream
+        if self._parser is not None:
+            self._gen |= self._parser
+        else:
+            self._accumulator = Accumulator(Block())
+            self._gen |= self._accumulator  
+    
+    
+    async def _store_llm_call(self):
+        from ..versioning.dataflow_models import LlmCall
+        if self._parser:
+            chunks = self._parser.get_chunks()
+        else:
+            chunks = []
+        llm_call = await LlmCall(
+            config=self.llm_config,
+            usage=self._stream.usage,
+            chunks=chunks,
+            request_id=self._stream.response.id,
+            message_id=self._stream.response.item_id,
+            span_id=self.span.id
+        ).save()
+        await self.span.add(llm_call)
+
+    
+    
+    async def on_stop(self):
+        """
+        Mark span as completed when process exhausts.
+        """
+        
+        if self.span:
+            self.span.status = "completed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+            if hasattr(self._stream, "usage") and self._stream.response is not None:
+                await self._store_llm_call()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+    
+    async def on_error(self, error: Exception):
+        """
+        Mark span as failed on error.
+        """
+        if self.span:
+            self.span.status = "failed"
+            self.span.end_time = __import__('datetime').datetime.now()
+            await self.span.save()
+            if hasattr(self._stream, "usage") and self._stream.response is not None:
+                await self._store_llm_call()
+
+        # Pop from context execution stack
+        if self.ctx:
+            await self.ctx.end_span()
+
+            
+    def set_stream(self):
+        self._gen_func = self.llm.stream
+    # def stream(self, event_level=None, ctx: "Context | None" = None, load_eval_args: bool = False) -> "FlowRunner":
+    #     """
+    #     Return a FlowRunner that streams events from this process.
+
+    #     This enables event streaming directly from decorated functions:
+    #         @stream()
+    #         async def my_stream():
+    #             yield "hello"
+
+    #         async for event in my_stream().stream():
+    #             print(event)
+
+    #     Args:
+    #         event_level: EventLogLevel.chunk, .span, or .turn
+
+    #     Returns:
+    #         FlowRunner configured to emit events
+    #     """
+    #     from ..prompt.flow_components import EventLogLevel
+    #     from ..prompt.fbp_process import FlowRunner
+    #     if event_level is None:
+    #         event_level = EventLogLevel.chunk
+    #     self._ctx = ctx
+    #     self._load_eval_args = load_eval_args
+    #     return FlowRunner(self, ctx=ctx, event_level=event_level).stream_events()
+    
+    def print_inputs(self):
+        sep = "─" * 50
+        for i,block in enumerate(self.blocks):
+            print(sep)
+            print(f"{i}: {block.role.title()} Message")
+            print(sep)
+            block.print()
+            print(" ")
+        for key, value in self._kwargs.items():
+            print(sep)
+    
+    def print(self, inputs: bool = False):
+        sep = "─" * 50
+        
+        if inputs:            
+            self.print_inputs()
+            # for i,block in enumerate(self.blocks):
+            #     print(sep)
+            #     print(f"{i}: {block.role.title()} Message")
+            #     print(sep)
+            #     block.print()
+            #     print(" ")
+            # for key, value in self._kwargs.items():
+            #     print(sep)
+            #     print(key, value)
+            print("######################## Output ########################")
+        self.span.llm_calls[0].print()
+        # self.get_response().print()
+        
+        
+
+
+class LlmStreamParams(TypedDict, total=False):
+    blocks: BlockList
+    config: LlmConfig
+    tools: List[Type[BaseModel]] | None = None
+
+
+
+
+# def llm_stream(
+#     method: Callable[..., AsyncGenerator[Any, None]],
+# ) -> Callable[..., StreamController]:
+#     """
+#     Decorator that wraps an async generator method to return a StreamController.
+#     Provides proper typing for IntelliSense support.
+#     """
+#     @wraps(method)
+#     def wrapper(self, *args, **kwargs) -> StreamController:
+#         # If "config" not passed, inject from self.config
+#         if "config" not in kwargs:
+#             kwargs["config"] = getattr(self, "config", None)
+#         gen = method(self, *args, **kwargs)
+#         return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
+#     return wrapper
+
+
+
+
+# def pack_blocks(args: tuple[Any, ...]) -> tuple[BlockList, tuple[Any, ...]]:
+#     # block_list = BlockList()
+#     block_list = BlockList()
+#     extra_args = ()
+#     for arg in args:
+#         if isinstance(arg, str):
+#             block_list.append(Block(arg))
+#         elif isinstance(arg, Block):
+#             block_list.append_child(arg)
+#         elif isinstance(arg, BlockList):
+#             block_list.extend(arg)
+#         # elif isinstance(arg, Block):
+#         #     block_list.append(copy.copy(arg))
+#         # elif isinstance(arg, BlockList):
+#         #     block_list.extend(copy.copy(arg))
+#         else:
+#             extra_args += (arg,)
+#     return block_list, extra_args
+
+def pack_blocks(args: tuple[Any, ...]) -> tuple[BlockList, tuple[Any, ...]]:    
+    block_list = []
+    extra_args = ()
+    for arg in args:
+        if isinstance(arg, str):
+            block_list.append(Block(arg))
+        elif isinstance(arg, Block):
+            block_list.append(arg)
+        elif isinstance(arg, BlockList):
+            block_list.extend(arg)
+        # elif isinstance(arg, Block):
+        #     block_list.append(copy.copy(arg))
+        # elif isinstance(arg, BlockList):
+        #     block_list.extend(copy.copy(arg))
+        else:
+            extra_args += (arg,)
+    return block_list, extra_args
+    
+
+
+def llm_stream(
+    name: str,
+):
+    def llm_stream_decorator(
+        method: Callable[..., AsyncGenerator[Any, None]],
+    ) -> Callable[..., StreamController]:
+        """
+        Decorator that wraps an async generator method to return a StreamController.
+        Provides proper typing for IntelliSense support.
+        """
+        @wraps(method)
+        def wrapper(self, *args, **kwargs) -> StreamController:
+            # If "config" not passed, inject from self.config
+            if "config" not in kwargs or kwargs["config"] is None:
+                kwargs["config"] = getattr(self, "config", None)
+            blocks, extra_args = pack_blocks(args)
+            # gen = method(self, blocks, *extra_args, **kwargs)
+            # return StreamController(gen=gen, name=name or method.__name__, span_type="llm")
+            # return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name or method.__name__, span_type="llm")
+            # return StreamController(gen_func=method, args=(self, blocks, *extra_args), kwargs=kwargs, name=name, span_type="llm")
+            return LLMStreamController(gen_func=method, blocks=blocks, config=kwargs["config"], tools=kwargs["tools"], args=(self, blocks, *extra_args), kwargs=kwargs)
+        return wrapper
+    return llm_stream_decorator
+    
+ 
+class LLM: 
+    config: LlmConfig   
+    default_model: str
+    models: List[str]
+    
+    
+    def __init__(self, config: LlmConfig | None = None):        
+        self.config = config or LlmConfig(model=self.default_model )
+        
+        
+        
+    def __call__(
         self, 
+        *blocks: BlockChunk | Block | str, 
+        config: LlmConfig | None = None, 
+        tools: List[Type[BaseModel]] | None = None,
+        schema: BlockSchema | None = None
+    ) -> LLMStreamController:
+        if config is None:
+            config = LlmConfig(model=self.default_model)
+        llm_blocks, extra_args = pack_blocks(blocks)
+        llm = LLMStreamController(llm=self, blocks=llm_blocks, config=config, tools=tools, args=(llm_blocks, config, tools, *extra_args))
+        if schema is not None:
+            llm.parse(schema)
+        return llm
+    
+    
+    async def stream(
+        self,
         blocks: BlockList,
-        tools: List[Type[BaseModel]],
-        config: LlmConfig    
-    ) -> tuple[BlockChunk, OUTPUT_MODEL | None]:        
-        response = None
-        error_blocks = BlockList()
-        for attempt in range(config.retries):
-            try:
-                response = await self.client_complete(
-                    blocks=blocks,
-                    tools=tools,
-                    config=config,
-                    error_blocks=error_blocks
-                )
-                if self.parse_response_fn:
-                    response = await call_function(self.parse_response_fn, response)
-                if self.output_model is not None:
-                    parsed_response = self.output_model.parse(response, tools)
-                    if self.parse_output_fn:
-                        parsed_response = await call_function(self.parse_output_fn, parsed_response)
-                    return response, parsed_response
-                return response, None
-            except ErrorMessage as e:
-                
-                if attempt == config.retries - 1:
-                    logger.warning(f"Error Message: {e.error_content}\n too many attempts, raising error.")
-                    raise
-                if e.should_retry:
-                    logger.warning(f"Error Message: {e.error_content}\n attempt {attempt + 1} of {config.retries}, retrying...")
-                    if response is not None:
-                        error_blocks.append(response)
-                    error_blocks.append(e.to_block(self.output_model, role="user", tags=["generation", "error"]))
-        raise Exception("Failed to complete")
+        config: LlmConfig,
+        tools: List[Type[BaseModel]] | None = None
+    ) -> AsyncGenerator[Any, None]:
+        """
+        This method is used to stream the response from the LLM.
+        After decoration, this will return a StreamController instance.
+        """        
+        raise NotImplementedError("stream is not implemented")
+        yield
     
     
-    async def run_complete2(
-        self, 
-        retries=3,    
-    ) -> BlockChunk:
-
+    async def complete(
+        self,
+        blocks: BlockList,
+        config: LlmConfig,
+        tools: List[Type[BaseModel]] | None = None
+    ) -> LLMResponse:
+        """
+        This method is used to complete the response from the LLM.
+        After decoration, this will return a LLMResponse instance.
+        """
+        raise NotImplementedError("complete is not implemented")
         
-        
-        messages = [self._to_message(b) for b in self._to_chat(self.ctx_blocks)]
-        for msg in messages:
-            if not msg.get("role"):
-                raise ValueError("role is not set")
-        for message in messages:
-            print(f"----------------------{message['role']}-------------------------")
-            print(message['content'])            
-        print(f"-----------------------------------------------------------------")
-        tools = self._to_tools(self.actions)
-        response = None
-        for attempt in range(retries):
-            try:
-                response = await self._complete(
-                    messages=messages,
-                    tools=tools,
-                    model=self.model,
-                    tool_choice=self.tool_choice,
-                    **self.config.get_llm_args()
-                )
-                parsed_response = self._parse_response(response, self.actions)
-                print(f"----------------------assistant response-------------------------")
-                print(parsed_response)
-                if self.output_model is not None:
-                    parsed_response = self.output_model.parse(parsed_response)
-                return parsed_response
-            except ErrorMessage as e:
-                if attempt == retries - 1:
-                    raise
-                if e.should_retry:
-                    if response:
-                        messages.append({"role": "assistant", "content": response.content})
-                        messages.append(e.to_block())
-        raise Exception("Failed to complete")
-
-
-
-
-
-class LLM():
     
-    _model_registry: Dict[str, Type[LlmContext]] = {}
+
+
+
+    
+    
+class LLMRegistry():
+    
+    _model_registry: Dict[str, Type[LLM]] = {}
     _default_model: str | None = None
+        
     
     
     @classmethod
-    def register(cls, model_cls: Type[LlmContext], default_model: str | None = None) -> Type[LlmContext]:
+    def register(cls, model_cls: Type[LLM], default_model: str | None = None) -> Type[LLM]:
         """Decorator to register a new LLM model implementation"""
         if model_cls.__name__ in cls._model_registry:
             raise ValueError(f"Model {model_cls.__name__} is already registered")
@@ -530,7 +449,7 @@ class LLM():
         return model_cls
     
     @classmethod
-    def _get_llm(cls, model: str | None = None) -> LlmContext:
+    def get_llm(cls, model: str | None = None) -> Type[LLM]:
         """Get a registered model by name"""
         if model is None:
             if cls._default_model is None:
@@ -539,38 +458,58 @@ class LLM():
         if model not in cls._model_registry:
             raise KeyError(f"Model {model} is not registered")        
         llm_cls = cls._model_registry[model]
-        llm = llm_cls(model)
-        return llm
-
+        return llm_cls
     
+    
+    @classmethod
+    def build_llm(cls, model: str | None = None) -> LLM:
+        llm_cls = cls.get_llm(model)
+        return llm_cls()
+    
+    
+    def stream(
+        self,
+        *blocks: BlockChunk | Block | str,
+        model: str | None = None,
+        tools: List[Type[BaseModel]] | None = None,
+        config: LlmConfig | None = None,
+    ) -> StreamController:
+        llm_cls = self.get_llm(model)
+        llm = llm_cls(config=config)
+        
+        return llm.stream(*blocks, tools=tools, config=config)
+
     def __call__(
         self,        
-        # *args: Block | List[Block] | BlockList | str,
-        *args: BlockChunk | str,
+        *blocks: BlockChunk | Block |BlockList | str,
         model: str | None = None,
-    ) -> LlmContext:
-
-        # with Block() as ctx_blocks:
-        #     for block in args:
-        #         if isinstance(block, str):
-        #             ctx_blocks.append(block, role="user", tags=["user_input"])
-        #         elif isinstance(block, Block):
-        #             if not block.role:
-        #                 raise ValueError("Block role is not set")
-        #             ctx_blocks.append(block)
-        #         elif isinstance(block, BlockList):
-        #             for b in block:
-        #                 ctx_blocks.append(b)
-        ctx_blocks = BlockList()
-        for block in args:
-            if isinstance(block, str):
-                ctx_blocks.append(block, role="user", tags=["user_input"])
-            elif isinstance(block, BlockChunk):
-                ctx_blocks.append(block)
-            else:
-                raise ValueError("Invalid block type")
-                
+        config: LlmConfig | None = None,
+    ) -> LLMStreamController:                                
         
-                        
-        llm_ctx = self._get_llm(model)
-        return llm_ctx(ctx_blocks)
+        
+        llm_blocks, extra_args = pack_blocks(blocks)
+
+        
+        llm_ctx = self.get_llm(model)        
+        return llm_ctx(llm_blocks, *extra_args, config=config)
+    
+    # def __call__(
+    #     self,        
+    #     blocks: BlockContext |BlockList | Block | BlockPrompt | str,
+    #     model: str | None = None,
+    #     config: LlmConfig | None = None,
+    # ) -> LLMStream:                        
+    #     if isinstance(blocks, str):
+    #         llm_blocks = BlockList([Block(blocks)])
+    #     elif isinstance(blocks, Block):
+    #         llm_blocks = BlockList([blocks])
+    #     elif isinstance(blocks, BlockPrompt):
+    #         llm_blocks = BlockList([blocks.root])
+    #     elif isinstance(blocks, BlockList):
+    #         llm_blocks = blocks        
+    #     else:
+    #         raise ValueError(f"Invalid blocks type: {type(blocks)}")
+        
+    #     llm_ctx = self._get_llm(model)
+    #     config = config or LlmConfig(model=llm_ctx.model)
+    #     return llm_ctx(llm_blocks, config)

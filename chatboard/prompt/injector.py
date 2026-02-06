@@ -1,6 +1,6 @@
 import inspect
 from ..prompt.depends import DependsContainer, resolve_dependency
-from ..block.block9.base_blocks import BlockSequence, BaseBlock
+
 
 
 
@@ -67,9 +67,9 @@ async def resolve_dependencies_kwargs(func, args, kwargs):
     param_dict = {}
     for name, param in signature.parameters.items():
         val = bound.arguments.get(name, param.default)
-        if isinstance(val, BaseBlock):
-            if val.parent is not None:
-                raise DependencyError(f"Dependency '{name}' is a not the root block.")
+        # if isinstance(val, BaseBlock):
+        #     if val.parent is not None:
+        #         raise DependencyError(f"Dependency '{name}' is a not the root block.")
         if isinstance(val, DependsContainer):
             resolved = await resolve_dependency(val.dependency)
             dep_kwargs[name] = resolved

@@ -1,11 +1,7 @@
 from .azure_llm import AzureOpenAiLLM
 from .fake_llm import FakeLLM
-# from .openai_llm2 import OpenAiLLM
-from .openai_llm3 import OpenAiLLM
-# from .legacy.phi_llm import PhiLLM
-# from .llm import LLM, OutputModel
-from .llm import OutputModel
-from .llm2 import LLMRegistry, LlmConfig, LLM, LLMStreamController
+from .openai_llm import OpenAiLLM
+from .llm import LLMRegistry, LlmConfig, LLM, LLMStreamController
 from .exceptions import LlmError, LLMToolNotFound
 from .types import ToolChoice, ErrorMessage
 from .utils.completion_parsing import PromptParsingException
@@ -25,6 +21,5 @@ __all__ = [
     "PromptParsingException", 
     "ToolChoice", 
     "ErrorMessage",
-    "OutputModel",
     "LLMStreamController",
 ]

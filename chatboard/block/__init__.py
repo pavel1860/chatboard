@@ -1,43 +1,66 @@
+"""
+Block12 - Simplified block system with local text storage.
 
-# from .block7 import BlockList, block, ContextStack, Blockable
-from .block7 import block, ContextStack, Blockable
-# from .block9 import BlockChunk, BlockSent,  block, Block, BlockSchema, BaseBlock, AttrBlock, BlockList
-from .block9 import BlockSent,  block, BaseBlock, AttrBlock
-# from .block10 import Block, BlockSchema, BlockListSchema, BlockChunk, BlockBase, BlockText, BlockBuilderContext, XmlParser, BlockList
-from .block12 import Block, BlockSchema, BlockListSchema, XmlParser, BlockList, Mutator, ContentType, BlockChunk, ParserEvent, IndexPath
-from .util import BlockRole, LlmUsage, ToolCall
+This module provides:
+- Block: Tree node with local text and chunk metadata
+- BlockSchema: Template for creating blocks with structure
+- BlockList: List container for multiple items
+- BlockListSchema: Schema for defining list structures
+- ChunkMeta: Lightweight metadata for text regions
+- BlockChunk: Text content with metadata for frontend consumption
+- Mutator: Strategy for style-aware block operations
+- XmlParser: Streaming XML parser for building blocks from schema
+- IndexPath: Block position via indices (e.g., "0.2.1")
+- TagPath: Block position via tags (e.g., "response.thinking")
+- pydantic_to_schema: Convert Pydantic models to BlockSchema
+"""
 
-from .style import InlineStyle, BlockStyle, StyleManager, UndefinedTagError
+from .chunk import ChunkMeta, BlockChunk
+from .block import Block, ContentType
+from .schema import BlockSchema, BlockList, BlockListSchema
+from .mutator import (
+    Mutator,
+    MutatorMeta,
+)
+from .parsers import XmlParser, ParserEvent, ParserError
+from .object_helpers import pydantic_to_schema, block_to_object, block_to_dict
+from .path import IndexPath, TagPath
+from .diff import (
+    diff_blocks,
+    BlockDiff,
+    NodeDiff,
+    FieldChange,
+    get_text_diff,
+    get_inline_diff,
+    format_diff_tree,
+    print_diff,
+)
 
 __all__ = [
-    "block",
-    "BlockSent",
-    # "BlockRenderer", 
-    # "RendererMeta", 
-    # "Renderer", 
-    # "ContentRenderer", 
-    # "ItemsRenderer", 
-    "BlockChunk",
-    "InlineStyle", 
-    "BlockStyle", 
-    "StyleManager", 
-    "UndefinedTagError", 
-    "ToolCall", 
-    "LlmUsage", 
-    "BlockRole", 
-    "BlockList",
-    "ContextStack",
-    "Blockable",
     "Block",
     "BlockSchema",
-    "BaseBlock",
+    "BlockList",
     "BlockListSchema",
-    # "BlockBase",
-    "AttrBlock",
-    # "BlockBuilderContext",
-    "XmlParser",
+    "BlockChunk",
+    "ChunkMeta",
     "Mutator",
-    "ContentType",
+    "MutatorMeta",
+    "XmlParser",
     "ParserEvent",
+    "ParserError",
     "IndexPath",
+    "TagPath",
+    "pydantic_to_schema",
+    "block_to_object",
+    "block_to_dict",
+    "ContentType",
+    # Diff
+    "diff_blocks",
+    "BlockDiff",
+    "NodeDiff",
+    "FieldChange",
+    "get_text_diff",
+    "get_inline_diff",
+    "format_diff_tree",
+    "print_diff",
 ]

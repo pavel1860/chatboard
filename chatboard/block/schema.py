@@ -339,7 +339,7 @@ class BlockSchema(Block):
 
         Includes schema-specific fields: name, type, is_required.
         """
-        from ...utils.type_utils import type_to_str
+        from ..utils.type_utils import type_to_str
         # Get base block fields
         result = super().model_dump()
 

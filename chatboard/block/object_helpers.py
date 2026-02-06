@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .block import Block
 from .schema import BlockSchema
-from ...utils.string_utils import camel_to_snake
+from ..utils.string_utils import camel_to_snake
 
 
 DictTraverseAction = Literal["open", "close", "open-close"]

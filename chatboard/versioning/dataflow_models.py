@@ -8,7 +8,7 @@ from .models import VersionedModel, Artifact, ArtifactKindEnum, Turn, SpanType
 from .block_storage import BlockModel
 
 from ..llms.types import LlmConfig, LLMUsage
-from ..block.block12.chunk import BlockChunk
+from ..block.chunk import BlockChunk
 
 if TYPE_CHECKING:
     from ..prompt.context import Context

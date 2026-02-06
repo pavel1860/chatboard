@@ -16,7 +16,7 @@ from xml.parsers import expat
 from .block import Block
 from .path import IndexPath
 from .chunk import BlockChunk, ChunkMeta
-from ...prompt.fbp_process import Process
+from ..prompt.fbp_process import Process
 from .schema import BlockSchema, BlockListSchema, BlockList
 
 # if TYPE_CHECKING:
